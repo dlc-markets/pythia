@@ -2,7 +2,6 @@
 extern crate log;
 
 use actix_web::{get, web, App, HttpResponse, HttpServer};
-use chrono::DateTime;
 use clap::Parser;
 use hex::ToHex;
 use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Secp256k1, SecretKey};
@@ -14,7 +13,7 @@ use std::{
     io::Read,
     str::FromStr,
 };
-use time::{format_description::well_known::Rfc3339, serde::timestamp, Duration, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
 use dlc_messages::oracle_msgs::{DecodeError, OracleAnnouncement, OracleAttestation, Readable};
 use hex;

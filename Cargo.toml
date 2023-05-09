@@ -13,7 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "3.2.5", features = ["derive"] }
 clokwerk = "0.4.0-rc1"
 displaydoc = "0.2"
-dlc-messages = { version = "0.4.0", features = ["use-serde", "serde"], path = "../../rust-dlc/dlc-messages" }
+dlc-messages = { version = "0.4.0", features = ["use-serde", "serde"], path = "dlc-messages" }
 env_logger = "0.9.0"
 futures = "0.3.21"
 hex = "0.4"

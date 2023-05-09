@@ -4,7 +4,7 @@ use super::{
 };
 use crate::AssetPairInfo;
 use chrono::Utc;
-use clokwerk::{AsyncScheduler, Interval, Job};
+use clokwerk::{AsyncScheduler, Interval};
 use core::ptr;
 use futures::{stream, StreamExt};
 use log::info;
@@ -22,7 +22,7 @@ use secp256k1_zkp::{
 };
 use serde_json;
 use std::sync::Arc;
-use time::{format_description::well_known::Rfc3339, macros::format_description, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::{
     sync::{mpsc, Mutex},
     time::sleep,
