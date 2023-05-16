@@ -397,7 +397,9 @@ mod tests {
     use super::*;
     use crate::{oracle::EventDescriptor, AssetPair};
     use dlc::OracleInfo;
+    use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
     use secp256k1_zkp::rand::{distributions::Alphanumeric, Rng};
+    use secp256k1_zkp::scalar::Scalar;
 
     fn setup() -> (KeyPair, Secp256k1<All>) {
         let secp = Secp256k1::new();
@@ -425,9 +427,13 @@ mod tests {
                 &bytes[32..64]
             })
             .collect();
-        let mut secret = secp256k1_zkp::SecretKey::from_slice(s_values[0]).unwrap();
+        let secret = secp256k1_zkp::SecretKey::from_slice(s_values[0]).unwrap();
         for s in s_values.iter().skip(1) {
-            secret.add_assign(s).unwrap();
+            secret
+                .add_tweak(
+                    &Scalar::from_be_bytes((*s).try_into().expect("Length is good")).unwrap(),
+                )
+                .unwrap();
         }
 
         secret
@@ -440,13 +446,15 @@ mod tests {
         let announcement = build_announcement(
             &AssetPairInfo {
                 asset_pair: AssetPair::BTCUSD,
-                event_descriptor: EventDescriptor {
-                    base: 2,
-                    is_signed: false,
-                    unit: "BTCUSD".to_string(),
-                    precision: 0,
-                    num_digits: 18,
-                },
+                event_descriptor: EventDescriptor::DigitDecompositionEvent({
+                    DigitDecompositionEventDescriptor {
+                        base: 2,
+                        is_signed: false,
+                        unit: "BTCUSD".to_string(),
+                        precision: 0,
+                        nb_digits: 18,
+                    }
+                }),
             },
             &keypair,
             &secp,
@@ -457,7 +465,7 @@ mod tests {
 
         let tag_hash = sha256::Hash::hash(b"DLC/oracle/announcement/v0");
         secp.verify_schnorr(
-            &announcement.signature,
+            &announcement.announcement_signature,
             &Message::from_hashed_data::<sha256::Hash>(
                 &[
                     tag_hash.to_vec(),
@@ -466,7 +474,7 @@ mod tests {
                 ]
                 .concat(),
             ),
-            &keypair.public_key(),
+            &keypair.public_key().x_only_public_key().0,
         )
         .unwrap();
     }
@@ -488,7 +496,7 @@ mod tests {
         secp.verify_schnorr(
             &attestation.signatures[0],
             &Message::from_hashed_data::<sha256::Hash>(attestation.outcomes[0].as_bytes()),
-            &keypair.public_key(),
+            &keypair.public_key().x_only_public_key().0,
         )
         .unwrap();
     }
@@ -500,13 +508,15 @@ mod tests {
         let (announcement, outstanding_sk_nonces) = build_announcement(
             &AssetPairInfo {
                 asset_pair: AssetPair::BTCUSD,
-                event_descriptor: EventDescriptor {
-                    base: 2,
-                    is_signed: false,
-                    unit: "BTCUSD".to_string(),
-                    precision: 0,
-                    num_digits: 18,
-                },
+                event_descriptor: EventDescriptor::DigitDecompositionEvent({
+                    DigitDecompositionEventDescriptor {
+                        base: 2,
+                        is_signed: false,
+                        unit: "BTCUSD".to_string(),
+                        precision: 0,
+                        nb_digits: 18,
+                    }
+                }),
             },
             &keypair,
             &secp,
@@ -535,7 +545,7 @@ mod tests {
                 .unwrap(),
                 nonces: announcement
                     .oracle_event
-                    .nonces
+                    .oracle_nonces
                     .iter()
                     .map(|nonce| {
                         secp256k1_zkp::XOnlyPublicKey::from_slice(&nonce.serialize()).unwrap()
