@@ -3,9 +3,9 @@ use thiserror::Error;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Display, Error)]
-pub enum SibylsError {
+pub enum PythiaError {
     /// asset pair {0} not recorded
-    UnrecordedAssetPairError(sibyls::AssetPair),
+    UnrecordedAssetPairError(pythia::AssetPair),
 
     /// datetime RFC3339 parsing error: {0}
     DatetimeParseError(#[from] time::error::Parse),
@@ -17,9 +17,9 @@ pub enum SibylsError {
     DatabaseError(#[from] sled::Error),
 }
 
-impl actix_web::error::ResponseError for SibylsError {
+impl actix_web::error::ResponseError for PythiaError {
     fn status_code(&self) -> actix_web::http::StatusCode {
-        if let SibylsError::DatetimeParseError(_) = self {
+        if let PythiaError::DatetimeParseError(_) = self {
             return actix_web::http::StatusCode::BAD_REQUEST;
         }
         actix_web::http::StatusCode::INTERNAL_SERVER_ERROR

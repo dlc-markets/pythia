@@ -17,7 +17,7 @@ use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
 use dlc_messages::oracle_msgs::{DecodeError, OracleAnnouncement, OracleAttestation, Readable};
 use hex;
-use sibyls::{
+use pythia::{
     oracle::{
         oracle_scheduler,
         pricefeeds::{PriceFeed, LNM},
@@ -27,7 +27,7 @@ use sibyls::{
 };
 
 mod error;
-use error::SibylsError;
+use error::PythiaError;
 
 const PAGE_SIZE: u32 = 100;
 
@@ -69,7 +69,7 @@ async fn pubkey(
 ) -> actix_web::Result<HttpResponse, actix_web::Error> {
     info!("GET /oracle/publickey");
     let oracle = match oracles.get(&filters.asset_pair) {
-        None => return Err(SibylsError::UnrecordedAssetPairError(filters.asset_pair).into()),
+        None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
         Some(val) => val,
     };
     let res = ApiOraclePubKey {
@@ -109,7 +109,7 @@ async fn announcements(
 ) -> actix_web::Result<HttpResponse, actix_web::Error> {
     info!("GET /announcements: {:#?}", filters);
     let oracle = match oracles.get(&filters.asset_pair) {
-        None => return Err(SibylsError::UnrecordedAssetPairError(filters.asset_pair).into()),
+        None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
         Some(val) => val,
     };
 
@@ -125,7 +125,7 @@ async fn announcements(
             let init_key = oracle
                 .event_database
                 .first()
-                .map_err(SibylsError::DatabaseError)?
+                .map_err(PythiaError::DatabaseError)?
                 .unwrap()
                 .0;
             let start_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
@@ -138,7 +138,7 @@ async fn announcements(
                 == oracle
                     .event_database
                     .first()
-                    .map_err(SibylsError::DatabaseError)?
+                    .map_err(PythiaError::DatabaseError)?
                     .unwrap()
                     .0
             {
@@ -161,7 +161,7 @@ async fn announcements(
             let init_key = oracle
                 .event_database
                 .last()
-                .map_err(SibylsError::DatabaseError)?
+                .map_err(PythiaError::DatabaseError)?
                 .unwrap()
                 .0;
             let end_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
@@ -174,7 +174,7 @@ async fn announcements(
                 == oracle
                     .event_database
                     .last()
-                    .map_err(SibylsError::DatabaseError)?
+                    .map_err(PythiaError::DatabaseError)?
                     .unwrap()
                     .0
             {
@@ -222,26 +222,26 @@ async fn announcement(
         filters
     );
     let timestamp =
-        OffsetDateTime::parse(&ts, &Rfc3339).map_err(SibylsError::DatetimeParseError)?;
+        OffsetDateTime::parse(&ts, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
 
     let oracle = match oracles.get(&asset_pair) {
-        None => return Err(SibylsError::UnrecordedAssetPairError(asset_pair).into()),
+        None => return Err(PythiaError::UnrecordedAssetPairError(asset_pair).into()),
         Some(val) => val,
     };
 
     if oracle.event_database.is_empty() {
         info!("no oracle events found");
-        return Err(SibylsError::OracleEventNotFoundError(ts.to_string()).into());
+        return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
     info!("retrieving oracle event with maturation {}", ts);
     let event = match oracle
         .event_database
         .get(ts.as_bytes())
-        .map_err(SibylsError::DatabaseError)?
+        .map_err(PythiaError::DatabaseError)?
     {
         Some(val) => val,
-        None => return Err(SibylsError::OracleEventNotFoundError(ts.to_string()).into()),
+        None => return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into()),
     };
     let oracle_event = parse_database_entry(asset_pair, (ts.as_str().into(), event));
     println!("{:?}", oracle_event);
@@ -249,7 +249,7 @@ async fn announcement(
     match event_type {
         EventType::Announcement => {
             let Ok(announcement_bytes) = hex::decode(oracle_event.announcement) else {
-                return Err(SibylsError::OracleEventNotFoundError(oracle_event.maturation).into())
+                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
             };
             let announcement: Result<OracleAnnouncement, DecodeError> =
                 Readable::read(&mut announcement_bytes.as_slice());
@@ -257,20 +257,20 @@ async fn announcement(
                 Ok(announce) => Ok(HttpResponse::Ok().json(announce)),
                 error => {
                     println!("{:?}", error);
-                    Err(SibylsError::OracleEventNotFoundError(oracle_event.maturation).into())
+                    Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
                 }
             }
         }
         EventType::Attestation => {
             let Some(attestation_string) = oracle_event.attestation else {
-                return Err(SibylsError::OracleEventNotFoundError(oracle_event.maturation).into())
+                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
             };
             let Ok(attestation_bytes) = hex::decode(attestation_string) else {
-                return Err(SibylsError::OracleEventNotFoundError(oracle_event.maturation).into())
+                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
             };
             let Ok(attestation): Result<OracleAttestation, DecodeError> =
                 Readable::read(&mut attestation_bytes.as_slice()) else {
-                    return Err(SibylsError::OracleEventNotFoundError(oracle_event.maturation).into())
+                    return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
                 };
             let attestation_response = AttestationResponse {
                 event_id: asset_pair.to_string().to_lowercase()
