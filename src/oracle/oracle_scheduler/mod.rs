@@ -5,20 +5,22 @@ use super::{
 use crate::AssetPairInfo;
 use chrono::Utc;
 use clokwerk::{AsyncScheduler, Interval};
-use core::ptr;
+// use core::ptr;
 use futures::{stream, StreamExt};
 use log::info;
 use queues::{queue, IsQueue, Queue};
-use secp256k1_zkp::secp256k1_zkp_sys::{
-    types::{c_int, c_uchar, c_void, size_t},
-    CPtr, SchnorrSigExtraParams,
-};
+// use secp256k1_zkp::secp256k1_zkp_sys::types::{c_int, c_uchar, c_void, size_t};
 use secp256k1_zkp::{
-    constants::SCHNORR_SIGNATURE_SIZE,
+    // constants::SCHNORR_SIGNATURE_SIZE,
     hashes::*,
     rand::{self, RngCore},
-    schnorr::Signature as SchnorrSignature,
-    All, KeyPair, Message, Secp256k1, Signing, XOnlyPublicKey as SchnorrPublicKey,
+    // schnorr::Signature as SchnorrSignature,
+    All,
+    KeyPair,
+    Message,
+    Secp256k1,
+    // Signing,
+    XOnlyPublicKey as SchnorrPublicKey,
 };
 use serde_json;
 use std::sync::Arc;
@@ -32,6 +34,7 @@ mod error;
 pub use error::OracleSchedulerError;
 pub use error::Result;
 
+use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
@@ -40,47 +43,47 @@ use dlc_messages::oracle_msgs::Writeable;
 
 const SCHEDULER_SLEEP_TIME: std::time::Duration = std::time::Duration::from_millis(100);
 
-extern "C" fn constant_nonce_fn(
-    nonce32: *mut c_uchar,
-    _: *const c_uchar,
-    _: size_t,
-    _: *const c_uchar,
-    _: *const c_uchar,
-    _: *const c_uchar,
-    _: size_t,
-    data: *mut c_void,
-) -> c_int {
-    unsafe {
-        ptr::copy_nonoverlapping(data as *const c_uchar, nonce32, 32);
-    }
-    1
-}
+// extern "C" fn constant_nonce_fn(
+//     nonce32: *mut c_uchar,
+//     _: *const c_uchar,
+//     _: size_t,
+//     _: *const c_uchar,
+//     _: *const c_uchar,
+//     _: *const c_uchar,
+//     _: size_t,
+//     data: *mut c_void,
+// ) -> c_int {
+//     unsafe {
+//         ptr::copy_nonoverlapping(data as *const c_uchar, nonce32, 32);
+//     }
+//     1
+// }
 
-fn sign_schnorr_with_nonce<S: Signing>(
-    secp: &Secp256k1<S>,
-    msg: &Message,
-    keypair: &KeyPair,
-    nonce: &[u8; 32],
-) -> SchnorrSignature {
-    unsafe {
-        let mut sig = [0u8; SCHNORR_SIGNATURE_SIZE];
-        let nonce_params =
-            SchnorrSigExtraParams::new(Some(constant_nonce_fn), nonce.as_c_ptr() as *const c_void);
-        assert_eq!(
-            1,
-            secp256k1_zkp::secp256k1_zkp_sys::secp256k1_schnorrsig_sign_custom(
-                *secp.ctx(),
-                sig.as_mut_c_ptr(),
-                msg.as_c_ptr(),
-                msg.len(),
-                keypair.as_ptr(),
-                &nonce_params as *const SchnorrSigExtraParams
-            )
-        );
+// fn sign_schnorr_with_nonce<S: Signing>(
+//     secp: &Secp256k1<S>,
+//     msg: &Message,
+//     keypair: &KeyPair,
+//     nonce: &[u8; 32],
+// ) -> SchnorrSignature {
+//     unsafe {
+//         let mut sig = [0u8; SCHNORR_SIGNATURE_SIZE];
+//         let nonce_params =
+//             SchnorrSigExtraParams::new(Some(constant_nonce_fn), nonce.as_c_ptr() as *const c_void);
+//         assert_eq!(
+//             1,
+//             secp256k1_zkp::secp256k1_zkp_sys::secp256k1_schnorrsig_sign_custom(
+//                 *secp.ctx(),
+//                 sig.as_mut_c_ptr(),
+//                 msg.as_c_ptr(),
+//                 msg.len(),
+//                 keypair.as_ptr(),
+//                 &nonce_params as *const SchnorrSigExtraParams
+//             )
+//         );
 
-        SchnorrSignature::from_slice(&sig).unwrap()
-    }
-}
+//         SchnorrSignature::from_slice(&sig).unwrap()
+//     }
+// }
 
 struct OracleScheduler {
     oracle: Oracle,
@@ -377,7 +380,7 @@ pub fn build_attestation(
         .iter()
         .zip(outstanding_sk_nonces.iter())
         .map(|(outcome, outstanding_sk_nonce)| {
-            sign_schnorr_with_nonce(
+            schnorrsig_sign_with_nonce(
                 secp,
                 &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
                 keypair,
@@ -400,6 +403,7 @@ mod tests {
     use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
     use secp256k1_zkp::rand::{distributions::Alphanumeric, Rng};
     use secp256k1_zkp::scalar::Scalar;
+    use secp256k1_zkp::schnorr::Signature as SchnorrSignature;
 
     fn setup() -> (KeyPair, Secp256k1<All>) {
         let secp = Secp256k1::new();
