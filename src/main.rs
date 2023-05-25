@@ -12,16 +12,18 @@ use std::{
     fs::{self, File},
     io::Read,
     str::FromStr,
+    sync::Arc,
 };
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
 use dlc_messages::oracle_msgs::{DecodeError, OracleAnnouncement, OracleAttestation, Readable};
 use hex;
+mod oracle;
 use pythia::{
     oracle::{
-        oracle_scheduler,
+        oracle_scheduler, postgres,
         pricefeeds::{PriceFeed, LNM},
-        DbValue, Oracle,
+        Oracle, PostgresResponse, ScalarPart,
     },
     AssetPair, AssetPairInfo, OracleConfig,
 };
@@ -87,114 +89,121 @@ struct ApiOracleEvent {
     outcome: Option<u64>,
 }
 
-fn parse_database_entry(
-    asset_pair: AssetPair,
-    (maturation, event): (IVec, IVec),
-) -> ApiOracleEvent {
-    let maturation = String::from_utf8_lossy(&maturation).to_string();
-    let event: DbValue = serde_json::from_str(&String::from_utf8_lossy(&event)).unwrap();
-    ApiOracleEvent {
-        asset_pair,
-        announcement: event.1.encode_hex::<String>(),
-        attestation: event.2.map(|att| att.encode_hex::<String>()),
-        maturation,
-        outcome: event.3,
-    }
+// fn parse_database_entry(
+//     asset_pair: AssetPair,
+//     (maturation, event): (IVec, IVec),
+// ) -> ApiOracleEvent {
+//     let maturation = String::from_utf8_lossy(&maturation).to_string();
+//     let event: PostgresResponse = serde_json::from_str(&String::from_utf8_lossy(&event)).unwrap();
+//     ApiOracleEvent {
+//         asset_pair,
+//         announcement: event.1.encode_hex::<String>(),
+//         attestation: event.2.map(|att| att.encode_hex::<String>()),
+//         maturation,
+//         outcome: event.3,
+//     }
+// }
+
+async fn get_event_at_timestamp(oracle: &Oracle, ts: &OffsetDateTime) -> Option<PostgresResponse> {
+    return oracle
+        .get_oracle_event("btcusd".to_string() + &ts.unix_timestamp().to_string())
+        .await
+        .unwrap();
 }
 
-#[get("/announcements")]
-async fn announcements(
-    oracles: web::Data<HashMap<AssetPair, Oracle>>,
-    filters: web::Query<Filters>,
-) -> actix_web::Result<HttpResponse, actix_web::Error> {
-    info!("GET /announcements: {:#?}", filters);
-    let oracle = match oracles.get(&filters.asset_pair) {
-        None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
-        Some(val) => val,
-    };
+// #[get("/announcements")]
+// async fn announcements(
+//     oracles: web::Data<HashMap<AssetPair, Oracle>>,
+//     filters: web::Query<Filters>,
+// ) -> actix_web::Result<HttpResponse, actix_web::Error> {
+//     info!("GET /announcements: {:#?}", filters);
+//     let oracle = match oracles.get(&filters.asset_pair) {
+//         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
+//         Some(val) => val,
+//     };
 
-    if oracle.event_database.is_empty() {
-        info!("no oracle events found");
-        return Ok(HttpResponse::Ok().json(Vec::<ApiOracleEvent>::new()));
-    }
+//     if oracle.postgres_client.is_empty().await {
+//         info!("no oracle events found");
+//         return Ok(HttpResponse::Ok().json(Vec::<ApiOracleEvent>::new()));
+//     }
 
-    let start = filters.page * PAGE_SIZE;
+//     let start = filters.page * PAGE_SIZE;
 
-    match filters.sort_by {
-        SortOrder::Insertion => loop {
-            let init_key = oracle
-                .event_database
-                .first()
-                .map_err(PythiaError::DatabaseError)?
-                .unwrap()
-                .0;
-            let start_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
-                .unwrap()
-                + Duration::days(start.into());
-            let end_key = start_key + Duration::days(PAGE_SIZE.into());
-            let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
-            let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
-            if init_key
-                == oracle
-                    .event_database
-                    .first()
-                    .map_err(PythiaError::DatabaseError)?
-                    .unwrap()
-                    .0
-            {
-                // don't know if range can change while iterating due to another thread modifying
-                info!(
-                    "retrieving oracle events from {} to {}",
-                    String::from_utf8_lossy(&start_key),
-                    String::from_utf8_lossy(&end_key),
-                );
-                return Ok(HttpResponse::Ok().json(
-                    oracle
-                        .event_database
-                        .range(start_key..end_key)
-                        .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
-                        .collect::<Vec<_>>(),
-                ));
-            }
-        },
-        SortOrder::ReverseInsertion => loop {
-            let init_key = oracle
-                .event_database
-                .last()
-                .map_err(PythiaError::DatabaseError)?
-                .unwrap()
-                .0;
-            let end_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
-                .unwrap()
-                - Duration::days(start.into());
-            let start_key = end_key - Duration::days(PAGE_SIZE.into());
-            let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
-            let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
-            if init_key
-                == oracle
-                    .event_database
-                    .last()
-                    .map_err(PythiaError::DatabaseError)?
-                    .unwrap()
-                    .0
-            {
-                // don't know if range can change while iterating due to another thread modifying
-                info!(
-                    "retrieving oracle events from {} to {}",
-                    String::from_utf8_lossy(&start_key),
-                    String::from_utf8_lossy(&end_key),
-                );
-                return Ok(HttpResponse::Ok().json(
-                    oracle
-                        .event_database
-                        .range(start_key..end_key)
-                        .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
-                        .collect::<Vec<_>>(),
-                ));
-            }
-        },
-    }
-}
+//     match filters.sort_by {
+//         SortOrder::Insertion => loop {
+//             let init_key = oracle
+//                 .postgres_client
+//                 .first()
+//                 .map_err(PythiaError::DatabaseError)?
+//                 .unwrap()
+//                 .0;
+//             let start_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
+//                 .unwrap()
+//                 + Duration::days(start.into());
+//             let end_key = start_key + Duration::days(PAGE_SIZE.into());
+//             let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
+//             let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
+//             if init_key
+//                 == oracle
+//                     .postgres_client
+//                     .first()
+//                     .map_err(PythiaError::DatabaseError)?
+//                     .unwrap()
+//                     .0
+//             {
+//                 // don't know if range can change while iterating due to another thread modifying
+//                 info!(
+//                     "retrieving oracle events from {} to {}",
+//                     String::from_utf8_lossy(&start_key),
+//                     String::from_utf8_lossy(&end_key),
+//                 );
+//                 return Ok(HttpResponse::Ok().json(
+//                     oracle
+//                         .postgres_client
+//                         .range(start_key..end_key)
+//                         .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
+//                         .collect::<Vec<_>>(),
+//                 ));
+//             }
+//         },
+//         SortOrder::ReverseInsertion => loop {
+//             let init_key = oracle
+//                 .postgres_client
+//                 .last()
+//                 .map_err(PythiaError::DatabaseError)?
+//                 .unwrap()
+//                 .0;
+//             let end_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
+//                 .unwrap()
+//                 - Duration::days(start.into());
+//             let start_key = end_key - Duration::days(PAGE_SIZE.into());
+//             let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
+//             let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
+//             if init_key
+//                 == oracle
+//                     .postgres_client
+//                     .last()
+//                     .map_err(PythiaError::DatabaseError)?
+//                     .unwrap()
+//                     .0
+//             {
+//                 // don't know if range can change while iterating due to another thread modifying
+//                 info!(
+//                     "retrieving oracle events from {} to {}",
+//                     String::from_utf8_lossy(&start_key),
+//                     String::from_utf8_lossy(&end_key),
+//                 );
+//                 return Ok(HttpResponse::Ok().json(
+//                     oracle
+//                         .postgres_client
+//                         .range(start_key..end_key)
+//                         .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
+//                         .collect::<Vec<_>>(),
+//                 ));
+//             }
+//         },
+//     }
+// }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum EventType {
@@ -229,49 +238,25 @@ async fn announcement(
         Some(val) => val,
     };
 
-    if oracle.event_database.is_empty() {
+    if oracle.postgres_client.is_empty().await {
         info!("no oracle events found");
         return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
     info!("retrieving oracle event with maturation {}", ts);
-    let event = match oracle
-        .event_database
-        .get(ts.as_bytes())
-        .map_err(PythiaError::DatabaseError)?
-    {
+    let event = match get_event_at_timestamp(&oracle, &timestamp).await {
         Some(val) => val,
         None => return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into()),
     };
-    let oracle_event = parse_database_entry(asset_pair, (ts.as_str().into(), event));
-    println!("{:?}", oracle_event);
+    // let oracle_event = parse_database_entry(asset_pair, (ts.as_str().into(), event));
+    // println!("{:?}", event);
 
     match event_type {
-        EventType::Announcement => {
-            let Ok(announcement_bytes) = hex::decode(oracle_event.announcement) else {
-                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
-            };
-            let announcement: Result<OracleAnnouncement, DecodeError> =
-                Readable::read(&mut announcement_bytes.as_slice());
-            match announcement {
-                Ok(announce) => Ok(HttpResponse::Ok().json(announce)),
-                error => {
-                    println!("{:?}", error);
-                    Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
-                }
-            }
-        }
+        EventType::Announcement => Ok(HttpResponse::Ok().json(event.announcement)),
         EventType::Attestation => {
-            let Some(attestation_string) = oracle_event.attestation else {
-                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
+            let ScalarPart::Attestation(attestation) = event.scalar_part else {
+                return Err(PythiaError::OracleEventNotFoundError(OffsetDateTime::from_unix_timestamp(event.announcement.oracle_event.event_maturity_epoch.into()).unwrap().to_string()).into())
             };
-            let Ok(attestation_bytes) = hex::decode(attestation_string) else {
-                return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
-            };
-            let Ok(attestation): Result<OracleAttestation, DecodeError> =
-                Readable::read(&mut attestation_bytes.as_slice()) else {
-                    return Err(PythiaError::OracleEventNotFoundError(oracle_event.maturation).into())
-                };
             let attestation_response = AttestationResponse {
                 event_id: asset_pair.to_string().to_lowercase()
                     + timestamp.unix_timestamp().to_string().as_str(),
@@ -312,7 +297,8 @@ struct Args {
     oracle_config_file: Option<std::path::PathBuf>,
 }
 
-#[actix_web::main]
+// #[actix_web::main]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
@@ -379,6 +365,10 @@ async fn main() -> anyhow::Result<()> {
     };
     info!("oracle config successfully read: {:#?}", oracle_config);
 
+    let client = Arc::new(
+        postgres::DatabaseConnection::new("host=localhost user=postgres password=postgres").await?,
+    );
+
     // setup event databases
     let oracles = asset_pair_infos
         .iter()
@@ -388,7 +378,7 @@ async fn main() -> anyhow::Result<()> {
 
             // create oracle
             info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(oracle_config, asset_pair_info, keypair)?;
+            let oracle = Oracle::new(oracle_config, asset_pair_info, client.clone(), keypair)?;
 
             // pricefeed retreival
             info!("creating pricefeeds for {}", asset_pair);
@@ -410,7 +400,7 @@ async fn main() -> anyhow::Result<()> {
             .app_data(web::Data::new(oracles.clone()))
             .service(
                 web::scope("/v1")
-                    .service(announcements)
+                    // .service(announcements)
                     .service(announcement)
                     .service(config)
                     .service(pubkey),

@@ -9,5 +9,8 @@ pub enum OracleError {
     InvalidAnnouncementTimeError(time::Duration),
 
     /// database error: {0}
-    DatabaseError(#[from] sled::Error),
+    DatabaseError(#[from] tokio_postgres::Error),
+
+    /// index in DB error:
+    IndexingError(),
 }

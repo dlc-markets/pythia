@@ -14,7 +14,7 @@ pub enum PythiaError {
     OracleEventNotFoundError(String),
 
     /// database error: {0}
-    DatabaseError(#[from] sled::Error),
+    DatabaseError(#[from] tokio_postgres::Error),
 }
 
 impl actix_web::error::ResponseError for PythiaError {

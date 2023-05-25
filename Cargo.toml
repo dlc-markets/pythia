@@ -9,6 +9,7 @@ edition = "2021"
 actix-web = "4.0.1"
 anyhow = "1.0.57"
 async-trait = "0.1.53"
+bit-vec = "0.6.3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "3.2.5", features = ["derive"] }
 clokwerk = "0.4.0-rc1"
@@ -31,6 +32,7 @@ sled = "0.34"
 thiserror = "1.0.31"
 time = { version = "0.3.9", features = ["formatting", "serde-human-readable"] }
 tokio = { version = "1.18.2", features = ["full"] }
+tokio-postgres = { version = "0.7.8", features = ["with-bit-vec-0_6", "array-impls"] }
 
 [dev-dependencies]
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", features =["serde"] }
