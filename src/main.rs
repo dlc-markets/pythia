@@ -6,7 +6,6 @@ use clap::Parser;
 use hex::ToHex;
 use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
-use sled::IVec;
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -14,24 +13,21 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use dlc_messages::oracle_msgs::{DecodeError, OracleAnnouncement, OracleAttestation, Readable};
-use hex;
 mod oracle;
-use pythia::{
-    oracle::{
-        oracle_scheduler, postgres,
-        pricefeeds::{PriceFeed, LNM},
-        Oracle, PostgresResponse, ScalarPart,
-    },
-    AssetPair, AssetPairInfo, OracleConfig,
+use oracle::{
+    oracle_scheduler, postgres,
+    pricefeeds::{Lnm, PriceFeed},
+    Oracle, PostgresResponse, ScalarPart,
 };
+mod common;
+use common::{AssetPair, AssetPairInfo, OracleConfig};
 
 mod error;
 use error::PythiaError;
 
-const PAGE_SIZE: u32 = 100;
+// const PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,121 +85,13 @@ struct ApiOracleEvent {
     outcome: Option<u64>,
 }
 
-// fn parse_database_entry(
-//     asset_pair: AssetPair,
-//     (maturation, event): (IVec, IVec),
-// ) -> ApiOracleEvent {
-//     let maturation = String::from_utf8_lossy(&maturation).to_string();
-//     let event: PostgresResponse = serde_json::from_str(&String::from_utf8_lossy(&event)).unwrap();
-//     ApiOracleEvent {
-//         asset_pair,
-//         announcement: event.1.encode_hex::<String>(),
-//         attestation: event.2.map(|att| att.encode_hex::<String>()),
-//         maturation,
-//         outcome: event.3,
-//     }
-// }
-
 async fn get_event_at_timestamp(oracle: &Oracle, ts: &OffsetDateTime) -> Option<PostgresResponse> {
-    return oracle
+    oracle
         .get_oracle_event("btcusd".to_string() + &ts.unix_timestamp().to_string())
         .await
-        .unwrap();
+        .unwrap()
 }
 
-// #[get("/announcements")]
-// async fn announcements(
-//     oracles: web::Data<HashMap<AssetPair, Oracle>>,
-//     filters: web::Query<Filters>,
-// ) -> actix_web::Result<HttpResponse, actix_web::Error> {
-//     info!("GET /announcements: {:#?}", filters);
-//     let oracle = match oracles.get(&filters.asset_pair) {
-//         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
-//         Some(val) => val,
-//     };
-
-//     if oracle.postgres_client.is_empty().await {
-//         info!("no oracle events found");
-//         return Ok(HttpResponse::Ok().json(Vec::<ApiOracleEvent>::new()));
-//     }
-
-//     let start = filters.page * PAGE_SIZE;
-
-//     match filters.sort_by {
-//         SortOrder::Insertion => loop {
-//             let init_key = oracle
-//                 .postgres_client
-//                 .first()
-//                 .map_err(PythiaError::DatabaseError)?
-//                 .unwrap()
-//                 .0;
-//             let start_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
-//                 .unwrap()
-//                 + Duration::days(start.into());
-//             let end_key = start_key + Duration::days(PAGE_SIZE.into());
-//             let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
-//             let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
-//             if init_key
-//                 == oracle
-//                     .postgres_client
-//                     .first()
-//                     .map_err(PythiaError::DatabaseError)?
-//                     .unwrap()
-//                     .0
-//             {
-//                 // don't know if range can change while iterating due to another thread modifying
-//                 info!(
-//                     "retrieving oracle events from {} to {}",
-//                     String::from_utf8_lossy(&start_key),
-//                     String::from_utf8_lossy(&end_key),
-//                 );
-//                 return Ok(HttpResponse::Ok().json(
-//                     oracle
-//                         .postgres_client
-//                         .range(start_key..end_key)
-//                         .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
-//                         .collect::<Vec<_>>(),
-//                 ));
-//             }
-//         },
-//         SortOrder::ReverseInsertion => loop {
-//             let init_key = oracle
-//                 .postgres_client
-//                 .last()
-//                 .map_err(PythiaError::DatabaseError)?
-//                 .unwrap()
-//                 .0;
-//             let end_key = OffsetDateTime::parse(&String::from_utf8_lossy(&init_key), &Rfc3339)
-//                 .unwrap()
-//                 - Duration::days(start.into());
-//             let start_key = end_key - Duration::days(PAGE_SIZE.into());
-//             let start_key = start_key.format(&Rfc3339).unwrap().into_bytes();
-//             let end_key = end_key.format(&Rfc3339).unwrap().into_bytes();
-//             if init_key
-//                 == oracle
-//                     .postgres_client
-//                     .last()
-//                     .map_err(PythiaError::DatabaseError)?
-//                     .unwrap()
-//                     .0
-//             {
-//                 // don't know if range can change while iterating due to another thread modifying
-//                 info!(
-//                     "retrieving oracle events from {} to {}",
-//                     String::from_utf8_lossy(&start_key),
-//                     String::from_utf8_lossy(&end_key),
-//                 );
-//                 return Ok(HttpResponse::Ok().json(
-//                     oracle
-//                         .postgres_client
-//                         .range(start_key..end_key)
-//                         .map(|result| parse_database_entry(filters.asset_pair, result.unwrap()))
-//                         .collect::<Vec<_>>(),
-//                 ));
-//             }
-//         },
-//     }
-// }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum EventType {
@@ -244,12 +132,10 @@ async fn announcement(
     }
 
     info!("retrieving oracle event with maturation {}", ts);
-    let event = match get_event_at_timestamp(&oracle, &timestamp).await {
+    let event = match get_event_at_timestamp(oracle, &timestamp).await {
         Some(val) => val,
         None => return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into()),
     };
-    // let oracle_event = parse_database_entry(asset_pair, (ts.as_str().into(), event));
-    // println!("{:?}", event);
 
     match event_type {
         EventType::Announcement => Ok(HttpResponse::Ok().json(event.announcement)),
@@ -382,7 +268,7 @@ async fn main() -> anyhow::Result<()> {
 
             // pricefeed retreival
             info!("creating pricefeeds for {}", asset_pair);
-            let pricefeeds: Vec<Box<dyn PriceFeed + Send + Sync>> = vec![Box::new(LNM {})];
+            let pricefeeds: Vec<Box<dyn PriceFeed + Send + Sync>> = vec![Box::new(Lnm {})];
 
             info!("scheduling oracle events for {}", asset_pair);
             // schedule oracle events (announcements/attestations)

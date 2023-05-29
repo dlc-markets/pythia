@@ -1,6 +1,6 @@
 use super::{
     pricefeeds::{PriceFeed, Result as PriceFeedResult},
-    DbValue, Oracle, PostgresResponse,
+    Oracle, PostgresResponse,
 };
 use crate::{oracle::ScalarPart, AssetPairInfo};
 use chrono::Utc;
@@ -13,7 +13,6 @@ use secp256k1_zkp::{
     rand::{self, RngCore},
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey as SchnorrPublicKey,
 };
-use serde_json;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use tokio::{
@@ -84,7 +83,7 @@ impl OracleScheduler {
             .chars()
             .map(|char| char.to_string())
             .collect::<Vec<_>>();
-        let PostgresResponse { announcement: announcement,scalar_part: ScalarPart::AnnouncementSkNonce(outstanding_sk_nonces) } = self
+        let PostgresResponse { announcement,scalar_part: ScalarPart::AnnouncementSkNonce(outstanding_sk_nonces) } = self
             .db_values
             .remove()
             .expect("db_values should never be empty") else { return Err(OracleSchedulerError::IndexingError()) };
@@ -282,7 +281,7 @@ pub fn build_announcement(
     }
 
     let oracle_event = OracleEvent {
-        oracle_nonces: nonces.into(),
+        oracle_nonces: nonces,
         event_maturity_epoch: maturation.unix_timestamp() as u32,
         event_descriptor: asset_pair_info.event_descriptor.clone(),
         event_id: asset_pair_info.asset_pair.to_string().to_lowercase()
@@ -401,16 +400,13 @@ mod tests {
         .unwrap()
         .0;
 
-        let tag_hash = sha256::Hash::hash(b"DLC/oracle/announcement/v0");
+        // The spec say that we should tag the hash of oracle announcement with b"announcement/v0", this is actually not done in rust-dlc
+        // let tag_hash = sha256::Hash::hash(b"announcement/v0");
+
         secp.verify_schnorr(
             &announcement.announcement_signature,
             &Message::from_hashed_data::<sha256::Hash>(
-                &[
-                    tag_hash.to_vec(),
-                    tag_hash.to_vec(),
-                    announcement.oracle_event.encode(),
-                ]
-                .concat(),
+                &[announcement.oracle_event.encode()].concat(),
             ),
             &keypair.public_key().x_only_public_key().0,
         )
@@ -472,13 +468,13 @@ mod tests {
         let attestation =
             build_attestation(outstanding_sk_nonces, &keypair, &secp, outcomes.clone());
 
-        let (funding_secret_key, funding_public_key, secp_5) = setup_v5();
+        let (funding_secret_key, funding_public_key, secp) = setup_v5();
 
         let adaptor_point = dlc::get_adaptor_point_from_oracle_info(
-            &secp_5,
+            &secp,
             &[OracleInfo {
                 public_key: secp256k1_zkp::XOnlyPublicKey::from_slice(
-                    &keypair.public_key().serialize(),
+                    &keypair.public_key().x_only_public_key().0.serialize(),
                 )
                 .unwrap(),
                 nonces: announcement
@@ -505,22 +501,21 @@ mod tests {
             secp256k1_zkp::hashes::sha256::Hash,
         >("test".as_bytes());
         let adaptor_sig = secp256k1_zkp::EcdsaAdaptorSignature::encrypt(
-            &secp_5,
+            &secp,
             &test_msg,
             &funding_secret_key,
             &adaptor_point,
         );
 
         adaptor_sig
-            .verify(&secp_5, &test_msg, &funding_public_key, &adaptor_point)
+            .verify(&secp, &test_msg, &funding_public_key, &adaptor_point)
             .unwrap();
 
         let adapted_sig = adaptor_sig
             .decrypt(&signatures_to_secret(&attestation.signatures))
             .unwrap();
 
-        secp_5
-            .verify_ecdsa(&test_msg, &adapted_sig, &funding_public_key)
+        secp.verify_ecdsa(&test_msg, &adapted_sig, &funding_public_key)
             .unwrap();
     }
 }

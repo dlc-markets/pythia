@@ -20,4 +20,4 @@ mod lnm;
 //pub use bitstamp::Bitstamp;
 //pub use gateio::GateIo;
 //pub use kraken::Kraken;
-pub use lnm::LNM;
+pub use lnm::Lnm;

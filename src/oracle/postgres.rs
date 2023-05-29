@@ -38,8 +38,8 @@ pub struct DatabaseConnection {
     pub insert_attestation_statement: Statement,
     pub update_announcement_statement: Statement,
     pub update_attestation_statement: Statement,
-    pub get_oracleevent_info_statement: Statement,
-    pub get_oracleevent_statement: Statement,
+    pub get_oracle_event_info_statement: Statement,
+    pub get_oracle_event_statement: Statement,
 }
 
 impl DatabaseConnection {
@@ -90,15 +90,15 @@ impl DatabaseConnection {
             .prepare_typed(QUERY_GET_ORACLE_EVENT, &[Type::VARCHAR])
             .await?;
 
-        return Ok(Self {
-            client: client,
-            insert_announcement_statement: insert_announcement_statement,
-            insert_attestation_statement: insert_attestation_statement,
-            update_announcement_statement: update_announcement_statement,
-            update_attestation_statement: update_attestation_statement,
-            get_oracleevent_info_statement: get_oracle_event_info_statement,
-            get_oracleevent_statement: get_oracle_event_statement,
-        });
+        Ok(Self {
+            client,
+            insert_announcement_statement,
+            insert_attestation_statement,
+            update_announcement_statement,
+            update_attestation_statement,
+            get_oracle_event_info_statement,
+            get_oracle_event_statement,
+        })
     }
     pub async fn is_empty(&self) -> bool {
         self.client
@@ -108,13 +108,12 @@ impl DatabaseConnection {
             .is_empty()
     }
 }
-
+#[cfg(test)]
 mod test {
     use crate::oracle::postgres::DatabaseConnection;
-
     #[tokio::test]
     async fn postgres_connection_check() {
-        let client = DatabaseConnection::new("host=localhost user=postgres")
+        let client = DatabaseConnection::new("host=localhost user=postgres password=postgres")
             .await
             .unwrap();
         // Now we can execute a simple statement that just returns its parameter.

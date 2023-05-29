@@ -1,3 +1,4 @@
+use crate::AssetPair;
 use displaydoc::Display;
 use thiserror::Error;
 
@@ -5,7 +6,7 @@ use thiserror::Error;
 #[derive(Debug, Display, Error)]
 pub enum PythiaError {
     /// asset pair {0} not recorded
-    UnrecordedAssetPairError(pythia::AssetPair),
+    UnrecordedAssetPairError(AssetPair),
 
     /// datetime RFC3339 parsing error: {0}
     DatetimeParseError(#[from] time::error::Parse),

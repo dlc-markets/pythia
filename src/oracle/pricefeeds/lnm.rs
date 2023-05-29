@@ -7,18 +7,18 @@ use reqwest::Client;
 use serde;
 use time::OffsetDateTime;
 
-pub struct LNM {}
+pub struct Lnm {}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 //#[serde(rename_all = "camelCase")]
-pub struct LNMQuote {
+pub struct LnmQuote {
     #[serde(with = "ts_milliseconds")]
     pub timestamp: NaiveDateTime,
     pub last_price: f64,
 }
 
 #[async_trait]
-impl PriceFeed for LNM {
+impl PriceFeed for Lnm {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
             AssetPair::BTCUSD => "",
@@ -28,9 +28,9 @@ impl PriceFeed for LNM {
     async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
         let client = Client::new();
         let start_time = instant.unix_timestamp();
-        info!("sending LNM http request");
-        let res: Vec<LNMQuote> = client
-            .get("https://api.lnmarkets.com/v1/oracle/index")
+        info!("sending Lnm http request");
+        let res: Vec<LnmQuote> = client
+            .get("https://api.Lnmarkets.com/v1/oracle/index")
             .query(&[
                 ("from", (1_000 * &start_time).to_string().as_ref()),
                 ("limit", "1"),

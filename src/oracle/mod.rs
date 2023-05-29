@@ -4,10 +4,7 @@ use displaydoc::Display;
 use dlc_messages::oracle_msgs::{
     DigitDecompositionEventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
-use hex::ToHex;
-use log::info;
 use secp256k1_zkp::{KeyPair, XOnlyPublicKey as SchnorrPublicKey};
-use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use std::{str::FromStr, sync::Arc};
 use time::OffsetDateTime;
@@ -21,7 +18,7 @@ pub use error::OracleError;
 pub use error::Result;
 pub mod postgres;
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone)]
 // outstanding_sk_nonces?, announcement, attetstation?, outcome?
 pub struct DbValue(
     pub Option<Vec<[u8; 32]>>,
@@ -206,7 +203,7 @@ impl Oracle {
             .postgres_client
             .client
             .query(
-                &self.postgres_client.get_oracleevent_info_statement,
+                &self.postgres_client.get_oracle_event_info_statement,
                 &params,
             )
             .await?;
@@ -214,9 +211,9 @@ impl Oracle {
         let digits_rows = self
             .postgres_client
             .client
-            .query(&self.postgres_client.get_oracleevent_statement, &params)
+            .query(&self.postgres_client.get_oracle_event_statement, &params)
             .await?;
-        let (nb_digits, precision, event_maturity, announcement_signature, outcome_option): (
+        let (nb_digits, precision, event_maturity_epoch, announcement_signature, outcome_option): (
             u16,
             i32,
             u32,
@@ -252,51 +249,54 @@ impl Oracle {
                     })
                     .collect();
                 aggregated_rows.sort_unstable_by_key(|&d| d.0);
-                let (_, (nonce_public, nonce_secret)): (
-                    Vec<i32>,
-                    (Vec<XOnlyPublicKey>, Vec<[u8; 32]>),
-                ) = aggregated_rows.into_iter().unzip();
+                type AnnouncementRow = (Vec<i32>, (Vec<XOnlyPublicKey>, Vec<[u8; 32]>));
+                let (_, (nonce_public, nonce_secret)): AnnouncementRow =
+                    aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     announcement: OracleAnnouncement {
-                        announcement_signature: announcement_signature,
+                        announcement_signature,
                         oracle_public_key: self.keypair.x_only_public_key().0,
                         oracle_event: OracleEvent {
                             oracle_nonces: nonce_public,
-                            event_maturity_epoch: event_maturity,
+                            event_maturity_epoch,
                             event_descriptor: EventDescriptor::DigitDecompositionEvent(
                                 DigitDecompositionEventDescriptor {
                                     base: 2,
                                     is_signed: false,
                                     unit: "usd/btc".to_owned(),
-                                    precision: precision,
-                                    nb_digits: nb_digits,
+                                    precision,
+                                    nb_digits,
                                 },
                             ),
-                            event_id: event_id,
+                            event_id,
                         },
                     },
                     scalar_part: ScalarPart::AnnouncementSkNonce(nonce_secret),
                 }))
             }
             Some(_) => {
-                let mut aggregated_rows: Vec<(i32, (XOnlyPublicKey, (String, Signature)))> =
-                    digits_rows
-                        .iter()
-                        .map(|x| {
-                            let nonce_x =
+                type AggregatedRows = (i32, (XOnlyPublicKey, (String, Signature)));
+                let mut aggregated_rows: Vec<AggregatedRows> = digits_rows
+                    .iter()
+                    .map(|x| {
+                        let nonce_x =
                             XOnlyPublicKey::from_slice(&x.get::<usize, BitVec>(2).to_bytes())
-                            .unwrap();
-                            (
+                                .unwrap();
+                        (
                             x.get::<usize, i32>(1),
                             (
                                 nonce_x,
                                 (
-                                    (x.get::<usize, bit_vec::BitVec>(4).pop().unwrap() as i8).to_string(),
+                                    (x.get::<usize, bit_vec::BitVec>(4).pop().unwrap() as i8)
+                                        .to_string(),
                                     <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
                                         NoncePoint(nonce_x),
                                         SigningScalar(
                                             Scalar::from_be_bytes(
-                                                x.get::<usize, bit_vec::BitVec>(5).to_bytes().try_into().unwrap()
+                                                x.get::<usize, bit_vec::BitVec>(5)
+                                                    .to_bytes()
+                                                    .try_into()
+                                                    .unwrap(),
                                             )
                                             .unwrap(),
                                         ),
@@ -305,30 +305,32 @@ impl Oracle {
                                 ),
                             ),
                         )
-                        })
-                        .collect();
+                    })
+                    .collect();
                 aggregated_rows.sort_unstable_by_key(|d| d.0);
-                let (_, (nonce_public, (bits, sigs))): (
+                type AttestationRaws = (
                     Vec<i32>,
                     (Vec<XOnlyPublicKey>, (Vec<String>, Vec<Signature>)),
-                ) = aggregated_rows.into_iter().unzip();
+                );
+                let (_, (nonce_public, (bits, sigs))): AttestationRaws =
+                    aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     announcement: OracleAnnouncement {
-                        announcement_signature: announcement_signature,
+                        announcement_signature,
                         oracle_public_key: self.keypair.x_only_public_key().0,
                         oracle_event: OracleEvent {
                             oracle_nonces: nonce_public,
-                            event_maturity_epoch: event_maturity,
+                            event_maturity_epoch,
                             event_descriptor: EventDescriptor::DigitDecompositionEvent(
                                 DigitDecompositionEventDescriptor {
                                     base: 2,
                                     is_signed: false,
                                     unit: "usd/btc".to_owned(),
-                                    precision: 0,
-                                    nb_digits: nb_digits,
+                                    precision,
+                                    nb_digits,
                                 },
                             ),
-                            event_id: event_id,
+                            event_id,
                         },
                     },
                     scalar_part: ScalarPart::Attestation(OracleAttestation {
