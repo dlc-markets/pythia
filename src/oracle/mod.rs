@@ -1,11 +1,9 @@
-use crate::{AssetPairInfo, OracleConfig};
+use crate::{oracle::crypto::sign_outcome, AssetPairInfo, OracleConfig};
 
-use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent, Writeable,
 };
 use secp256k1_zkp::{
-    hashes::sha256,
     rand::{thread_rng, RngCore},
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey as SchnorrPublicKey,
 };
@@ -147,14 +145,11 @@ impl Oracle {
             .iter()
             .zip(outstanding_sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                (
-                    outcome.to_owned(),
-                    schnorrsig_sign_with_nonce(
-                        &self.app_state.secp,
-                        &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
-                        &self.keypair,
-                        outstanding_sk_nonce,
-                    ),
+                sign_outcome(
+                    &self.app_state.secp,
+                    &self.keypair,
+                    outcome,
+                    outstanding_sk_nonce,
                 )
             })
             .unzip();

@@ -1,8 +1,11 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 use displaydoc::Display;
 
-use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
+use dlc::secp_utils::schnorrsig_sign_with_nonce;
+use secp256k1_zkp::{
+    hashes::sha256, schnorr::Signature, All, KeyPair, Message, Scalar, Secp256k1, XOnlyPublicKey,
+};
 
 pub(super) struct OracleSignature(pub(super) Signature);
 pub(super) struct NoncePoint(pub(super) XOnlyPublicKey);
@@ -50,4 +53,21 @@ pub fn to_digit_decomposition_vec(outcome: u32, digits: u16) -> Vec<String> {
         .chars()
         .map(|char| char.to_string())
         .collect::<Vec<_>>()
+}
+
+pub(super) fn sign_outcome(
+    secp: &Secp256k1<All>,
+    keypair: &KeyPair,
+    outcome: &String,
+    outstanding_sk_nonce: &[u8; 32],
+) -> (String, Signature) {
+    (
+        outcome.to_owned(),
+        schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
+            keypair,
+            &outstanding_sk_nonce,
+        ),
+    )
 }
