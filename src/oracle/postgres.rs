@@ -1,6 +1,4 @@
 use dlc_messages::oracle_msgs::{EventDescriptor, OracleAnnouncement, OracleAttestation};
-use futures;
-use log::info;
 use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
 use sqlx::{
     postgres::{PgPool, PgPoolOptions},
@@ -26,7 +24,6 @@ struct DigitAnnoncementResponse {
 struct DigitAttestationResponse {
     digit_index: i32,
     nonce_public: Vec<u8>,
-    bit: Option<Vec<u8>>,
     signature: Option<Vec<u8>>,
 }
 
@@ -135,17 +132,16 @@ impl DBconnection {
                 UPDATE oracle.events SET outcome = $1::INT WHERE id = $2::TEXT
             )
             UPDATE oracle.digits
-        SET bit = bulk.bit, signature = bulk.sig, signing_ts = NOW(), nonce_secret = NULL
+        SET signature = bulk.sig, signing_ts = NOW(), nonce_secret = NULL
         FROM ( 
             SELECT *
-            FROM UNNEST($3::BYTEA[], $4::BYTEA[], $5::VARCHAR[], $6::INT[]) 
-            AS t(bit, sig, id, digit)
+            FROM UNNEST($3::BYTEA[], $4::VARCHAR[], $5::INT[]) 
+            AS t(sig, id, digit)
             ) AS bulk 
         WHERE event_id = bulk.id AND digit_index = bulk.digit
         ",
             &(outcome as i32),
             event_id,
-            &bits[..],
             &sigs,
             &vec![event_id.to_owned(); indexes.len() as usize][..],
             &indexes.into_iter().map(|x| x as i32).collect::<Vec<i32>>()[..],
@@ -210,12 +206,12 @@ impl DBconnection {
             Some(outcome) => {
                 let digits = sqlx::query_as!(
                 DigitAttestationResponse,
-                "SELECT digit_index, nonce_public, bit, signature FROM oracle.digits WHERE event_id = $1;",
+                "SELECT digit_index, nonce_public, signature FROM oracle.digits WHERE event_id = $1;",
                 event_id
             )
             .fetch_all(&self.0)
             .await?;
-                type AggregatedRows = (u16, (XOnlyPublicKey, (String, Scalar)));
+                type AggregatedRows = (u16, (XOnlyPublicKey, Scalar));
                 let mut aggregated_rows: Vec<AggregatedRows> = digits
                     .iter()
                     .map(|x| {
@@ -223,26 +219,17 @@ impl DBconnection {
                             x.digit_index as u16,
                             (
                                 XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
-                                (
-                                    (x.bit.as_ref().unwrap()[0] as i8).to_string(),
-                                    Scalar::from_be_bytes(
-                                        x.signature
-                                            .as_ref()
-                                            .unwrap()
-                                            .as_slice()
-                                            .try_into()
-                                            .unwrap(),
-                                    )
-                                    .unwrap(),
-                                ),
+                                Scalar::from_be_bytes(
+                                    x.signature.as_ref().unwrap().as_slice().try_into().unwrap(),
+                                )
+                                .unwrap(),
                             ),
                         )
                     })
                     .collect();
                 aggregated_rows.sort_unstable_by_key(|d| d.0);
-                type AttestationRows =
-                    (Vec<u16>, (Vec<XOnlyPublicKey>, (Vec<String>, Vec<Scalar>)));
-                let (_, (nonce_public, (bits, sigs))): AttestationRows =
+                type AttestationRows = (Vec<u16>, (Vec<XOnlyPublicKey>, Vec<Scalar>));
+                let (_, (nonce_public, sigs)): AttestationRows =
                     aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     digits: event.digits as u16,

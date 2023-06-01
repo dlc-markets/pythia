@@ -22,8 +22,7 @@ CREATE TABLE IF NOT EXISTS oracle.digits (
   nonce_public BYTEA NOT NULL,
   nonce_secret BYTEA,
 
-  -- Outcome
-  bit BYTEA,
+  -- Signature
   signature BYTEA,
   signing_ts TIMESTAMP WITH TIME ZONE,
 

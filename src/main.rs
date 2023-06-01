@@ -1,9 +1,8 @@
 #[macro_use]
 extern crate log;
 
-use actix_web::{error::HttpError, get, web, App, HttpResponse, HttpServer};
+use actix_web::{get, web, App, HttpResponse, HttpServer};
 use clap::Parser;
-use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -12,12 +11,11 @@ use std::{
     fs::{self, File},
     io::Read,
     str::FromStr,
-    sync::Arc,
 };
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 mod oracle;
-use oracle::{Oracle, OracleError};
+use oracle::Oracle;
 
 mod common;
 use common::{AssetPair, AssetPairInfo, OracleConfig};
@@ -90,14 +88,14 @@ struct ApiOracleEvent {
     outcome: Option<u64>,
 }
 
-async fn get_event_at_timestamp(
-    oracle: &Oracle,
-    ts: &OffsetDateTime,
-) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>, OracleError> {
-    oracle
-        .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
-        .await
-}
+// async fn get_event_at_timestamp(
+//     oracle: &Oracle,
+//     ts: &OffsetDateTime,
+// ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>, OracleError> {
+//     oracle
+//         .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
+//         .await
+// }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
