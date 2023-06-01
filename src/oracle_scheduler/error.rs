@@ -6,7 +6,7 @@ pub type Result<T> = std::result::Result<T, OracleSchedulerError>;
 #[derive(Debug, Display, Error)]
 pub enum OracleSchedulerError {
     /// database error: {0}
-    DatabaseError(#[from] tokio_postgres::Error),
+    DatabaseError(#[from] sqlx::Error),
 
     /// secp256k1 upstream error: {0}
     Secp256k1UpstreamError(#[from] secp256k1_zkp::UpstreamError),
@@ -18,8 +18,8 @@ pub enum OracleSchedulerError {
     JoinError(#[from] tokio::task::JoinError),
 
     /// pricefeed error: {0}
-    PriceFeedError(#[from] crate::oracle::pricefeeds::PriceFeedError),
+    PriceFeedError(#[from] crate::pricefeeds::PriceFeedError),
 
-    /// index in DB error:
-    IndexingError(),
+    /// Oracle Error: {0}
+    OracleError(#[from] crate::oracle::OracleError),
 }

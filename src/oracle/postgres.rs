@@ -1,130 +1,264 @@
-use tokio_postgres::{types::Type, Client, Statement};
+use dlc_messages::oracle_msgs::{EventDescriptor, OracleAnnouncement, OracleAttestation};
+use futures;
+use log::info;
+use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
+use sqlx::{
+    postgres::{PgPool, PgPoolOptions},
+    Result,
+};
+use std::str::FromStr;
+use time::OffsetDateTime;
 
-const QUERY_INSERT_ANNOUNCEMENT: &str = "INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5)";
-// id, digits, precision, maturity, announcement_signature)";
-
-const QUERY_INSERT_ATTESTATION: &str = "INSERT INTO oracle.digits VALUES ($1, $2, $3, $4)"; // (event_id, digit_index, nonce_public, nonce_secret)"
-
-const QUERY_UPDATE_ANNOUNCEMENT: &str = "UPDATE oracle.events
-SET outcome = $1
-WHERE id = $2;
-";
-
-const QUERY_UPDATE_ATTESTATION: &str = "UPDATE oracle.digits
-SET 
-  bit = $1,
-  signature = $2,
-  signing_ts = NOW(),
-  nonce_secret = NULL
-WHERE 
-  event_id = $3
-  AND digit_index = $4;
-";
-
-const QUERY_GET_ORACLE_EVENT_INFO: &str = "SELECT
-e.*
-FROM oracle.events e
-WHERE e.id = $1";
-
-const QUERY_GET_ORACLE_EVENT: &str = "SELECT 
-d.*
-FROM oracle.digits d
-WHERE d.event_id = $1;
-";
-
-pub struct DatabaseConnection {
-    pub client: Client,
-    pub insert_announcement_statement: Statement,
-    pub insert_attestation_statement: Statement,
-    pub update_announcement_statement: Statement,
-    pub update_attestation_statement: Statement,
-    pub get_oracle_event_info_statement: Statement,
-    pub get_oracle_event_statement: Statement,
+struct EventResponse {
+    id: String,
+    digits: i32,
+    precision: i32,
+    maturity: OffsetDateTime,
+    announcement_signature: Vec<u8>,
+    outcome: Option<i32>,
 }
 
-impl DatabaseConnection {
-    pub async fn new(postgres_connection_string: &str) -> Result<Self, tokio_postgres::Error> {
-        // Connect to the database.
-        let (client, connection) =
-            tokio_postgres::connect(postgres_connection_string, tokio_postgres::NoTls).await?;
+struct DigitAnnoncementResponse {
+    digit_index: i32,
+    nonce_public: Vec<u8>,
+    nonce_secret: Option<Vec<u8>>,
+}
+struct DigitAttestationResponse {
+    digit_index: i32,
+    nonce_public: Vec<u8>,
+    bit: Option<Vec<u8>>,
+    signature: Option<Vec<u8>>,
+}
 
-        // The connection object performs the actual communication with the database,
-        // so spawn it off to run on its own.
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
+#[derive(Clone)]
+pub enum ScalarsRecords {
+    DigitsSkNonce(Vec<[u8; 32]>),
+    DigitsAttestations(u32, Vec<Scalar>),
+}
 
-        let insert_announcement_statement = client
-            .prepare_typed(
-                QUERY_INSERT_ANNOUNCEMENT,
-                &[
-                    Type::VARCHAR,
-                    Type::OID,
-                    Type::INT4,
-                    Type::TIMESTAMP,
-                    Type::BIT,
-                ],
-            )
-            .await?;
-        let insert_attestation_statement = client
-            .prepare_typed(
-                QUERY_INSERT_ATTESTATION,
-                &[Type::VARCHAR, Type::OID, Type::BIT, Type::BIT],
-            )
-            .await?;
-        let update_announcement_statement = client
-            .prepare_typed(QUERY_UPDATE_ANNOUNCEMENT, &[Type::OID, Type::VARCHAR])
-            .await?;
-        let update_attestation_statement = client
-            .prepare_typed(
-                QUERY_UPDATE_ATTESTATION,
-                &[Type::BIT, Type::BIT, Type::VARCHAR, Type::OID],
-            )
-            .await?;
-        let get_oracle_event_info_statement = client
-            .prepare_typed(QUERY_GET_ORACLE_EVENT_INFO, &[Type::VARCHAR])
-            .await?;
-        let get_oracle_event_statement = client
-            .prepare_typed(QUERY_GET_ORACLE_EVENT, &[Type::VARCHAR])
-            .await?;
+#[derive(Clone)]
+pub(super) struct PostgresResponse {
+    pub digits: u16,
+    pub precision: u16,
+    pub maturity: OffsetDateTime,
+    pub announcement_signature: Signature,
+    pub nonce_public: Vec<XOnlyPublicKey>,
+    pub scalars_records: ScalarsRecords,
+}
+#[derive(Clone)]
+pub struct DBconnection(PgPool);
 
-        Ok(Self {
-            client,
-            insert_announcement_statement,
-            insert_attestation_statement,
-            update_announcement_statement,
-            update_attestation_statement,
-            get_oracle_event_info_statement,
-            get_oracle_event_statement,
-        })
+impl DBconnection {
+    pub async fn new(url: &str, max_connection: u32) -> Result<Self> {
+        Ok(DBconnection(
+            PgPoolOptions::new()
+                .max_connections(max_connection)
+                .connect(url)
+                .await?,
+        ))
     }
+
     pub async fn is_empty(&self) -> bool {
-        self.client
-            .query("SELECT * FROM oracle.events LIMIT 1", &[])
+        match sqlx::query_as!(EventResponse, "SELECT * FROM oracle.events LIMIT 1")
+            .fetch_optional(&self.0)
             .await
             .unwrap()
-            .is_empty()
+        {
+            Some(_) => false,
+            None => true,
+        }
     }
-}
-#[cfg(test)]
-mod test {
-    use crate::oracle::postgres::DatabaseConnection;
-    #[tokio::test]
-    async fn postgres_connection_check() {
-        let client = DatabaseConnection::new("host=localhost user=postgres password=postgres")
-            .await
-            .unwrap();
-        // Now we can execute a simple statement that just returns its parameter.
-        let rows = client
-            .client
-            .query("SELECT $1::TEXT", &[&"hello world"])
-            .await
-            .unwrap();
+    pub(super) async fn insert_announcement(
+        &self,
+        announcement: &OracleAnnouncement,
+        outstanding_sk_nonces: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        let EventDescriptor::DigitDecompositionEvent(ref digits) = announcement.oracle_event.event_descriptor else {
+      return Err(sqlx::Error::TypeNotFound { type_name: "Only DigitDecomposition event type is supported".to_string() })
+    };
 
-        // And then check that we got back the same string we sent over.
-        let value: &str = rows[0].get(0);
-        assert_eq!(value, "hello world");
+        sqlx::query!(
+            "WITH events AS (
+                INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5)
+            )
+            INSERT INTO oracle.digits (event_id, digit_index, nonce_public, nonce_secret) (
+                SELECT * FROM UNNEST($6::VARCHAR[], $7::INT[], $8::BYTEA[], $9::BYTEA[])
+            )
+            ",
+            &announcement.oracle_event.event_id,
+            &(digits.nb_digits as i32),
+            digits.precision,
+            OffsetDateTime::from_unix_timestamp(
+                announcement
+                    .oracle_event
+                    .event_maturity_epoch
+                    .try_into()
+                    .unwrap(),
+            )
+            .unwrap(),
+            announcement.announcement_signature.as_ref(),
+            &vec![announcement.oracle_event.event_id.to_owned(); digits.nb_digits as usize][..],
+            &(0..digits.nb_digits as i32).collect::<Vec<i32>>(),
+            &announcement
+                .oracle_event
+                .oracle_nonces
+                .iter()
+                .map(|x| x.serialize().to_vec())
+                .collect::<Vec<Vec<u8>>>(),
+            outstanding_sk_nonces.as_slice(): &[Vec<u8>]
+        )
+        .execute(&self.0)
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn update_to_attestation(
+        &self,
+        event_id: &str,
+        attestation: &OracleAttestation,
+        outcome: u32,
+    ) -> Result<()> {
+        let (indexes, (bits, sigs)): (Vec<usize>, (Vec<Vec<u8>>, Vec<Vec<u8>>)) = attestation
+            .outcomes
+            .iter()
+            .map(|b| vec![u8::from_str(b).unwrap()])
+            .zip(
+                attestation
+                    .signatures
+                    .iter()
+                    .map(|sig| sig.as_ref().split_at(32).1.to_vec()),
+            )
+            .enumerate()
+            .unzip();
+        sqlx::query!(
+            "WITH events AS (
+                UPDATE oracle.events SET outcome = $1::INT WHERE id = $2::TEXT
+            )
+            UPDATE oracle.digits
+        SET bit = bulk.bit, signature = bulk.sig, signing_ts = NOW(), nonce_secret = NULL
+        FROM ( 
+            SELECT *
+            FROM UNNEST($3::BYTEA[], $4::BYTEA[], $5::VARCHAR[], $6::INT[]) 
+            AS t(bit, sig, id, digit)
+            ) AS bulk 
+        WHERE event_id = bulk.id AND digit_index = bulk.digit
+        ",
+            &(outcome as i32),
+            event_id,
+            &bits[..],
+            &sigs,
+            &vec![event_id.to_owned(); indexes.len() as usize][..],
+            &indexes.into_iter().map(|x| x as i32).collect::<Vec<i32>>()[..],
+        )
+        .execute(&self.0)
+        .await?;
+
+        Ok(())
+    }
+
+    pub(super) async fn get_event(&self, event_id: &String) -> Result<Option<PostgresResponse>> {
+        let Some(event) = sqlx::query_as!(
+        EventResponse,
+        "SELECT e.* FROM oracle.events e WHERE e.id = $1",
+        event_id
+    )
+    .fetch_optional(&self.0)
+    .await? else {return Ok(None)};
+
+        match &event.outcome {
+            None => {
+                let digits = sqlx::query_as!(
+                DigitAnnoncementResponse,
+                "SELECT digit_index, nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1;",
+                event_id
+            )
+            .fetch_all(&self.0)
+            .await?;
+                let mut aggregated_rows: Vec<(u16, (XOnlyPublicKey, [u8; 32]))> = digits
+                    .iter()
+                    .map(|x| {
+                        (
+                            x.digit_index as u16,
+                            (
+                                XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                                x.nonce_secret
+                                    .as_ref()
+                                    .unwrap()
+                                    .as_slice()
+                                    .try_into()
+                                    .unwrap(),
+                            ),
+                        )
+                    })
+                    .collect();
+                aggregated_rows.sort_unstable_by_key(|&d| d.0);
+                type AnnouncementRows = (Vec<u16>, (Vec<XOnlyPublicKey>, Vec<[u8; 32]>));
+                let (_, (nonce_public, nonce_secret)): AnnouncementRows =
+                    aggregated_rows.into_iter().unzip();
+                Ok(Some(PostgresResponse {
+                    digits: event.digits as u16,
+                    precision: event.precision as u16,
+                    maturity: event.maturity,
+                    announcement_signature: Signature::from_slice(
+                        &event.announcement_signature[..],
+                    )
+                    .unwrap(),
+                    nonce_public,
+                    scalars_records: ScalarsRecords::DigitsSkNonce(nonce_secret),
+                }))
+            }
+            Some(outcome) => {
+                let digits = sqlx::query_as!(
+                DigitAttestationResponse,
+                "SELECT digit_index, nonce_public, bit, signature FROM oracle.digits WHERE event_id = $1;",
+                event_id
+            )
+            .fetch_all(&self.0)
+            .await?;
+                type AggregatedRows = (u16, (XOnlyPublicKey, (String, Scalar)));
+                let mut aggregated_rows: Vec<AggregatedRows> = digits
+                    .iter()
+                    .map(|x| {
+                        (
+                            x.digit_index as u16,
+                            (
+                                XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                                (
+                                    (x.bit.as_ref().unwrap()[0] as i8).to_string(),
+                                    Scalar::from_be_bytes(
+                                        x.signature
+                                            .as_ref()
+                                            .unwrap()
+                                            .as_slice()
+                                            .try_into()
+                                            .unwrap(),
+                                    )
+                                    .unwrap(),
+                                ),
+                            ),
+                        )
+                    })
+                    .collect();
+                aggregated_rows.sort_unstable_by_key(|d| d.0);
+                type AttestationRows =
+                    (Vec<u16>, (Vec<XOnlyPublicKey>, (Vec<String>, Vec<Scalar>)));
+                let (_, (nonce_public, (bits, sigs))): AttestationRows =
+                    aggregated_rows.into_iter().unzip();
+                Ok(Some(PostgresResponse {
+                    digits: event.digits as u16,
+                    precision: event.precision as u16,
+                    maturity: event.maturity,
+                    announcement_signature: Signature::from_slice(
+                        &event.announcement_signature[..],
+                    )
+                    .unwrap(),
+                    nonce_public,
+                    scalars_records: ScalarsRecords::DigitsAttestations(
+                        outcome.clone() as u32,
+                        sigs,
+                    ),
+                }))
+            }
+        }
     }
 }

@@ -1,8 +1,9 @@
 #[macro_use]
 extern crate log;
 
-use actix_web::{get, web, App, HttpResponse, HttpServer};
+use actix_web::{error::HttpError, get, web, App, HttpResponse, HttpServer};
 use clap::Parser;
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -16,16 +17,20 @@ use std::{
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 mod oracle;
-use oracle::{
-    oracle_scheduler, postgres,
-    pricefeeds::{Lnm, PriceFeed},
-    Oracle, PostgresResponse, ScalarPart,
-};
+use oracle::{Oracle, OracleError};
+
 mod common;
 use common::{AssetPair, AssetPairInfo, OracleConfig};
 
 mod error;
 use error::PythiaError;
+
+mod pricefeeds;
+use pricefeeds::{Lnm, PriceFeed};
+
+mod oracle_scheduler;
+
+use crate::oracle::postgres::DBconnection;
 
 // const PAGE_SIZE: u32 = 100;
 
@@ -85,11 +90,13 @@ struct ApiOracleEvent {
     outcome: Option<u64>,
 }
 
-async fn get_event_at_timestamp(oracle: &Oracle, ts: &OffsetDateTime) -> Option<PostgresResponse> {
+async fn get_event_at_timestamp(
+    oracle: &Oracle,
+    ts: &OffsetDateTime,
+) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>, OracleError> {
     oracle
-        .get_oracle_event("btcusd".to_string() + &ts.unix_timestamp().to_string())
+        .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
         .await
-        .unwrap()
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,31 +133,49 @@ async fn announcement(
         Some(val) => val,
     };
 
-    if oracle.postgres_client.is_empty().await {
+    if oracle.is_empty().await {
         info!("no oracle events found");
         return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
     info!("retrieving oracle event with maturation {}", ts);
-    let event = match get_event_at_timestamp(oracle, &timestamp).await {
-        Some(val) => val,
-        None => return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into()),
-    };
-
-    match event_type {
-        EventType::Announcement => Ok(HttpResponse::Ok().json(event.announcement)),
-        EventType::Attestation => {
-            let ScalarPart::Attestation(attestation) = event.scalar_part else {
-                return Err(PythiaError::OracleEventNotFoundError(OffsetDateTime::from_unix_timestamp(event.announcement.oracle_event.event_maturity_epoch.into()).unwrap().to_string()).into())
-            };
-            let attestation_response = AttestationResponse {
-                event_id: asset_pair.to_string().to_lowercase()
-                    + timestamp.unix_timestamp().to_string().as_str(),
-                signatures: attestation.signatures,
-                values: attestation.outcomes,
-            };
-            Ok(HttpResponse::Ok().json(attestation_response))
-        }
+    let event_id = "btcusd".to_string() + &timestamp.unix_timestamp().to_string();
+    match oracle.oracle_state(event_id.clone()).await {
+        Err(error) => Err(PythiaError::OracleError(error).into()),
+        Ok(event_option) => match event_option {
+            None => Err(PythiaError::OracleEventNotFoundError(event_id).into()),
+            Some((announcement, maybe_attestation)) => match event_type {
+                EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
+                EventType::Attestation => match maybe_attestation {
+                    None => {
+                        if timestamp < OffsetDateTime::now_utc() {
+                            match oracle.try_attest_event(event_id.clone()).await {
+                                Err(error) => Err(PythiaError::OracleError(error).into()),
+                                Ok(maybe_attestation) => {
+                                    let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exist now");
+                                    let attestation_response = AttestationResponse {
+                                        event_id,
+                                        signatures: attestation.signatures,
+                                        values: attestation.outcomes,
+                                    };
+                                    Ok(HttpResponse::Ok().json(attestation_response))
+                                }
+                            }
+                        } else {
+                            Ok(HttpResponse::Ok().json(announcement))
+                        }
+                    }
+                    Some(attestation) => {
+                        let attestation_response = AttestationResponse {
+                            event_id,
+                            signatures: attestation.signatures,
+                            values: attestation.outcomes,
+                        };
+                        Ok(HttpResponse::Ok().json(attestation_response))
+                    }
+                },
+            },
+        },
     }
 }
 #[get("/config")]
@@ -183,8 +208,8 @@ struct Args {
     oracle_config_file: Option<std::path::PathBuf>,
 }
 
-// #[actix_web::main]
-#[tokio::main]
+#[actix_web::main]
+// #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
@@ -251,9 +276,8 @@ async fn main() -> anyhow::Result<()> {
     };
     info!("oracle config successfully read: {:#?}", oracle_config);
 
-    let client = Arc::new(
-        postgres::DatabaseConnection::new("host=localhost user=postgres password=postgres").await?,
-    );
+    const DB_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+    let db = DBconnection::new(DB_URL, 10).await?;
 
     // setup event databases
     let oracles = asset_pair_infos
@@ -262,17 +286,23 @@ async fn main() -> anyhow::Result<()> {
         .zip(asset_pair_infos.iter().cloned().map(|asset_pair_info| {
             let asset_pair = asset_pair_info.asset_pair;
 
-            // create oracle
-            info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(oracle_config, asset_pair_info, client.clone(), keypair)?;
-
             // pricefeed retreival
             info!("creating pricefeeds for {}", asset_pair);
-            let pricefeeds: Vec<Box<dyn PriceFeed + Send + Sync>> = vec![Box::new(Lnm {})];
+            let pricefeed: Box<dyn PriceFeed + Send + Sync> = Box::new(Lnm {});
+
+            info!("creating oracle for {}", asset_pair);
+            let oracle = Oracle::new(
+                oracle_config,
+                asset_pair_info,
+                secp.clone(),
+                db.clone(),
+                pricefeed,
+                keypair,
+            )?;
 
             info!("scheduling oracle events for {}", asset_pair);
             // schedule oracle events (announcements/attestations)
-            oracle_scheduler::init(oracle.clone(), secp.clone(), pricefeeds)?;
+            oracle_scheduler::init(oracle.clone().into())?;
 
             Ok(oracle)
         }))

@@ -1,4 +1,4 @@
-use super::{PriceFeed, PriceFeedError, Result};
+use crate::pricefeeds::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
@@ -32,7 +32,7 @@ impl PriceFeed for Lnm {
         let res: Vec<LnmQuote> = client
             .get("https://api.Lnmarkets.com/v1/oracle/index")
             .query(&[
-                ("from", (1_000 * &start_time).to_string().as_ref()),
+                ("to", (1_000 * &start_time).to_string().as_ref()),
                 ("limit", "1"),
             ])
             .send()
@@ -40,6 +40,10 @@ impl PriceFeed for Lnm {
             .json()
             .await?;
         info!("received response: {:#?}", res);
+
+        if res[0].timestamp.timestamp() != start_time {
+            return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
+        }
 
         if res.is_empty() {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));

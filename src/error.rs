@@ -1,4 +1,4 @@
-use crate::AssetPair;
+use crate::{oracle::OracleError, AssetPair};
 use displaydoc::Display;
 use thiserror::Error;
 
@@ -15,7 +15,10 @@ pub enum PythiaError {
     OracleEventNotFoundError(String),
 
     /// database error: {0}
-    DatabaseError(#[from] tokio_postgres::Error),
+    DatabaseError(#[from] sqlx::Error),
+
+    /// Oracle Error: {0}
+    OracleError(#[from] OracleError),
 }
 
 impl actix_web::error::ResponseError for PythiaError {

@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS oracle.events (
   precision INTEGER NOT NULL,
   -- Planned date of the attestation
   maturity TIMESTAMP WITH TIME ZONE NOT NULL,
-  announcement_signature BIT(512) NOT NULL,
+  announcement_signature BYTEA NOT NULL,
   outcome INTEGER
 );
 
@@ -19,12 +19,12 @@ CREATE TABLE IF NOT EXISTS oracle.digits (
   digit_index INTEGER NOT NULL,
 
   -- Nonce
-  nonce_public BIT(256) NOT NULL,
-  nonce_secret BIT(256),
+  nonce_public BYTEA NOT NULL,
+  nonce_secret BYTEA,
 
   -- Outcome
-  bit BIT(1),
-  signature BIT(256),
+  bit BYTEA,
+  signature BYTEA,
   signing_ts TIMESTAMP WITH TIME ZONE,
 
   PRIMARY KEY (event_id, digit_index),

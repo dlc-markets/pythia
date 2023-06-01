@@ -9,8 +9,14 @@ pub enum OracleError {
     InvalidAnnouncementTimeError(time::Duration),
 
     /// database error: {0}
-    DatabaseError(#[from] tokio_postgres::Error),
+    DatabaseError(#[from] sqlx::Error),
 
     /// index in DB error:
     IndexingError(),
+
+    /// Event already attested
+    AlreadyAttestatedError(String),
+
+    /// pricefeed error: {0}
+    PriceFeedError(#[from] crate::pricefeeds::PriceFeedError),
 }

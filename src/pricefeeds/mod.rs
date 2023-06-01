@@ -12,12 +12,12 @@ pub trait PriceFeed {
     async fn retrieve_price(&self, asset_pair: AssetPair, datetime: OffsetDateTime) -> Result<f64>;
 }
 
-//mod bitstamp;
-//mod gateio;
-//mod kraken;
+mod bitstamp;
+mod gateio;
+mod kraken;
 mod lnm;
 
-//pub use bitstamp::Bitstamp;
-//pub use gateio::GateIo;
-//pub use kraken::Kraken;
+pub use bitstamp::Bitstamp;
+pub use gateio::GateIo;
+pub use kraken::Kraken;
 pub use lnm::Lnm;

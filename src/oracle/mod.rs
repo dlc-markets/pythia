@@ -1,82 +1,42 @@
 use crate::{AssetPairInfo, OracleConfig};
-use bit_vec::BitVec;
-use displaydoc::Display;
+
+use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use dlc_messages::oracle_msgs::{
-    DigitDecompositionEventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
+    EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent, Writeable,
 };
-use secp256k1_zkp::{KeyPair, XOnlyPublicKey as SchnorrPublicKey};
-use std::time::SystemTime;
-use std::{str::FromStr, sync::Arc};
+use secp256k1_zkp::{
+    hashes::sha256,
+    rand::{thread_rng, RngCore},
+    All, KeyPair, Message, Secp256k1, XOnlyPublicKey as SchnorrPublicKey,
+};
+use std::sync::Arc;
 use time::OffsetDateTime;
 
-use tokio_postgres::types::ToSql;
+use crate::pricefeeds::PriceFeed;
 
-use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
+use secp256k1_zkp::schnorr::Signature;
 
 mod error;
 pub use error::OracleError;
 pub use error::Result;
+
 pub mod postgres;
 
-#[derive(Clone)]
-// outstanding_sk_nonces?, announcement, attetstation?, outcome?
-pub struct DbValue(
-    pub Option<Vec<[u8; 32]>>,
-    pub OracleAnnouncement,
-    pub Option<OracleAttestation>,
-    pub Option<u32>,
-);
-#[derive(Clone)]
-pub enum ScalarPart {
-    AnnouncementSkNonce(Vec<[u8; 32]>),
-    Attestation(OracleAttestation),
+use self::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
+use self::postgres::*;
+
+mod crypto;
+struct AppState {
+    db: DBconnection,
+    secp: Secp256k1<All>,
+    pricefeed: Box<dyn PriceFeed + Send + Sync>,
 }
 
-pub struct OracleSignature(Signature);
-pub struct NoncePoint(XOnlyPublicKey);
-#[derive(Display)]
-pub struct SigningScalar(Scalar);
-
-impl From<OracleSignature> for (NoncePoint, SigningScalar) {
-    fn from(sig: OracleSignature) -> Self {
-        let (x_nonce_bytes, scalar_bytes) = sig.0.as_ref().split_at(32);
-        let scalar_array = scalar_bytes
-            .try_into()
-            .expect("Schnorr signature is 64 bytes long");
-        (
-            NoncePoint(
-                XOnlyPublicKey::from_slice(x_nonce_bytes).expect("signature split correctly"),
-            ),
-            SigningScalar(
-                Scalar::from_be_bytes(scalar_array)
-                    .expect("signature scalar is always less then curve order"),
-            ),
-        )
-    }
-}
-
-impl From<(NoncePoint, SigningScalar)> for OracleSignature {
-    fn from(value: (NoncePoint, SigningScalar)) -> Self {
-        OracleSignature(
-            Signature::from_str(
-                (value.0 .0.to_string() + value.0 .0.to_string().as_str()).as_str(),
-            )
-            .expect("Nonce and scalar are 64 bytes long"),
-        )
-    }
-}
-
-#[derive(Clone)]
-pub struct PostgresResponse {
-    pub announcement: OracleAnnouncement,
-    pub scalar_part: ScalarPart,
-}
 #[derive(Clone)]
 pub struct Oracle {
     pub oracle_config: OracleConfig,
     asset_pair_info: AssetPairInfo,
-    // pub event_database: Db,
-    pub postgres_client: Arc<DatabaseConnection>,
+    app_state: Arc<AppState>,
     keypair: KeyPair,
 }
 
@@ -84,7 +44,9 @@ impl Oracle {
     pub fn new(
         oracle_config: OracleConfig,
         asset_pair_info: AssetPairInfo,
-        postgres_client: Arc<DatabaseConnection>,
+        secp: Secp256k1<All>,
+        db: DBconnection,
+        pricefeed: Box<dyn PriceFeed + Send + Sync>,
         keypair: KeyPair,
     ) -> Result<Oracle> {
         if !oracle_config.announcement_offset.is_positive() {
@@ -101,252 +63,155 @@ impl Oracle {
         Ok(Oracle {
             oracle_config,
             asset_pair_info,
-            // event_database,
-            postgres_client,
+            app_state: Arc::new(AppState {
+                db,
+                secp,
+                pricefeed,
+            }),
             keypair,
         })
     }
     pub fn get_public_key(self: &Oracle) -> SchnorrPublicKey {
         self.keypair.public_key().into()
     }
-
-    pub async fn insert_announcement(
-        &self,
-        announcement: OracleAnnouncement,
-        outstanding_sk_nonces: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        let EventDescriptor::DigitDecompositionEvent(digits) = announcement.oracle_event.event_descriptor else {
-          return Err(OracleError::IndexingError())
-        };
-        let params: &[&(dyn ToSql + Sync)] = &[
-            &announcement.oracle_event.event_id,
-            &(digits.nb_digits as u32),
-            &digits.precision,
-            &SystemTime::from(
-                OffsetDateTime::from_unix_timestamp(
-                    announcement
-                        .oracle_event
-                        .event_maturity_epoch
-                        .try_into()
-                        .unwrap(),
-                )
-                .expect("Stored timestamp is valid"),
-            ),
-            &BitVec::from_bytes(announcement.announcement_signature.as_ref()),
-        ];
-        // info!("Insert: {:?}", params);
-        self.postgres_client
-            .client
-            .query(&self.postgres_client.insert_announcement_statement, params)
-            .await?;
-
-        for (i, sk_nounce) in outstanding_sk_nonces.iter().enumerate() {
-            let params: &[&(dyn ToSql + Sync)] = &[
-                &announcement.oracle_event.event_id,
-                &(i as u32),
-                &BitVec::from_bytes(
-                    announcement.oracle_event.oracle_nonces[i]
-                        .serialize()
-                        .as_slice(),
-                ),
-                &BitVec::from_bytes(sk_nounce),
-            ];
-            self.postgres_client
-                .client
-                .query(&self.postgres_client.insert_attestation_statement, params)
-                .await?;
-        }
-        Ok(())
+    pub async fn is_empty(&self) -> bool {
+        self.app_state.db.is_empty().await
     }
 
-    pub async fn attestion_update(
+    pub async fn create_announcement(
         &self,
-        event_id: &str,
-        attestation: OracleAttestation,
-        outcome: u32,
-    ) -> Result<()> {
-        let params: &[&(dyn ToSql + Sync)] = &[&outcome, &event_id];
-        // info!("Update: {:?}", params);
-        self.postgres_client
-            .client
-            .query(&self.postgres_client.update_announcement_statement, params)
-            .await?;
-
-        for (index, (bit, sig)) in attestation
-            .outcomes
-            .iter()
-            .zip(attestation.signatures.into_iter().map(|schnorr_sig| {
-                <OracleSignature as Into<(NoncePoint, SigningScalar)>>::into(OracleSignature(
-                    schnorr_sig,
-                ))
-                .1
-            }))
-            .enumerate()
+        maturation: OffsetDateTime,
+    ) -> Result<OracleAnnouncement> {
+        let EventDescriptor::DigitDecompositionEvent(event) = &self.asset_pair_info.event_descriptor else {panic!("Error in db")};
+        let digits = event.nb_digits;
+        let mut sk_nonces = Vec::with_capacity(digits.into());
+        let mut nonces = Vec::with_capacity(digits.into());
         {
-            let params: &[&(dyn ToSql + Sync)] = &[
-                &BitVec::from_elem(1, i32::from_str(bit.as_str()).unwrap() != 0),
-                &BitVec::from_bytes(&sig.0.to_be_bytes()),
-                &event_id,
-                &(index as u32),
-            ];
-            self.postgres_client
-                .client
-                .query(&self.postgres_client.update_attestation_statement, params)
-                .await?;
+            let mut rng = thread_rng();
+            for _ in 0..digits {
+                let mut sk_nonce = [0u8; 32];
+                rng.fill_bytes(&mut sk_nonce);
+                let oracle_r_kp =
+                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, &sk_nonce)
+                        .unwrap();
+                let nonce = SchnorrPublicKey::from_keypair(&oracle_r_kp).0;
+                sk_nonces.push(sk_nonce);
+                nonces.push(nonce);
+            }
         }
-        Ok(())
-    }
 
-    pub async fn get_oracle_event(&self, event_id: String) -> Result<Option<PostgresResponse>> {
-        let params: [&(dyn ToSql + Sync); 1] = [&event_id];
-        let event_raws = self
-            .postgres_client
-            .client
-            .query(
-                &self.postgres_client.get_oracle_event_info_statement,
-                &params,
-            )
+        let oracle_event = OracleEvent {
+            oracle_nonces: nonces,
+            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
+                + maturation.unix_timestamp().to_string().as_str(),
+        };
+
+        let announcement = OracleAnnouncement {
+            announcement_signature: self.app_state.secp.sign_schnorr(
+                &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                    &oracle_event.encode(),
+                ),
+                &self.keypair,
+            ),
+            oracle_public_key: self.keypair.public_key().into(),
+            oracle_event,
+        };
+        let _ = &self
+            .app_state
+            .db
+            .insert_announcement(&announcement, sk_nonces)
             .await?;
-        let [event_raw] = event_raws.as_slice()  else { return Ok(None)};
-        let digits_rows = self
-            .postgres_client
-            .client
-            .query(&self.postgres_client.get_oracle_event_statement, &params)
-            .await?;
-        let (nb_digits, precision, event_maturity_epoch, announcement_signature, outcome_option): (
-            u16,
-            i32,
-            u32,
-            Signature,
-            Option<i32>,
-        ) = (
-            event_raw
-                .get::<usize, i32>(1)
-                .try_into()
-                .expect("to never be that high"),
-            event_raw.get(2),
-            OffsetDateTime::from(event_raw.get::<usize, SystemTime>(3))
-                .unix_timestamp()
-                .try_into()
-                .expect("timestamp low"),
-            Signature::from_slice(event_raw.get::<usize, BitVec>(4).to_bytes().as_slice()).unwrap(),
-            event_raw.get(5),
+        info!(
+            "created oracle event (announcement only) with maturation {} and announcement {:#?}",
+            maturation, &announcement
         );
 
-        match outcome_option {
-            None => {
-                let mut aggregated_rows: Vec<(i32, (XOnlyPublicKey, [u8; 32]))> = digits_rows
+        Ok(announcement)
+    }
+
+    pub async fn try_attest_event(&self, event_id: String) -> Result<Option<OracleAttestation>> {
+        let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
+        let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {return Err(OracleError::AlreadyAttestatedError(event_id))};
+        info!("retrieving pricefeeds for attestation");
+        let outcome: u32 = self
+            .app_state
+            .pricefeed
+            .retrieve_price(self.asset_pair_info.asset_pair, event.maturity)
+            .await?
+            .round() as u32;
+
+        let outcomes = to_digit_decomposition_vec(outcome, event.digits);
+        let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
+            .iter()
+            .zip(outstanding_sk_nonces.iter())
+            .map(|(outcome, outstanding_sk_nonce)| {
+                (
+                    outcome.to_owned(),
+                    schnorrsig_sign_with_nonce(
+                        &self.app_state.secp,
+                        &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
+                        &self.keypair,
+                        outstanding_sk_nonce,
+                    ),
+                )
+            })
+            .unzip();
+
+        let attestation = OracleAttestation {
+            oracle_public_key: self.keypair.public_key().into(),
+            signatures,
+            outcomes: outcome_vec,
+        };
+        let _ = &self
+            .app_state
+            .db
+            .update_to_attestation(event_id.as_ref(), &attestation, outcome)
+            .await?;
+        Ok(Some(attestation))
+    }
+
+    pub async fn oracle_state(
+        &self,
+        event_id: String,
+    ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
+        let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
+        let oracle_event = OracleEvent {
+            oracle_nonces: event.nonce_public.clone(),
+            event_maturity_epoch: event.maturity.unix_timestamp() as u32,
+            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_id,
+        };
+
+        let announcement = OracleAnnouncement {
+            announcement_signature: event.announcement_signature,
+            oracle_public_key: self.keypair.public_key().into(),
+            oracle_event,
+        };
+        match event.scalars_records {
+            ScalarsRecords::DigitsSkNonce(_) => Ok(Some((announcement, None))),
+            ScalarsRecords::DigitsAttestations(outcome, sigs) => {
+                let full_signatures = sigs
                     .iter()
-                    .map(|x| {
-                        (
-                            x.get::<usize, i32>(1),
-                            (
-                                XOnlyPublicKey::from_slice(&x.get::<usize, BitVec>(2).to_bytes())
-                                    .unwrap(),
-                                x.get::<usize, BitVec>(3).to_bytes().try_into().unwrap(),
-                            ),
-                        )
+                    .zip(event.nonce_public)
+                    .map(|(s, n)| {
+                        <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
+                            NoncePoint(n),
+                            SigningScalar(*s),
+                        ))
+                        .into()
                     })
                     .collect();
-                aggregated_rows.sort_unstable_by_key(|&d| d.0);
-                type AnnouncementRow = (Vec<i32>, (Vec<XOnlyPublicKey>, Vec<[u8; 32]>));
-                let (_, (nonce_public, nonce_secret)): AnnouncementRow =
-                    aggregated_rows.into_iter().unzip();
-                Ok(Some(PostgresResponse {
-                    announcement: OracleAnnouncement {
-                        announcement_signature,
-                        oracle_public_key: self.keypair.x_only_public_key().0,
-                        oracle_event: OracleEvent {
-                            oracle_nonces: nonce_public,
-                            event_maturity_epoch,
-                            event_descriptor: EventDescriptor::DigitDecompositionEvent(
-                                DigitDecompositionEventDescriptor {
-                                    base: 2,
-                                    is_signed: false,
-                                    unit: "usd/btc".to_owned(),
-                                    precision,
-                                    nb_digits,
-                                },
-                            ),
-                            event_id,
-                        },
-                    },
-                    scalar_part: ScalarPart::AnnouncementSkNonce(nonce_secret),
-                }))
-            }
-            Some(_) => {
-                type AggregatedRows = (i32, (XOnlyPublicKey, (String, Signature)));
-                let mut aggregated_rows: Vec<AggregatedRows> = digits_rows
-                    .iter()
-                    .map(|x| {
-                        let nonce_x =
-                            XOnlyPublicKey::from_slice(&x.get::<usize, BitVec>(2).to_bytes())
-                                .unwrap();
-                        (
-                            x.get::<usize, i32>(1),
-                            (
-                                nonce_x,
-                                (
-                                    (x.get::<usize, bit_vec::BitVec>(4).pop().unwrap() as i8)
-                                        .to_string(),
-                                    <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
-                                        NoncePoint(nonce_x),
-                                        SigningScalar(
-                                            Scalar::from_be_bytes(
-                                                x.get::<usize, bit_vec::BitVec>(5)
-                                                    .to_bytes()
-                                                    .try_into()
-                                                    .unwrap(),
-                                            )
-                                            .unwrap(),
-                                        ),
-                                    ))
-                                    .0,
-                                ),
-                            ),
-                        )
-                    })
-                    .collect();
-                aggregated_rows.sort_unstable_by_key(|d| d.0);
-                type AttestationRaws = (
-                    Vec<i32>,
-                    (Vec<XOnlyPublicKey>, (Vec<String>, Vec<Signature>)),
-                );
-                let (_, (nonce_public, (bits, sigs))): AttestationRaws =
-                    aggregated_rows.into_iter().unzip();
-                Ok(Some(PostgresResponse {
-                    announcement: OracleAnnouncement {
-                        announcement_signature,
-                        oracle_public_key: self.keypair.x_only_public_key().0,
-                        oracle_event: OracleEvent {
-                            oracle_nonces: nonce_public,
-                            event_maturity_epoch,
-                            event_descriptor: EventDescriptor::DigitDecompositionEvent(
-                                DigitDecompositionEventDescriptor {
-                                    base: 2,
-                                    is_signed: false,
-                                    unit: "usd/btc".to_owned(),
-                                    precision,
-                                    nb_digits,
-                                },
-                            ),
-                            event_id,
-                        },
-                    },
-                    scalar_part: ScalarPart::Attestation(OracleAttestation {
-                        oracle_public_key: self.keypair.x_only_public_key().0,
-                        signatures: sigs,
-                        outcomes: bits,
+                Ok(Some((
+                    announcement,
+                    Some(OracleAttestation {
+                        oracle_public_key: self.keypair.public_key().into(),
+                        signatures: full_signatures,
+                        outcomes: to_digit_decomposition_vec(outcome, event.digits),
                     }),
-                }))
+                )))
             }
         }
     }
 }
-
-pub mod oracle_scheduler;
-pub use dlc_messages::oracle_msgs::EventDescriptor;
-
-use self::postgres::DatabaseConnection;
-
-pub mod pricefeeds;
