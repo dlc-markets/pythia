@@ -47,8 +47,9 @@ impl From<OracleSignature> for Signature {
     }
 }
 
-pub fn to_digit_decomposition_vec(outcome: u32, digits: u16) -> Vec<String> {
-    let outcome_binary = format!("{:0width$b}", outcome, width = digits as usize);
+pub fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
+    let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
+    let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
     outcome_binary
         .chars()
         .map(|char| char.to_string())

@@ -1,4 +1,4 @@
-use crate::{oracle::crypto::sign_outcome, AssetPairInfo, OracleConfig};
+use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
 
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent, Writeable,
@@ -32,34 +32,26 @@ struct AppState {
 
 #[derive(Clone)]
 pub struct Oracle {
-    pub oracle_config: OracleConfig,
-    asset_pair_info: AssetPairInfo,
+    pub asset_pair_info: AssetPairInfo,
     app_state: Arc<AppState>,
     keypair: KeyPair,
 }
 
 impl Oracle {
     pub fn new(
-        oracle_config: OracleConfig,
         asset_pair_info: AssetPairInfo,
         secp: Secp256k1<All>,
         db: DBconnection,
-        pricefeed: Box<dyn PriceFeed + Send + Sync>,
         keypair: KeyPair,
     ) -> Result<Oracle> {
-        if !oracle_config.announcement_offset.is_positive() {
-            return Err(OracleError::InvalidAnnouncementTimeError(
-                oracle_config.announcement_offset,
-            ));
-        }
-
         // setup event database
         // let path = format!("events/{}", asset_pair_info.asset_pair);
         // info!("creating sled at {}", path);
         // let event_database = sled::open(path)?;
 
+        let pricefeed = asset_pair_info.pricefeed.get_pricefeed();
+
         Ok(Oracle {
-            oracle_config,
             asset_pair_info,
             app_state: Arc::new(AppState {
                 db,
@@ -133,14 +125,13 @@ impl Oracle {
         let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {return Err(OracleError::AlreadyAttestatedError(event_id))};
         info!("retrieving pricefeeds for attestation");
-        let outcome: u32 = self
+        let outcome = self
             .app_state
             .pricefeed
             .retrieve_price(self.asset_pair_info.asset_pair, event.maturity)
-            .await?
-            .round() as u32;
+            .await?;
 
-        let outcomes = to_digit_decomposition_vec(outcome, event.digits);
+        let outcomes = to_digit_decomposition_vec(outcome, event.digits, event.precision);
         let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
             .iter()
             .zip(outstanding_sk_nonces.iter())
@@ -203,7 +194,11 @@ impl Oracle {
                     Some(OracleAttestation {
                         oracle_public_key: self.keypair.public_key().into(),
                         signatures: full_signatures,
-                        outcomes: to_digit_decomposition_vec(outcome, event.digits),
+                        outcomes: to_digit_decomposition_vec(
+                            outcome,
+                            event.digits,
+                            event.precision,
+                        ),
                     }),
                 )))
             }

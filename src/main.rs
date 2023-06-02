@@ -17,16 +17,15 @@ mod oracle;
 use oracle::Oracle;
 
 mod common;
-use common::{AssetPair, AssetPairInfo, OracleConfig};
+use common::{AssetPair, AssetPairInfo};
 
 mod error;
 
 mod pricefeeds;
-use pricefeeds::{Lnm, PriceFeed};
 
 mod oracle_scheduler;
 
-use crate::oracle::postgres::DBconnection;
+use crate::{common::OracleSchedulerConfig, oracle::postgres::DBconnection};
 
 mod api;
 
@@ -42,6 +41,10 @@ struct Args {
     /// Optional asset pair config file; if not provided, it is assumed to exist at "config/asset_pair.json"
     #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
     asset_pair_config_file: Option<std::path::PathBuf>,
+
+    /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
+    #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    oracle_scheduler_config_file: Option<std::path::PathBuf>,
 
     /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
     #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
@@ -99,22 +102,25 @@ async fn main() -> anyhow::Result<()> {
         asset_pair_infos
     );
 
-    let oracle_config: OracleConfig = match args.oracle_config_file {
+    let oracle_scheduler_config: OracleSchedulerConfig = match args.oracle_scheduler_config_file {
         None => {
-            info!("reading oracle config from config/oracle.json");
-            serde_json::from_str(&fs::read_to_string("config/oracle.json")?)?
+            info!("reading oracle config from config/oracle_scheduler.json");
+            serde_json::from_str(&fs::read_to_string("config/oracle_scheduler.json")?)?
         }
         Some(path) => {
             info!(
-                "reading oracle config from {}",
+                "reading oracle scheduler config from {}",
                 path.as_os_str().to_string_lossy()
             );
-            let mut oracle_config = String::new();
-            File::open(path)?.read_to_string(&mut oracle_config)?;
-            serde_json::from_str(&oracle_config)?
+            let mut oracle_scheduler_config = String::new();
+            File::open(path)?.read_to_string(&mut oracle_scheduler_config)?;
+            serde_json::from_str(&oracle_scheduler_config)?
         }
     };
-    info!("oracle config successfully read: {:#?}", oracle_config);
+    info!(
+        "oracle scheduler config successfully read: {:#?}",
+        oracle_scheduler_config
+    );
 
     const DB_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
     let db = DBconnection::new(DB_URL, 10).await?;
@@ -126,23 +132,12 @@ async fn main() -> anyhow::Result<()> {
         .zip(asset_pair_infos.iter().cloned().map(|asset_pair_info| {
             let asset_pair = asset_pair_info.asset_pair;
 
-            // pricefeed retreival
-            info!("creating pricefeeds for {}", asset_pair);
-            let pricefeed: Box<dyn PriceFeed + Send + Sync> = Box::new(Lnm {});
-
             info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(
-                oracle_config,
-                asset_pair_info,
-                secp.clone(),
-                db.clone(),
-                pricefeed,
-                keypair,
-            )?;
+            let oracle = Oracle::new(asset_pair_info, secp.clone(), db.clone(), keypair)?;
 
             info!("scheduling oracle events for {}", asset_pair);
             // schedule oracle events (announcements/attestations)
-            oracle_scheduler::init(oracle.clone().into())?;
+            oracle_scheduler::init(oracle.clone().into(), oracle_scheduler_config)?;
 
             Ok(oracle)
         }))

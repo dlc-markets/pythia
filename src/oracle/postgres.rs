@@ -12,7 +12,7 @@ struct EventResponse {
     precision: i32,
     maturity: OffsetDateTime,
     announcement_signature: Vec<u8>,
-    outcome: Option<i32>,
+    outcome: Option<f64>,
 }
 
 struct DigitAnnoncementResponse {
@@ -29,7 +29,7 @@ struct DigitAttestationResponse {
 #[derive(Clone)]
 pub enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),
-    DigitsAttestations(u32, Vec<Scalar>),
+    DigitsAttestations(f64, Vec<Scalar>),
 }
 
 #[derive(Clone)]
@@ -112,7 +112,7 @@ impl DBconnection {
         &self,
         event_id: &str,
         attestation: &OracleAttestation,
-        outcome: u32,
+        outcome: f64,
     ) -> Result<()> {
         let (indexes, sigs): (Vec<usize>, Vec<Vec<u8>>) = attestation
             .signatures
@@ -122,7 +122,7 @@ impl DBconnection {
             .unzip();
         sqlx::query!(
             "WITH events AS (
-                UPDATE oracle.events SET outcome = $1::INT WHERE id = $2::TEXT
+                UPDATE oracle.events SET outcome = $1::FLOAT8 WHERE id = $2::TEXT
             )
             UPDATE oracle.digits
         SET signature = bulk.sig, signing_ts = NOW(), nonce_secret = NULL
@@ -133,7 +133,7 @@ impl DBconnection {
             ) AS bulk 
         WHERE event_id = bulk.id AND digit_index = bulk.digit
         ",
-            &(outcome as i32),
+            outcome,
             event_id,
             &sigs,
             &vec![event_id.to_owned(); indexes.len() as usize][..],
@@ -154,7 +154,7 @@ impl DBconnection {
     .fetch_optional(&self.0)
     .await? else {return Ok(None)};
 
-        match &event.outcome {
+        match event.outcome {
             None => {
                 let digits = sqlx::query_as!(
                 DigitAnnoncementResponse,
@@ -233,10 +233,7 @@ impl DBconnection {
                     )
                     .unwrap(),
                     nonce_public,
-                    scalars_records: ScalarsRecords::DigitsAttestations(
-                        outcome.clone() as u32,
-                        sigs,
-                    ),
+                    scalars_records: ScalarsRecords::DigitsAttestations(outcome, sigs),
                 }))
             }
         }

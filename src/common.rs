@@ -3,15 +3,18 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Display, Formatter};
 use time::{serde::format_description, Duration, Time};
 
+use crate::pricefeeds::ImplementedPriceFeed;
+
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetPair {
     BTCUSD,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub struct AssetPairInfo {
+    pub pricefeed: ImplementedPriceFeed,
     pub asset_pair: AssetPair,
     pub event_descriptor: EventDescriptor,
 }
@@ -76,9 +79,7 @@ mod standard_duration {
 }
 
 #[derive(Copy, Clone, Debug, Deserialize, Serialize)]
-pub struct OracleConfig {
-    #[serde(with = "standard_time")]
-    pub attestation_time: Time,
+pub struct OracleSchedulerConfig {
     #[serde(with = "standard_duration")]
     pub frequency: Duration,
     #[serde(with = "standard_duration")]

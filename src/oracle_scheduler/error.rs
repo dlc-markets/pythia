@@ -22,4 +22,7 @@ pub enum OracleSchedulerError {
 
     /// Oracle Error: {0}
     OracleError(#[from] crate::oracle::OracleError),
+
+    /// nonpositive announcement time offset: {0}; announcement must happen before attestation
+    InvalidAnnouncementTimeError(time::Duration),
 }

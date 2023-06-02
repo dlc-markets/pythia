@@ -1,14 +1,15 @@
 [
-    {
-        "asset_pair": "btcusd",
-        "event_descriptor": {
-            "digitDecompositionEvent": {
-            	"base": 2,
-            	"isSigned": false,
-            	"unit": "usd/btc",
-            	"precision": 0,
-            	"nbDigits": 20
-        	}
-	} 
-    }
+	{
+		"pricefeed": "lnm",
+		"asset_pair": "btcusd",
+		"event_descriptor": {
+			"digitDecompositionEvent": {
+				"base": 2,
+				"isSigned": false,
+				"unit": "usd/btc",
+				"precision": 7,
+				"nbDigits": 27
+			}
+		}
+	}
 ]

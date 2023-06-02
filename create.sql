@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS oracle.events (
   -- Planned date of the attestation
   maturity TIMESTAMP WITH TIME ZONE NOT NULL,
   announcement_signature BYTEA NOT NULL,
-  outcome INTEGER
+  outcome DOUBLE PRECISION
 );
 
 CREATE TABLE IF NOT EXISTS oracle.digits (

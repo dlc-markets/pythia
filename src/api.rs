@@ -86,11 +86,11 @@ async fn config(
 ) -> actix_web::Result<HttpResponse, actix_web::Error> {
     info!("GET /config");
     Ok(HttpResponse::Ok().json(
-        oracles
+        &oracles
             .values()
             .next()
             .expect("no asset pairs recorded")
-            .oracle_config,
+            .asset_pair_info,
     ))
 }
 
@@ -123,7 +123,10 @@ async fn announcement(
     match oracle.oracle_state(event_id.clone()).await {
         Err(error) => Err(PythiaError::OracleError(error).into()),
         Ok(event_option) => match event_option {
-            None => Err(PythiaError::OracleEventNotFoundError(event_id).into()),
+            None => Err(PythiaError::OracleEventNotFoundError(
+                timestamp.format(&Rfc3339).expect("Format is good"),
+            )
+            .into()),
             Some((announcement, maybe_attestation)) => match event_type {
                 EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
                 EventType::Attestation => match maybe_attestation {
@@ -132,7 +135,7 @@ async fn announcement(
                             match oracle.try_attest_event(event_id.clone()).await {
                                 Err(error) => Err(PythiaError::OracleError(error).into()),
                                 Ok(maybe_attestation) => {
-                                    let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exist now");
+                                    let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exists now");
                                     let attestation_response = AttestationResponse {
                                         event_id,
                                         signatures: attestation.signatures,
@@ -142,7 +145,11 @@ async fn announcement(
                                 }
                             }
                         } else {
-                            Ok(HttpResponse::Ok().json(announcement))
+                            Err(actix_web::error::ErrorBadRequest(
+                                "Oracle cannot sign a value not yet known, retry after "
+                                    .to_string()
+                                    + &timestamp.format(&Rfc3339).expect("Format is good"),
+                            ))
                         }
                     }
                     Some(attestation) => {

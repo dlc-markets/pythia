@@ -1,4 +1,4 @@
-use crate::oracle::Oracle;
+use crate::{common::OracleSchedulerConfig, oracle::Oracle};
 use chrono::Utc;
 use clokwerk::{AsyncScheduler, Interval};
 use log::info;
@@ -20,6 +20,7 @@ const SCHEDULER_SLEEP_TIME: std::time::Duration = std::time::Duration::from_mill
 
 struct OracleScheduler {
     oracle: Arc<Oracle>,
+    config: OracleSchedulerConfig,
     event_queue: Queue<String>,
     next_announcement: OffsetDateTime,
     next_attestation: OffsetDateTime,
@@ -27,11 +28,11 @@ struct OracleScheduler {
 
 impl OracleScheduler {
     async fn create_scheduler_event(&mut self) -> Result<()> {
-        let announcement_offset = self.oracle.oracle_config.announcement_offset;
+        let announcement_offset = self.config.announcement_offset;
         self.oracle
             .create_announcement(self.next_announcement + announcement_offset)
             .await?;
-        self.next_announcement += self.oracle.oracle_config.frequency;
+        self.next_announcement += self.config.frequency;
         Ok(())
     }
 
@@ -46,17 +47,22 @@ impl OracleScheduler {
             "attesting with maturation {} and attestation {:#?}",
             self.next_attestation, attestation
         );
-        self.next_attestation += self.oracle.oracle_config.frequency;
+        self.next_attestation += self.config.frequency;
         Ok(())
     }
 }
 
-pub fn init(oracle: Arc<Oracle>) -> Result<()> {
+pub fn init(oracle: Arc<Oracle>, config: OracleSchedulerConfig) -> Result<()> {
+    if !config.announcement_offset.is_positive() {
+        return Err(OracleSchedulerError::InvalidAnnouncementTimeError(
+            config.announcement_offset,
+        ));
+    }
     // start event creation task
     info!("creating oracle events and schedules");
     tokio::spawn(async move {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        if let Err(err) = create_events(oracle, tx).await {
+        if let Err(err) = create_events(oracle, config, tx).await {
             panic!("oracle scheduler create_events error: {}", err);
         }
         while let Some(err) = rx.recv().await {
@@ -70,6 +76,7 @@ pub fn init(oracle: Arc<Oracle>) -> Result<()> {
 
 async fn create_events(
     oracle: Arc<Oracle>,
+    config: OracleSchedulerConfig,
     error_transmitter: mpsc::UnboundedSender<OracleSchedulerError>,
 ) -> Result<()> {
     let now = OffsetDateTime::now_utc();
@@ -79,14 +86,14 @@ async fn create_events(
         .replace_millisecond(0)
         .expect("Millisecond can be 0");
     if next_attestation <= now {
-        next_attestation += oracle.oracle_config.frequency;
+        next_attestation += config.frequency;
     }
-    let mut next_announcement = next_attestation - oracle.oracle_config.announcement_offset;
+    let mut next_announcement = next_attestation - config.announcement_offset;
     let mut event_queue = queue![];
     // create all events that should have already been made
     info!("creating events that should have already been made");
     while next_announcement <= now {
-        let next_attestation = next_announcement + oracle.oracle_config.announcement_offset;
+        let next_attestation = next_announcement + config.announcement_offset;
         match oracle
             .oracle_state("btcusd".to_string() + &next_attestation.unix_timestamp().to_string())
             .await
@@ -104,19 +111,17 @@ async fn create_events(
                 event_queue.add(val.0.oracle_event.event_id).unwrap();
             }
         };
-        next_announcement += oracle.oracle_config.frequency;
+        next_announcement += config.frequency;
     }
-    let oracle_config = oracle.oracle_config;
     info!(
-        "created new oracle scheduler with\n\tannouncements at {}\n\tattestations at {}\n\tfrequency of {}\n\tnext announcement at {}\n\tnext attestation at {}",
-        oracle_config.attestation_time - oracle.oracle_config.announcement_offset,
-        oracle_config.attestation_time,
-        oracle_config.frequency,
+        "created new oracle scheduler with\n\tfrequency of {}\n\tnext announcement at {}\n\tnext attestation at {}",
+        config.frequency,
         next_announcement,
         next_attestation
     );
     let oracle_scheduler = Arc::new(Mutex::new(OracleScheduler {
         oracle: oracle.into(),
+        config,
         event_queue,
         next_announcement,
         next_attestation,
@@ -126,7 +131,7 @@ async fn create_events(
     // schedule announcements
     let error_transmitter_clone = error_transmitter.clone();
     let oracle_scheduler_clone = oracle_scheduler.clone();
-    let interval = Interval::Seconds(oracle_config.frequency.whole_seconds().try_into().unwrap());
+    let interval = Interval::Seconds(config.frequency.whole_seconds().try_into().unwrap());
     info!("starting announcement scheduler");
     scheduler.every(interval).run(move || {
         let oracle_scheduler_clone = oracle_scheduler_clone.clone();
