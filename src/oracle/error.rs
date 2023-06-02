@@ -11,9 +11,6 @@ pub enum OracleError {
     /// database error: {0}
     DatabaseError(#[from] sqlx::Error),
 
-    /// index in DB error:
-    IndexingError(),
-
     /// Event already attested
     AlreadyAttestatedError(String),
 

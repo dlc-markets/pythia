@@ -4,7 +4,6 @@ use sqlx::{
     postgres::{PgPool, PgPoolOptions},
     Result,
 };
-use std::str::FromStr;
 use time::OffsetDateTime;
 
 struct EventResponse {
@@ -115,16 +114,10 @@ impl DBconnection {
         attestation: &OracleAttestation,
         outcome: u32,
     ) -> Result<()> {
-        let (indexes, (bits, sigs)): (Vec<usize>, (Vec<Vec<u8>>, Vec<Vec<u8>>)) = attestation
-            .outcomes
+        let (indexes, sigs): (Vec<usize>, Vec<Vec<u8>>) = attestation
+            .signatures
             .iter()
-            .map(|b| vec![u8::from_str(b).unwrap()])
-            .zip(
-                attestation
-                    .signatures
-                    .iter()
-                    .map(|sig| sig.as_ref().split_at(32).1.to_vec()),
-            )
+            .map(|sig| sig.as_ref().split_at(32).1.to_vec())
             .enumerate()
             .unzip();
         sqlx::query!(
