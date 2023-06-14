@@ -120,7 +120,7 @@ async fn create_events(
         next_attestation
     );
     let oracle_scheduler = Arc::new(Mutex::new(OracleScheduler {
-        oracle: oracle.into(),
+        oracle,
         config,
         event_queue,
         next_announcement,

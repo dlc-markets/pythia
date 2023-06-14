@@ -25,30 +25,28 @@ use self::postgres::*;
 
 mod crypto;
 struct AppState {
-    db: DBconnection,
+    db: DBconnection, // private to ensure that only the oracle's methods can interact with DB
     secp: Secp256k1<All>,
-    pricefeed: Box<dyn PriceFeed + Send + Sync>,
+    pricefeed: Box<dyn PriceFeed + Send + Sync>, // private to ensure the oracle uses a unique consistent pricefeeder
 }
 
+/// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
 pub struct Oracle {
+    /// Oracle attestation event format summary
     pub asset_pair_info: AssetPairInfo,
-    app_state: Arc<AppState>,
-    keypair: KeyPair,
+    app_state: Arc<AppState>, // private to ensure that only the oracle's methods can interact with DB
+    keypair: KeyPair,         // MUST be private since it contains the oracle private key
 }
 
 impl Oracle {
+    /// Create a new instance of oracle for a numerical outcome given an libsecp256k1 context, a postgres DB connection and a keypair.
     pub fn new(
         asset_pair_info: AssetPairInfo,
         secp: Secp256k1<All>,
         db: DBconnection,
         keypair: KeyPair,
     ) -> Result<Oracle> {
-        // setup event database
-        // let path = format!("events/{}", asset_pair_info.asset_pair);
-        // info!("creating sled at {}", path);
-        // let event_database = sled::open(path)?;
-
         let pricefeed = asset_pair_info.pricefeed.get_pricefeed();
 
         Ok(Oracle {
@@ -61,13 +59,16 @@ impl Oracle {
             keypair,
         })
     }
+    /// The oracle public key
     pub fn get_public_key(self: &Oracle) -> SchnorrPublicKey {
         self.keypair.public_key().into()
     }
+    /// Check if the oracle announced at least one event
     pub async fn is_empty(&self) -> bool {
         self.app_state.db.is_empty().await
     }
 
+    /// Create an oracle announcement that it will sign the price at givent maturity instant
     pub async fn create_announcement(
         &self,
         maturation: OffsetDateTime,
@@ -77,6 +78,7 @@ impl Oracle {
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
         {
+            // Begin scope to emsure ThreadRng is drop at compile time so that Oraacle derive Send AutoTrait
             let mut rng = thread_rng();
             for _ in 0..digits {
                 let mut sk_nonce = [0u8; 32];
@@ -88,7 +90,7 @@ impl Oracle {
                 sk_nonces.push(sk_nonce);
                 nonces.push(nonce);
             }
-        }
+        } // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
 
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
@@ -121,6 +123,8 @@ impl Oracle {
         Ok(announcement)
     }
 
+    /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
+    /// Store in DB and returm some oracle attestation if event is attested successfully.
     pub async fn try_attest_event(&self, event_id: String) -> Result<Option<OracleAttestation>> {
         let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {return Err(OracleError::AlreadyAttestatedError(event_id))};
@@ -158,6 +162,7 @@ impl Oracle {
         Ok(Some(attestation))
     }
 
+    /// If it exists, return an event announcement and attestation.
     pub async fn oracle_state(
         &self,
         event_id: String,

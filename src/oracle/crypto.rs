@@ -6,13 +6,16 @@ use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
     hashes::sha256, schnorr::Signature, All, KeyPair, Message, Scalar, Secp256k1, XOnlyPublicKey,
 };
-
+/// Custum signature type
 pub(super) struct OracleSignature(pub(super) Signature);
+/// Custum public nonce type
 pub(super) struct NoncePoint(pub(super) XOnlyPublicKey);
+/// Custum scalar signing part type
 #[derive(Display)]
 pub(super) struct SigningScalar(pub(super) Scalar);
 
 impl From<OracleSignature> for (NoncePoint, SigningScalar) {
+    /// Split signature into public nonce and scalar parts
     fn from(sig: OracleSignature) -> Self {
         let (x_nonce_bytes, scalar_bytes) = sig.0.as_ref().split_at(32);
         let scalar_array = scalar_bytes
@@ -31,6 +34,7 @@ impl From<OracleSignature> for (NoncePoint, SigningScalar) {
 }
 
 impl From<(NoncePoint, SigningScalar)> for OracleSignature {
+    /// Join associated nonce and scalar parts tuple into a signature
     fn from(value: (NoncePoint, SigningScalar)) -> Self {
         OracleSignature(
             Signature::from_str(
@@ -47,6 +51,7 @@ impl From<OracleSignature> for Signature {
     }
 }
 
+/// Decompose numerical outcome into base 2 and convert into vec of string
 pub fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
     let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
     let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
@@ -68,7 +73,7 @@ pub(super) fn sign_outcome(
             secp,
             &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
             keypair,
-            &outstanding_sk_nonce,
+            outstanding_sk_nonce,
         ),
     )
 }

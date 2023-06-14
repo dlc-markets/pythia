@@ -45,6 +45,7 @@ pub(super) struct PostgresResponse {
 pub struct DBconnection(PgPool);
 
 impl DBconnection {
+    /// Create a new Db connection with postgres
     pub async fn new(url: &str, max_connection: u32) -> Result<Self> {
         Ok(DBconnection(
             PgPoolOptions::new()
@@ -55,15 +56,14 @@ impl DBconnection {
     }
 
     pub async fn is_empty(&self) -> bool {
-        match sqlx::query_as!(EventResponse, "SELECT * FROM oracle.events LIMIT 1")
+        sqlx::query_as!(EventResponse, "SELECT * FROM oracle.events LIMIT 1")
             .fetch_optional(&self.0)
             .await
             .unwrap()
-        {
-            Some(_) => false,
-            None => true,
-        }
+            .is_none()
     }
+
+    /// Insert announcement data and meta-data in postgres DB
     pub(super) async fn insert_announcement(
         &self,
         announcement: &OracleAnnouncement,
@@ -108,6 +108,7 @@ impl DBconnection {
         Ok(())
     }
 
+    /// Add signed outcome to meta data and digits signatures to DB and delete secret nonces to avoid secret key leaking
     pub(super) async fn update_to_attestation(
         &self,
         event_id: &str,
@@ -120,6 +121,10 @@ impl DBconnection {
             .map(|sig| sig.as_ref().split_at(32).1.to_vec())
             .enumerate()
             .unzip();
+
+        // SECURITY: secret nonce MUST be dropped from DB by setting all of them to null.
+        // This ensures that a DB leakage would not immediatly allow secret key extraction
+        // Notice: secret key is still leaked if we sign events which secret nonce was in leaked DB
         sqlx::query!(
             "WITH events AS (
                 UPDATE oracle.events SET outcome = $1::FLOAT8 WHERE id = $2::TEXT
@@ -145,6 +150,7 @@ impl DBconnection {
         Ok(())
     }
 
+    /// Retrieve the current state of an event in oracle's DB
     pub(super) async fn get_event(&self, event_id: &String) -> Result<Option<PostgresResponse>> {
         let Some(event) = sqlx::query_as!(
         EventResponse,

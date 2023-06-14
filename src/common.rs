@@ -1,7 +1,7 @@
 use dlc_messages::oracle_msgs::EventDescriptor;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Display, Formatter};
-use time::{serde::format_description, Duration, Time};
+use time::{serde::format_description, Duration};
 
 use crate::pricefeeds::ImplementedPriceFeed;
 
