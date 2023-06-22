@@ -210,3 +210,198 @@ impl Oracle {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use std::{path::Path, sync::Arc, time::Duration};
+
+    use actix_web;
+    use dlc_messages::oracle_msgs::{
+        DigitDecompositionEventDescriptor, EventDescriptor, OracleAttestation, Writeable,
+    };
+    use secp256k1_zkp::{rand, All, KeyPair, Message, Secp256k1};
+    use serde::Serialize;
+    use time::{macros::datetime, OffsetDateTime};
+
+    use crate::{
+        api::announcement,
+        common::{AssetPair, AssetPairInfo},
+        oracle::{postgres::DBconnection, Oracle},
+        pricefeeds::{ImplementedPriceFeed, PriceFeed, PriceFeedError},
+    };
+
+    use crate::pricefeeds::ImplementedPriceFeed::Lnm;
+
+    use sqlx_mock::TestPostgres;
+
+    use super::OracleError;
+
+    async fn setup_oracle(
+        tbd: &TestPostgres,
+        precision: i32,
+        nb_digits: u16,
+        pricefeed: ImplementedPriceFeed,
+    ) -> Oracle {
+        let asset_pair = AssetPair::BTCUSD;
+        let event_descriptor =
+            EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
+                base: 2,
+                is_signed: false,
+                unit: "btc/usd".into(),
+                precision,
+                nb_digits,
+            });
+        let asset_pair_info = AssetPairInfo {
+            pricefeed,
+            asset_pair,
+            event_descriptor,
+        };
+
+        let secp = Secp256k1::new();
+        let (secret_key, public_key) = secp.generate_keypair(&mut rand::thread_rng());
+        let keypair = KeyPair::from_secret_key(&secp, &secret_key);
+        let db = DBconnection(tbd.get_pool().await);
+        return Oracle::new(asset_pair_info, secp, db, keypair).unwrap();
+    }
+
+    #[actix_web::test]
+    async fn test_oracle_setup() {
+        let tbd = TestPostgres::new(
+            "postgres://postgres:postgres@127.0.0.1:5432".into(),
+            Path::new("./migrations"),
+        );
+        let oracle = setup_oracle(&tbd, 0, 20, Lnm).await;
+        let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
+        assert_eq!((0, 20), (event.precision, event.nb_digits));
+        let oracle = setup_oracle(&tbd, 10, 20, Lnm).await;
+        let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
+        assert_eq!((10, 20), (event.precision, event.nb_digits))
+    }
+
+    async fn test_announcement(oracle: &Oracle, date: OffsetDateTime) {
+        let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+        assert_eq!(
+            oracle_announcement.oracle_event.event_id,
+            "btcusd".to_owned() + date.unix_timestamp().to_string().as_str()
+        );
+
+        let secp = &oracle.app_state.secp;
+        secp.verify_schnorr(
+            &oracle_announcement.announcement_signature,
+            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                oracle_announcement.oracle_event.encode().as_ref(),
+            ),
+            &oracle.get_public_key(),
+        )
+        .unwrap();
+    }
+
+    #[actix_web::test]
+    async fn announcements_tests() {
+        let tbd = TestPostgres::new(
+            "postgres://postgres:postgres@127.0.0.1:5432".into(),
+            Path::new("./migrations"),
+        );
+        let oracle = setup_oracle(&tbd, 12, 32, Lnm).await;
+        let now = OffsetDateTime::now_utc();
+        let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
+            .iter()
+            .map(|t| now - Duration::new(*t, 0))
+            .chain(
+                [
+                    datetime!(2022-01-01 0:00 +11),
+                    datetime!(2023-01-01 0:00 +11),
+                ]
+                .into_iter(),
+            );
+        for date in dates {
+            test_announcement(&oracle, date).await;
+        }
+    }
+
+    async fn test_attestation(oracle: &Oracle, date: OffsetDateTime) {
+        let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+        let now = OffsetDateTime::now_utc();
+        let oracle_attestation = match oracle
+            .try_attest_event(oracle_announcement.oracle_event.event_id)
+            .await
+        {
+            Ok(attestation) => attestation,
+            Err(OracleError::PriceFeedError(error)) => {
+                let PriceFeedError::PriceNotAvailableError(_, date) = error else {panic!("Pricefeeder {:?} did not respond for this date {}", oracle.asset_pair_info.pricefeed, date)};
+                assert!(date < now);
+                return;
+            }
+            Err(OracleError::AlreadyAttestatedError(eventid)) => {
+                let (_, ts_str) = eventid.split_at(6);
+                let date =
+                    OffsetDateTime::from_unix_timestamp(ts_str.parse::<i64>().unwrap()).unwrap();
+                println!("Event already at date: {}", date);
+                return;
+            }
+            _ => panic!("DB error"),
+        };
+        match oracle_attestation {
+            None => assert!(
+                oracle_announcement.oracle_event.event_maturity_epoch > now.unix_timestamp() as u32
+            ),
+            Some(attestation) => {
+                let EventDescriptor::DigitDecompositionEvent(event) =
+                    &oracle.asset_pair_info.event_descriptor else {panic!("Invalid event type")};
+                let precision = event.precision;
+                assert_eq!(
+                    oracle
+                        .app_state
+                        .pricefeed
+                        .retrieve_price(AssetPair::BTCUSD, date)
+                        .await
+                        .unwrap(),
+                    attestation
+                        .outcomes
+                        .iter()
+                        .rev()
+                        .enumerate()
+                        .map(|c| c.1.parse::<f64>().unwrap()
+                            * (2_f64.powf(c.0 as f64 - (precision as f64))))
+                        .sum::<f64>()
+                );
+                let secp = &oracle.app_state.secp;
+                for (outcome, signature) in attestation.outcomes.iter().zip(attestation.signatures)
+                {
+                    secp.verify_schnorr(
+                        &signature,
+                        &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                            outcome.as_ref(),
+                        ),
+                        &oracle.get_public_key(),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    #[actix_web::test]
+    async fn attestations_test() {
+        let tbd = TestPostgres::new(
+            "postgres://postgres:postgres@127.0.0.1:5432".into(),
+            Path::new("./migrations"),
+        );
+        let oracle = setup_oracle(&tbd, 12, 32, Lnm).await;
+        let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
+        let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
+            .iter()
+            .map(|t| now - Duration::new(*t, 0))
+            .chain(
+                [
+                    datetime!(2022-01-01 0:00 +11),
+                    datetime!(2023-01-01 0:00 +11),
+                ]
+                .into_iter(),
+            );
+        for date in dates {
+            test_attestation(&oracle, date).await;
+        }
+    }
+}

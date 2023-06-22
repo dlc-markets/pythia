@@ -40,11 +40,11 @@ impl PriceFeed for Lnm {
             .await?;
         info!("received response: {:#?}", res);
 
-        if res[0].timestamp.timestamp() != start_time {
+        if res.is_empty() {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
         }
 
-        if res.is_empty() {
+        if res[0].timestamp.timestamp() != start_time {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
         }
 

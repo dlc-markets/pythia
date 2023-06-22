@@ -8,6 +8,9 @@ mod error;
 pub use error::PriceFeedError;
 pub use error::Result;
 
+#[cfg(test)]
+use strum::EnumIter;
+
 #[async_trait]
 pub trait PriceFeed {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
@@ -25,6 +28,7 @@ pub use kraken::Kraken;
 pub use lnm::Lnm;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]
 pub enum ImplementedPriceFeed {
     Lnm,
@@ -45,3 +49,28 @@ impl ImplementedPriceFeed {
 }
 
 // Pricefeeders can be obtain by coding a pricefeed which simply aggregate other pricefeeders response
+
+#[cfg(test)]
+mod test {
+    use time::OffsetDateTime;
+
+    use crate::common::AssetPair;
+
+    use super::ImplementedPriceFeed;
+    use strum::IntoEnumIterator;
+
+    // Test all the implemented pricefeeders. Failing mean there has been breaking change in a pricefeeder API
+    #[actix_web::test]
+    async fn test_all_pricefeeders() {
+        for pricefeed in ImplementedPriceFeed::iter() {
+            pricefeed
+                .get_pricefeed()
+                .retrieve_price(
+                    AssetPair::BTCUSD,
+                    OffsetDateTime::now_utc().replace_second(0).unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+    }
+}

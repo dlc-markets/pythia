@@ -42,7 +42,7 @@ pub(super) struct PostgresResponse {
     pub scalars_records: ScalarsRecords,
 }
 #[derive(Clone)]
-pub struct DBconnection(PgPool);
+pub struct DBconnection(pub PgPool);
 
 impl DBconnection {
     /// Create a new Db connection with postgres
