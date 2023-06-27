@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
-use actix_web::{get, web, App, HttpResponse, HttpServer};
+use actix_web::{get, web, App, HttpResponse, HttpServer, Result};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use crate::{common::AssetPair, error::PythiaError, oracle::Oracle};
+use crate::{
+    common::{AssetPair, OracleSchedulerConfig},
+    error::PythiaError,
+    oracle::Oracle,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -66,11 +70,11 @@ struct AttestationResponse {
 
 #[get("/oracle/publickey")]
 async fn pubkey(
-    oracles: web::Data<HashMap<AssetPair, Oracle>>,
+    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
     filters: web::Query<Filters>,
-) -> actix_web::Result<HttpResponse, actix_web::Error> {
+) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
-    let oracle = match oracles.get(&filters.asset_pair) {
+    let oracle = match oracles.0.get(&filters.asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
         Some(val) => val,
     };
@@ -80,26 +84,27 @@ async fn pubkey(
     Ok(HttpResponse::Ok().json(res))
 }
 
-#[get("/config")]
+#[get("/asset")]
+async fn asset_return() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json([AssetPair::BTCUSD]))
+}
+
+#[get("/asset/{asset_id}/config")]
 async fn config(
-    oracles: web::Data<HashMap<AssetPair, Oracle>>,
-) -> actix_web::Result<HttpResponse, actix_web::Error> {
-    info!("GET /config");
-    Ok(HttpResponse::Ok().json(
-        &oracles
-            .values()
-            .next()
-            .expect("no asset pairs recorded")
-            .asset_pair_info,
-    ))
+    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+    path: web::Path<AssetPair>,
+) -> Result<HttpResponse> {
+    let asset_pair = path.into_inner();
+    info!("GET /asset/{asset_pair}/config");
+    Ok(HttpResponse::Ok().json(&oracles.1))
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
 async fn oracle_event_service(
-    oracles: web::Data<HashMap<AssetPair, Oracle>>,
+    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
-) -> actix_web::Result<HttpResponse, actix_web::Error> {
+) -> Result<HttpResponse> {
     let (asset_pair, event_type, ts) = path.into_inner();
     info!(
         "GET /asset/{asset_pair}/{event_type:?}/{ts}: {:#?}",
@@ -108,7 +113,7 @@ async fn oracle_event_service(
     let timestamp =
         OffsetDateTime::parse(&ts, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
 
-    let oracle = match oracles.get(&asset_pair) {
+    let oracle = match oracles.0.get(&asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(asset_pair).into()),
         Some(val) => val,
     };
@@ -166,11 +171,15 @@ async fn oracle_event_service(
     }
 }
 
-pub async fn run_api(oracles: HashMap<AssetPair, Oracle>, port: u16) -> anyhow::Result<()> {
+pub async fn run_api(
+    data: (HashMap<AssetPair, Oracle>, OracleSchedulerConfig),
+    port: u16,
+) -> anyhow::Result<()> {
+    let (oracles, oracles_scheduler_config) = data;
     info!("starting server");
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(oracles.clone()))
+            .app_data(web::Data::new((oracles.clone(), oracles_scheduler_config)))
             .service(
                 web::scope("/v1")
                     // .service(announcements)

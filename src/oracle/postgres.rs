@@ -7,7 +7,6 @@ use sqlx::{
 use time::OffsetDateTime;
 
 struct EventResponse {
-    id: String,
     digits: i32,
     precision: i32,
     maturity: OffsetDateTime,
@@ -56,7 +55,7 @@ impl DBconnection {
     }
 
     pub async fn is_empty(&self) -> bool {
-        sqlx::query_as!(EventResponse, "SELECT * FROM oracle.events LIMIT 1")
+        sqlx::query_as!(EventResponse, "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1")
             .fetch_optional(&self.0)
             .await
             .unwrap()
@@ -154,7 +153,7 @@ impl DBconnection {
     pub(super) async fn get_event(&self, event_id: &String) -> Result<Option<PostgresResponse>> {
         let Some(event) = sqlx::query_as!(
         EventResponse,
-        "SELECT e.* FROM oracle.events e WHERE e.id = $1",
+        "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events e WHERE e.id = $1",
         event_id
     )
     .fetch_optional(&self.0)

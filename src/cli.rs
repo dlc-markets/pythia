@@ -31,7 +31,7 @@ pub struct PythiaArgs {
     #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
     oracle_config_file: Option<std::path::PathBuf>,
 
-    /// Optional port for api; if not provided, use 8000
+    /// Optional port for API; if not provided, use 8000
     #[clap(short, long, value_name = "PORT")]
     port: Option<u16>,
 

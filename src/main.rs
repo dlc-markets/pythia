@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
 
     // setup and run server
 
-    api::run_api(oracles, port).await?;
+    api::run_api((oracles, oracle_scheduler_config), port).await?;
 
     Ok(())
 }
