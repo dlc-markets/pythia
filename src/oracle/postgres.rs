@@ -1,7 +1,7 @@
 use dlc_messages::oracle_msgs::{EventDescriptor, OracleAnnouncement, OracleAttestation};
 use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
 use sqlx::{
-    postgres::{PgPool, PgPoolOptions},
+    postgres::{PgConnectOptions, PgPool, PgPoolOptions},
     Result,
 };
 use time::OffsetDateTime;
@@ -46,11 +46,11 @@ pub struct DBconnection(pub PgPool);
 
 impl DBconnection {
     /// Create a new Db connection with postgres
-    pub async fn new(url: &str, max_connection: u32) -> Result<Self> {
+    pub async fn new(db_connect: PgConnectOptions, max_connection: u32) -> Result<Self> {
         Ok(DBconnection(
             PgPoolOptions::new()
                 .max_connections(max_connection)
-                .connect(url)
+                .connect_with(db_connect)
                 .await?,
         ))
     }

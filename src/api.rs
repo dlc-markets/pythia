@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use actix_web::{get, web, HttpResponse};
+use actix_web::{get, web, App, HttpResponse, HttpServer};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -95,7 +95,7 @@ async fn config(
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
-async fn announcement(
+async fn oracle_event_service(
     oracles: web::Data<HashMap<AssetPair, Oracle>>,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
@@ -164,6 +164,25 @@ async fn announcement(
             },
         },
     }
+}
+
+pub async fn run_api(oracles: HashMap<AssetPair, Oracle>, port: u16) -> anyhow::Result<()> {
+    info!("starting server");
+    HttpServer::new(move || {
+        App::new()
+            .app_data(web::Data::new(oracles.clone()))
+            .service(
+                web::scope("/v1")
+                    // .service(announcements)
+                    .service(oracle_event_service)
+                    .service(config)
+                    .service(pubkey),
+            )
+    })
+    .bind(("127.0.0.1", port))?
+    .run()
+    .await?;
+    Ok(())
 }
 
 // async fn get_event_at_timestamp(

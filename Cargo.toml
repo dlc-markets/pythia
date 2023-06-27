@@ -11,11 +11,14 @@ anyhow = "1.0.57"
 async-trait = "0.1.53"
 bit-vec = "0.6.3"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "3.2.5", features = ["derive"] }
+clap = { version = "4.3.8", features = ["derive"] }
 clokwerk = "0.4.0-rc1"
 displaydoc = "0.2"
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git" }
-dlc-messages = { version = "0.4.0", features = ["use-serde", "serde"], path = "dlc-messages" }
+dlc-messages = { version = "0.4.0", features = [
+    "use-serde",
+    "serde",
+], path = "dlc-messages" }
 env_logger = "0.9.0"
 futures = "0.3.21"
 hex = "0.4"
@@ -25,15 +28,27 @@ log = "0.4.17"
 parking_lot = "0.12.0"
 queues = "1.1.0"
 reqwest = { version = "0.11.10", features = ["json"] }
-secp256k1-zkp = { version = "0.7.0", features = ["bitcoin_hashes", "rand-std", "use-serde"] }
+secp256k1-zkp = { version = "0.7.0", features = [
+    "bitcoin_hashes",
+    "rand-std",
+    "use-serde",
+] }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
-sqlx = { version = "0.6.3", features = ["runtime-tokio-rustls", "postgres", "time", "macros"] }
+sqlx = { version = "0.6.3", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "time",
+    "macros",
+] }
 thiserror = "1.0.31"
 time = { version = "0.3.9", features = ["formatting", "serde-human-readable"] }
 tokio = { version = "1.18.2", features = ["full"] }
+url = "2.4.0"
 
 [dev-dependencies]
-dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", features =["serde"] }
+dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", features = [
+    "serde",
+] }
 sqlx_mock = "0.1.2"
 strum = { version = "0.25.0", features = ["strum_macros", "derive"] }

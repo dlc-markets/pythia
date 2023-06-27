@@ -1,17 +1,11 @@
 #[macro_use]
 extern crate log;
 
-use actix_web::{web, App, HttpServer};
 use clap::Parser;
 use hex::ToHex;
 use secp256k1_zkp::{rand, KeyPair, Secp256k1, SecretKey};
 
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::Read,
-    str::FromStr,
-};
+use std::{collections::HashMap, fs::File, io::Read, str::FromStr};
 
 mod oracle;
 use oracle::Oracle;
@@ -25,43 +19,24 @@ mod pricefeeds;
 
 mod oracle_scheduler;
 
-use crate::{common::OracleSchedulerConfig, oracle::postgres::DBconnection};
+use crate::oracle::postgres::DBconnection;
 
 mod api;
+mod cli;
 
 // const PAGE_SIZE: u32 = 100;
-
-#[derive(Parser)]
-/// Simple DLC oracle implementation
-struct Args {
-    /// Optional private key file; if not provided, one is generated
-    #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    secret_key_file: Option<std::path::PathBuf>,
-
-    /// Optional asset pair config file; if not provided, it is assumed to exist at "config/asset_pair.json"
-    #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    asset_pair_config_file: Option<std::path::PathBuf>,
-
-    /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
-    #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    oracle_scheduler_config_file: Option<std::path::PathBuf>,
-
-    /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
-    #[clap(short, long, parse(from_os_str), value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    oracle_config_file: Option<std::path::PathBuf>,
-}
 
 #[actix_web::main]
 // #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let args = Args::parse();
+    let args = cli::PythiaArgs::parse();
 
     let mut secret_key = String::new();
     let secp = Secp256k1::new();
 
-    let secret_key = match args.secret_key_file {
+    let secret_key = match &args.secret_key_file {
         None => {
             info!("no secret key file was found, generating secret key");
             secp.generate_keypair(&mut rand::thread_rng()).0
@@ -82,48 +57,10 @@ async fn main() -> anyhow::Result<()> {
         keypair.public_key().serialize().encode_hex::<String>()
     );
 
-    let asset_pair_infos: Vec<AssetPairInfo> = match args.asset_pair_config_file {
-        None => {
-            info!("reading asset pair config from config/asset_pair.json");
-            serde_json::from_str(&fs::read_to_string("config/asset_pair.json")?)?
-        }
-        Some(path) => {
-            info!(
-                "reading asset pair config from {}",
-                path.as_os_str().to_string_lossy()
-            );
-            let mut asset_pair_info = String::new();
-            File::open(path)?.read_to_string(&mut asset_pair_info)?;
-            serde_json::from_str(&asset_pair_info)?
-        }
-    };
-    info!(
-        "asset pair config successfully read: {:#?}",
-        asset_pair_infos
-    );
+    let (asset_pair_infos, oracle_scheduler_config, port, db_connect, max_connections_postgres) =
+        args.match_args()?;
 
-    let oracle_scheduler_config: OracleSchedulerConfig = match args.oracle_scheduler_config_file {
-        None => {
-            info!("reading oracle config from config/oracle_scheduler.json");
-            serde_json::from_str(&fs::read_to_string("config/oracle_scheduler.json")?)?
-        }
-        Some(path) => {
-            info!(
-                "reading oracle scheduler config from {}",
-                path.as_os_str().to_string_lossy()
-            );
-            let mut oracle_scheduler_config = String::new();
-            File::open(path)?.read_to_string(&mut oracle_scheduler_config)?;
-            serde_json::from_str(&oracle_scheduler_config)?
-        }
-    };
-    info!(
-        "oracle scheduler config successfully read: {:#?}",
-        oracle_scheduler_config
-    );
-
-    const DB_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
-    let db = DBconnection::new(DB_URL, 10).await?;
+    let db = DBconnection::new(db_connect, max_connections_postgres).await?;
 
     // setup event databases
     let oracles = asset_pair_infos
@@ -145,21 +82,8 @@ async fn main() -> anyhow::Result<()> {
         .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
     // setup and run server
-    info!("starting server");
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(oracles.clone()))
-            .service(
-                web::scope("/v1")
-                    // .service(announcements)
-                    .service(api::announcement)
-                    .service(api::config)
-                    .service(api::pubkey),
-            )
-    })
-    .bind(("127.0.0.1", 8000))?
-    .run()
-    .await?;
+
+    api::run_api(oracles, port).await?;
 
     Ok(())
 }

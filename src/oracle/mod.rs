@@ -216,9 +216,10 @@ mod test {
     use std::{path::Path, str::FromStr};
 
     use dlc_messages::oracle_msgs::{
-        DigitDecompositionEventDescriptor, EventDescriptor, Writeable, OracleEvent, OracleAttestation, OracleAnnouncement,
+        DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
+        OracleEvent, Writeable,
     };
-    use secp256k1_zkp::{rand, KeyPair, Message, Secp256k1, XOnlyPublicKey, schnorr::Signature};
+    use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
     use sqlx_mock::TestPostgres;
     use time::{macros::datetime, Duration, OffsetDateTime};
 
@@ -230,7 +231,9 @@ mod test {
         },
     };
 
-    use super::{postgres::DBconnection, Oracle, OracleError, crypto::test::check_signature_with_nonce};
+    use super::{
+        crypto::test::check_signature_with_nonce, postgres::DBconnection, Oracle, OracleError,
+    };
 
     async fn setup_oracle(
         tbd: &TestPostgres,
@@ -395,8 +398,6 @@ mod test {
         }
     }
 
-
-
     fn check_test_vec(attestation_test_vec: OracleAttestation) {
         let secp = Secp256k1::new();
         attestation_test_vec
@@ -426,33 +427,43 @@ mod test {
     #[test]
     fn test_vector_announcement() {
         // https://oracle.holzeis.me/asset/btcusd/announcement/2023-06-16T13:00:00Z
-        let digit_decomposition = DigitDecompositionEventDescriptor {base: 2,
-        is_signed: false,
-        unit: "usd/btc".into(),
-        precision: 0,
-        nb_digits: 20};
-        let oracle_event = OracleEvent {event_id: "btcusd1686920400".into(), event_maturity_epoch: 1686920400, event_descriptor: EventDescriptor::DigitDecompositionEvent(digit_decomposition), oracle_nonces: [
-            "5ff9c4efb62b88f2538e9e5702240b5043a94e79e584fca308e96df2a31ae370",
-            "67ed40f3583174d40324272b4ec7c5d895b1c50bc0738709819803db3370d9bd",
-            "c349532d57fd1fc2e17660312cd8ab641babc7953b1f0d1c1a984a095ff4e499",
-            "64e07de1a613e65efc629f6a81ae743931e6edd2fd2c872e8411d5edb1297428",
-            "348a792836b63a9b978a24825f94f84fda30eb969e1e25dc991dbe1ff5009a39",
-            "9b0a54dcec9b1aba03f975989dbc85b5bba9c7ebedc6e707e382aebf67095527",
-            "83f02c21a93c11310724f3e11683b1967f580ce78f82edef4383c85fed01821c",
-            "b0d7e95c2c906b6b1668208dfc4361f4f207581b79df58ca628cbbba1bbba2b2",
-            "ae46c8713545052b8df6a2b51a7fcf39f899390815375d2c05b8b34272f5b429",
-            "04fc6e5a9ac57dd8dd3caf16f415dd8bf16ae869a1d99d33720f45d33c4c3220",
-            "9a95abc04114624bfb9a984c8bc47b226be4263e3a26726c5d2e2574a3b48ac7",
-            "a01d61415732e4a8783981690ba337bb11631f52c1f46ffe3fe9a83f909d0a57",
-            "a04b80ed964d1a837a56d6a19247357ed854adde6a181a3a3601c24618788657",
-            "64858bd9c7bebfad02e7f9e266cfe9c55bf2ba381f8639c28773c5e87dfff1bb",
-            "7b09fe7fe76c474f4a5ed9192f05a3557040020d9180b43e390ed888b2259389",
-            "1aab06df357c01836ae84437ed9d92098f7e5620f5b88e42a02f22cf1fda748b",
-            "03b5f4adcbc5eee6f12125004f2a0658ec5d63ce778c284461494581c9f827fe",
-            "15e5873f37c2aa548194c11ef6b384501e38c17e00dfdc1a98cb7f079373745c",
-            "f85a83b4cc7575218ba12fcfa8c0e7bf9fb4c0eff0afc10bbd977620bbace87d",
-            "6b9953c3c05b4dae9018c9c4a2318658396a19a53f6fe3a4498cab44a9727058"
-        ].into_iter().map(|s| XOnlyPublicKey::from_str(s).unwrap()).collect()};
+        let digit_decomposition = DigitDecompositionEventDescriptor {
+            base: 2,
+            is_signed: false,
+            unit: "usd/btc".into(),
+            precision: 0,
+            nb_digits: 20,
+        };
+        let oracle_event = OracleEvent {
+            event_id: "btcusd1686920400".into(),
+            event_maturity_epoch: 1686920400,
+            event_descriptor: EventDescriptor::DigitDecompositionEvent(digit_decomposition),
+            oracle_nonces: [
+                "5ff9c4efb62b88f2538e9e5702240b5043a94e79e584fca308e96df2a31ae370",
+                "67ed40f3583174d40324272b4ec7c5d895b1c50bc0738709819803db3370d9bd",
+                "c349532d57fd1fc2e17660312cd8ab641babc7953b1f0d1c1a984a095ff4e499",
+                "64e07de1a613e65efc629f6a81ae743931e6edd2fd2c872e8411d5edb1297428",
+                "348a792836b63a9b978a24825f94f84fda30eb969e1e25dc991dbe1ff5009a39",
+                "9b0a54dcec9b1aba03f975989dbc85b5bba9c7ebedc6e707e382aebf67095527",
+                "83f02c21a93c11310724f3e11683b1967f580ce78f82edef4383c85fed01821c",
+                "b0d7e95c2c906b6b1668208dfc4361f4f207581b79df58ca628cbbba1bbba2b2",
+                "ae46c8713545052b8df6a2b51a7fcf39f899390815375d2c05b8b34272f5b429",
+                "04fc6e5a9ac57dd8dd3caf16f415dd8bf16ae869a1d99d33720f45d33c4c3220",
+                "9a95abc04114624bfb9a984c8bc47b226be4263e3a26726c5d2e2574a3b48ac7",
+                "a01d61415732e4a8783981690ba337bb11631f52c1f46ffe3fe9a83f909d0a57",
+                "a04b80ed964d1a837a56d6a19247357ed854adde6a181a3a3601c24618788657",
+                "64858bd9c7bebfad02e7f9e266cfe9c55bf2ba381f8639c28773c5e87dfff1bb",
+                "7b09fe7fe76c474f4a5ed9192f05a3557040020d9180b43e390ed888b2259389",
+                "1aab06df357c01836ae84437ed9d92098f7e5620f5b88e42a02f22cf1fda748b",
+                "03b5f4adcbc5eee6f12125004f2a0658ec5d63ce778c284461494581c9f827fe",
+                "15e5873f37c2aa548194c11ef6b384501e38c17e00dfdc1a98cb7f079373745c",
+                "f85a83b4cc7575218ba12fcfa8c0e7bf9fb4c0eff0afc10bbd977620bbace87d",
+                "6b9953c3c05b4dae9018c9c4a2318658396a19a53f6fe3a4498cab44a9727058",
+            ]
+            .into_iter()
+            .map(|s| XOnlyPublicKey::from_str(s).unwrap())
+            .collect(),
+        };
         let announcement = OracleAnnouncement {
             announcement_signature: Signature::from_str("4aefe5864eeffffae95b905e6b4e0cfdab99b6e1aed8a3ae873b250708104f13aa46e725d292b6abf5299c6decdf9436762ec76f6399de9a03074f3c93ef1c08").unwrap(), 
             oracle_public_key: XOnlyPublicKey::from_str("16f88cf7d21e6c0f46bcbc983a4e3b19726c6c98858cc31c83551a88fde171c0").unwrap(), 
@@ -461,9 +472,12 @@ mod test {
         let secp = Secp256k1::new();
         secp.verify_schnorr(
             &announcement.announcement_signature,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(announcement.oracle_event.encode().as_slice()),
+            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                announcement.oracle_event.encode().as_slice(),
+            ),
             &announcement.oracle_public_key,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -516,8 +530,6 @@ mod test {
                 "1",
                 "0"
                 ].into_iter().map(|d| d.to_string()).collect()
-
-                
         };
         check_test_vec(attestation_test_vec);
         // THIS TEST DOES NOT PASS BECAUSE SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
