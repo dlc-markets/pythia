@@ -2,52 +2,52 @@ use std::str::FromStr;
 
 use displaydoc::Display;
 
+use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
     hashes::sha256, schnorr::Signature, All, KeyPair, Message, Scalar, Secp256k1, XOnlyPublicKey,
 };
-/// Custum signature type
-pub(super) struct OracleSignature(pub(super) Signature);
+
+/// We use custom types to implement signature splitting into nonce and scalar.
 /// Custum public nonce type
-pub(super) struct NoncePoint(pub(super) XOnlyPublicKey);
+#[derive(From)]
+pub(super) struct NoncePoint(XOnlyPublicKey);
 /// Custum scalar signing part type
-#[derive(Display)]
-pub(super) struct SigningScalar(pub(super) Scalar);
+#[derive(Display, From)]
+pub(super) struct SigningScalar(Scalar);
+/// Custum signature type
+#[derive(From)]
+pub(super) struct OracleSignature(NoncePoint, SigningScalar);
 
 impl From<OracleSignature> for (NoncePoint, SigningScalar) {
     /// Split signature into public nonce and scalar parts
     fn from(sig: OracleSignature) -> Self {
-        let (x_nonce_bytes, scalar_bytes) = sig.0.as_ref().split_at(32);
-        let scalar_array = scalar_bytes
-            .try_into()
-            .expect("Schnorr signature is 64 bytes long");
-        (
-            NoncePoint(
-                XOnlyPublicKey::from_slice(x_nonce_bytes).expect("signature split correctly"),
-            ),
-            SigningScalar(
-                Scalar::from_be_bytes(scalar_array)
-                    .expect("signature scalar is always less then curve order"),
-            ),
-        )
-    }
-}
-
-impl From<(NoncePoint, SigningScalar)> for OracleSignature {
-    /// Join associated nonce and scalar parts tuple into a signature
-    fn from(value: (NoncePoint, SigningScalar)) -> Self {
-        OracleSignature(
-            Signature::from_str(
-                (value.0 .0.to_string() + value.0 .0.to_string().as_str()).as_str(),
-            )
-            .expect("Nonce and scalar are 64 bytes long"),
-        )
+        (sig.0, sig.1)
     }
 }
 
 impl From<OracleSignature> for Signature {
     fn from(sig: OracleSignature) -> Self {
-        sig.0
+        Signature::from_str((sig.0 .0.to_string() + sig.1.to_string().as_str()).as_str())
+            .expect("Nonce and scalar are 64 bytes long")
+    }
+}
+
+impl From<Signature> for OracleSignature {
+    fn from(sig: Signature) -> Self {
+        let (x_nonce_bytes, scalar_bytes) = sig.as_ref().split_at(32);
+        let scalar_array = scalar_bytes
+            .try_into()
+            .expect("Schnorr signature is 64 bytes long");
+        (
+            XOnlyPublicKey::from_slice(x_nonce_bytes)
+                .expect("signature split correctly")
+                .into(),
+            Scalar::from_be_bytes(scalar_array)
+                .expect("signature scalar is always less then curve order")
+                .into(),
+        )
+            .into()
     }
 }
 
@@ -154,7 +154,8 @@ pub(super) mod test {
         result: Signature,
     ) -> Result<(), UpstreamError> {
         if let Some(sk_nonce) = outstanding_sk_nonce {
-            let (nonce, _): (NoncePoint, SigningScalar) = OracleSignature(result).into();
+            let (nonce, _): (NoncePoint, SigningScalar) =
+                Into::<OracleSignature>::into(result).into();
             let nonce_pair = KeyPair::from_seckey_slice(secp, sk_nonce).unwrap();
             assert_eq!(nonce_pair.x_only_public_key().0, nonce.0);
         }

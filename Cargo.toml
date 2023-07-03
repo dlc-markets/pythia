@@ -13,6 +13,7 @@ bit-vec = "0.6.3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.3.8", features = ["derive"] }
 clokwerk = "0.4.0-rc1"
+derive_more = "0.99.17"
 displaydoc = "0.2"
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git" }
 dlc-messages = { version = "0.4.0", features = [

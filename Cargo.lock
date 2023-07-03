@@ -1608,6 +1608,7 @@ dependencies = [
  "chrono",
  "clap",
  "clokwerk",
+ "derive_more",
  "displaydoc",
  "dlc 0.4.0 (git+https://github.com/p2pderivatives/rust-dlc.git)",
  "dlc-messages",

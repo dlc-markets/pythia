@@ -5,7 +5,7 @@ use dlc_messages::oracle_msgs::{
 };
 use secp256k1_zkp::{
     rand::{thread_rng, RngCore},
-    All, KeyPair, Message, Secp256k1, XOnlyPublicKey as SchnorrPublicKey,
+    All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -24,6 +24,7 @@ use self::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, Sign
 use self::postgres::*;
 
 mod crypto;
+pub use crypto::*;
 struct AppState {
     db: DBconnection, // private to ensure that only the oracle's methods can interact with DB
     secp: Secp256k1<All>,
@@ -60,7 +61,7 @@ impl Oracle {
         })
     }
     /// The oracle public key
-    pub fn get_public_key(self: &Oracle) -> SchnorrPublicKey {
+    pub fn get_public_key(self: &Oracle) -> XOnlyPublicKey {
         self.keypair.public_key().into()
     }
     /// Check if the oracle announced at least one event
@@ -78,7 +79,7 @@ impl Oracle {
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
         {
-            // Begin scope to emsure ThreadRng is drop at compile time so that Oraacle derive Send AutoTrait
+            // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
             let mut rng = thread_rng();
             for _ in 0..digits {
                 let mut sk_nonce = [0u8; 32];
@@ -86,7 +87,7 @@ impl Oracle {
                 let oracle_r_kp =
                     secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, &sk_nonce)
                         .unwrap();
-                let nonce = SchnorrPublicKey::from_keypair(&oracle_r_kp).0;
+                let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                 sk_nonces.push(sk_nonce);
                 nonces.push(nonce);
             }
@@ -188,8 +189,8 @@ impl Oracle {
                     .zip(event.nonce_public)
                     .map(|(s, n)| {
                         <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
-                            NoncePoint(n),
-                            SigningScalar(*s),
+                            n.into(),
+                            (*s).into(),
                         ))
                         .into()
                     })
@@ -329,7 +330,9 @@ mod test {
             Err(OracleError::PriceFeedError(error)) => {
                 let PriceFeedError::PriceNotAvailableError(_, asked_date) = error else {panic!("Pricefeeder {:?} did not respond for this date {}", oracle.asset_pair_info.pricefeed, date.clone())};
                 // Pricefeeder can only respond that price is not available if our query was asking in the future
-                assert!(asked_date > now);
+                if asked_date < now {
+                    panic!("Pricefeeder {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
+                };
                 return;
             }
             Err(OracleError::AlreadyAttestatedError(eventid)) => {
@@ -389,10 +392,10 @@ mod test {
         );
         let oracle = setup_oracle(&tbd, 12, 32, Lnm).await;
         let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
-        let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
+        let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))
-            .chain([datetime!(2023-05-30 0:00 +0), now + Duration::new(180, 0)].into_iter());
+            .chain([now + Duration::new(180, 0)].into_iter());
         for date in dates {
             test_attestation(&oracle, date).await;
         }
