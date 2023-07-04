@@ -56,21 +56,25 @@ mod test {
 
     use crate::common::AssetPair;
 
-    use super::ImplementedPriceFeed;
+    use super::{ImplementedPriceFeed, PriceFeedError};
     use strum::IntoEnumIterator;
 
     // Test all the implemented pricefeeders. Failing mean there has been breaking change in a pricefeeder API
     #[actix_web::test]
     async fn test_all_pricefeeders() {
+        let mut deprecated: Vec<(ImplementedPriceFeed, PriceFeedError)> = vec![];
         for pricefeed in ImplementedPriceFeed::iter() {
-            pricefeed
+            let _ = pricefeed
                 .get_pricefeed()
                 .retrieve_price(
                     AssetPair::BTCUSD,
                     OffsetDateTime::now_utc().replace_second(0).unwrap(),
                 )
                 .await
-                .unwrap();
+                .map_err(|e| deprecated.push((pricefeed, e)));
+        }
+        if !deprecated.is_empty() {
+            panic!("Some pricefeeder APIs seem deprecated: {:?}", deprecated)
         }
     }
 }
