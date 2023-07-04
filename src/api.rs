@@ -6,7 +6,7 @@ use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
-    common::{AssetPair, OracleSchedulerConfig},
+    common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
     error::PythiaError,
     oracle::Oracle,
 };
@@ -96,7 +96,14 @@ async fn config(
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
-    Ok(HttpResponse::Ok().json(&oracles.1))
+    let oracle = oracles
+        .0
+        .get(&asset_pair)
+        .expect("We have this asset pair in our data");
+    Ok(HttpResponse::Ok().json(ConfigResponse::from((
+        oracle.asset_pair_info.pricefeed,
+        oracles.1,
+    ))))
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
@@ -185,7 +192,8 @@ pub async fn run_api(
                     // .service(announcements)
                     .service(oracle_event_service)
                     .service(config)
-                    .service(pubkey),
+                    .service(pubkey)
+                    .service(asset_return),
             )
     })
     .bind(("127.0.0.1", port))?

@@ -7,21 +7,29 @@ a numeric (and extensible) oracle implementation for bitcoin forked from sibyls,
 
 A working version of this oracle is hosted at https://lnmarkets.com/
 
+### Get supported assets
+
+```sh
+curl -X GET http://localhost:8000/v1/asset
+```
+
+This endpoint return all asset pairs supported of the running oracle instance.
+
 ### Get configuration
 
 ```sh
-curl -X GET http://localhost:8080/v1/config
+curl -X GET http://localhost:8080/v1/{asset_id}/config
 ```
 
-This endpoint returns the [oracle config](#configure).
+This endpoint returns the [oracle config](#configure) for the asset pair specified with the asset_id that is returned by previous endpoint.
 
 Output example:
 
 ```json
 {
     "pricefeed": "lnm",
-    "announcement_offset": "1m",
-    "frequency": "1day"
+    "announcement_offset": "1day",
+    "frequency": "1min"
 }
 ```
 
@@ -31,16 +39,38 @@ To run, first clone the repository and build:
 
 ```sh
 git clone https://github.com/ln-market/pythia.git
+cd pythia
 cargo build --release
 ```
 
-Then, you can run by executing:
+Pythia uses PostgreSQL as DB backend so make sure it is installed on your system. Then install and use sqlx to create a dedicated postgres DB for your oracle instance:
+
+```sh
+cargo install sqlx-cli
+sqlx database create
+sqlx migrate run
+```
+
+This will create a database oracle in your running postgres server by default. You can change this by editing the `DATABASE_URL` value in the .env file of the repo before running the migrations.
+
+Then, you can run pythia by executing:
 
 ```sh
 ./target/release/pythia
 ```
+Pythia API uses port 8000 by default. You can specify another port in CLI. To specify another port, use `--port` argument in CLI:
 
-To specify a file to read the secret key from, execute:
+```sh
+./target/release/pythia --port <PORT>
+```
+
+If you use another database than default, do not forget to specify the postgres URL using `--postgres-url` argument:
+
+```sh
+./target/release/pythia --postgres-url <URL>
+```
+
+To specify a file to read the oracle secret key from, execute:
 
 ```sh
 ./target/release/pythia -s <FILE>
@@ -86,7 +116,7 @@ There are three configurable parameters for the oracle:
 
 | name                  | type                                                                                                                                                                         | description                                                                                                           |
 |-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `pricefeed`           | `lnm|bitstamp|kraken|gateio`                                                                                                                                                 | Source of the stream of price to attest                                                                               |
+| `pricefeed`           | `(lnm\|bitstamp\|kraken\|gateio)`                                                                                                                                                | Source of the stream of price to attest                                                                               |
 | `frequency`           | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | frequency of attestation                                                                                              |
 | `announcement_offset` | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h` |
 
@@ -94,11 +124,11 @@ The program defaults are located in `config/oracle.json`.
 
 ## Extend
 
-This oracle implementation is extensible to using other pricefeeds, asset pairs, and (to come) event descriptors (for more information, see https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) rather than just {Bitstamp, Kraken, Gate.io}, BTCUSD.
+This oracle implementation is extensible to using other pricefeeds, asset pairs, and (to come) event descriptors (for more information, see https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) rather than just {Bitstamp, Kraken, Gate.io, LNmarkets.com}, BTCUSD.
 
 ### Pricefeeds
 
-Pricefeeds can be easily added as needed. In the future, they will have their own crate associated to their implementation, but for now they will reside here. To add a new pricefeed, say, Binance, you must implement the `oracle::pricefeeds::PriceFeed` trait. Note that you will have to implement `translate_asset_pair` for all possible variants of `AssetPair`, regardless of whether you use all of their announcements/attestations. Create `binance.rs` in the `src/oracle/pricefeeds` directory, implement it, and add the module `binance` in `src/oracle/mod.rs` and re-export it:
+Pricefeeds can be easily added as needed. To add a new pricefeed, say, Binance, you must implement the `oracle::pricefeeds::PriceFeed` trait. Note that you will have to implement `translate_asset_pair` for all possible variants of `AssetPair`, regardless of whether you use all of their announcements/attestations. Create `binance.rs` in the `src/oracle/pricefeeds` directory, implement it, and add the module `binance` in `src/oracle/mod.rs` and re-export it:
 
 ```rust
 // snip

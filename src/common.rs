@@ -85,3 +85,24 @@ pub struct OracleSchedulerConfig {
     #[serde(with = "standard_duration")]
     pub announcement_offset: Duration,
 }
+
+#[derive(Serialize)]
+pub struct ConfigResponse {
+    pricefeed: ImplementedPriceFeed,
+    #[serde(with = "standard_duration")]
+    announcement_offset: Duration,
+    #[serde(with = "standard_duration")]
+    frequency: Duration,
+}
+
+impl From<(ImplementedPriceFeed, OracleSchedulerConfig)> for ConfigResponse {
+    fn from(
+        (pricefeed, oracle_scheduler_config): (ImplementedPriceFeed, OracleSchedulerConfig),
+    ) -> Self {
+        ConfigResponse {
+            pricefeed: pricefeed,
+            announcement_offset: oracle_scheduler_config.announcement_offset,
+            frequency: oracle_scheduler_config.frequency,
+        }
+    }
+}

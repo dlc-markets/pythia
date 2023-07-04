@@ -35,7 +35,7 @@ pub struct PythiaArgs {
     #[clap(short, long, value_name = "PORT")]
     port: Option<u16>,
 
-    /// Optional postgres URL for oracle DB, if not provided use "postgres://postgres:postgres@127.0.0.1:5432/postgres"
+    /// Optional postgres URL for oracle DB, if not provided use "postgres://postgres:postgres@127.0.0.1:5432/oracle"
     #[clap(short, long, value_name = "URL", value_hint = clap::ValueHint::Url)]
     postgres_url: Option<PgConnectOptions>,
 
@@ -100,7 +100,7 @@ impl PythiaArgs {
         match self.postgres_url {
             None => {
                 let db_connect = PgConnectOptions::from_str(
-                    "postgres://postgres:postgres@127.0.0.1:5432/postgres",
+                    "postgres://postgres:postgres@127.0.0.1:5432/oracle",
                 )?;
                 Ok((
                     asset_pair_infos,
