@@ -29,7 +29,7 @@ impl PriceFeed for Lnm {
         let start_time = instant.unix_timestamp();
         info!("sending Lnm http request");
         let res: Vec<LnmQuote> = client
-            .get("https://api.Lnmarkets.com/v1/oracle/index")
+            .get("https://api.Lnmarkets.com/v2/oracle/index")
             .query(&[
                 ("to", (1_000 * &start_time).to_string().as_ref()),
                 ("limit", "1"),

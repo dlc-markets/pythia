@@ -12,7 +12,7 @@ pub struct GateIo {}
 impl PriceFeed for GateIo {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "BTC_USD",
+            AssetPair::BTCUSD => "BTC_USDT",
         }
     }
 
