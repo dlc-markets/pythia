@@ -15,12 +15,10 @@ struct EventResponse {
 }
 
 struct DigitAnnoncementResponse {
-    digit_index: i32,
     nonce_public: Vec<u8>,
     nonce_secret: Option<Vec<u8>>,
 }
 struct DigitAttestationResponse {
-    digit_index: i32,
     nonce_public: Vec<u8>,
     signature: Option<Vec<u8>>,
 }
@@ -163,31 +161,26 @@ impl DBconnection {
             None => {
                 let digits = sqlx::query_as!(
                 DigitAnnoncementResponse,
-                "SELECT digit_index, nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1;",
+                "SELECT nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
                 event_id
             )
             .fetch_all(&self.0)
             .await?;
-                let mut aggregated_rows: Vec<(u16, (XOnlyPublicKey, [u8; 32]))> = digits
+                let aggregated_rows: Vec<(XOnlyPublicKey, [u8; 32])> = digits
                     .iter()
                     .map(|x| {
                         (
-                            x.digit_index as u16,
-                            (
-                                XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
-                                x.nonce_secret
-                                    .as_ref()
-                                    .unwrap()
-                                    .as_slice()
-                                    .try_into()
-                                    .unwrap(),
-                            ),
+                            XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                            x.nonce_secret
+                                .as_ref()
+                                .unwrap()
+                                .as_slice()
+                                .try_into()
+                                .unwrap(),
                         )
                     })
                     .collect();
-                aggregated_rows.sort_unstable_by_key(|&d| d.0);
-                type AnnouncementRows = (Vec<u16>, (Vec<XOnlyPublicKey>, Vec<[u8; 32]>));
-                let (_, (nonce_public, nonce_secret)): AnnouncementRows =
+                let (nonce_public, nonce_secret): (Vec<XOnlyPublicKey>, Vec<[u8; 32]>) =
                     aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     digits: event.digits as u16,
@@ -204,30 +197,25 @@ impl DBconnection {
             Some(outcome) => {
                 let digits = sqlx::query_as!(
                 DigitAttestationResponse,
-                "SELECT digit_index, nonce_public, signature FROM oracle.digits WHERE event_id = $1;",
+                "SELECT nonce_public, signature FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
                 event_id
             )
             .fetch_all(&self.0)
             .await?;
-                type AggregatedRows = (u16, (XOnlyPublicKey, Scalar));
-                let mut aggregated_rows: Vec<AggregatedRows> = digits
+                type AggregatedRows = (XOnlyPublicKey, Scalar);
+                let aggregated_rows: Vec<AggregatedRows> = digits
                     .iter()
                     .map(|x| {
                         (
-                            x.digit_index as u16,
-                            (
-                                XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
-                                Scalar::from_be_bytes(
-                                    x.signature.as_ref().unwrap().as_slice().try_into().unwrap(),
-                                )
-                                .unwrap(),
-                            ),
+                            XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                            Scalar::from_be_bytes(
+                                x.signature.as_ref().unwrap().as_slice().try_into().unwrap(),
+                            )
+                            .unwrap(),
                         )
                     })
                     .collect();
-                aggregated_rows.sort_unstable_by_key(|d| d.0);
-                type AttestationRows = (Vec<u16>, (Vec<XOnlyPublicKey>, Vec<Scalar>));
-                let (_, (nonce_public, sigs)): AttestationRows =
+                let (nonce_public, sigs): (Vec<XOnlyPublicKey>, Vec<Scalar>) =
                     aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     digits: event.digits as u16,
