@@ -1,7 +1,3 @@
-use std::str::FromStr;
-
-use displaydoc::Display;
-
 use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
@@ -11,9 +7,10 @@ use secp256k1_zkp::{
 /// We use custom types to implement signature splitting into nonce and scalar.
 /// Custum public nonce type
 #[derive(From)]
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub(super) struct NoncePoint(XOnlyPublicKey);
 /// Custum scalar signing part type
-#[derive(Display, From)]
+#[derive(From)]
 pub(super) struct SigningScalar(Scalar);
 /// Custum signature type
 #[derive(From)]
@@ -28,8 +25,12 @@ impl From<OracleSignature> for (NoncePoint, SigningScalar) {
 
 impl From<OracleSignature> for Signature {
     fn from(sig: OracleSignature) -> Self {
-        Signature::from_str((sig.0 .0.to_string() + sig.1.to_string().as_str()).as_str())
-            .expect("Nonce and scalar are 64 bytes long")
+        Signature::from_slice(
+            [sig.0 .0.serialize(), sig.1 .0.to_be_bytes()]
+                .concat()
+                .as_slice(),
+        )
+        .expect("Nonce and scalar are 64 bytes long")
     }
 }
 
@@ -82,8 +83,12 @@ pub(super) fn sign_outcome(
 
 #[cfg(test)]
 pub(super) mod test {
+    use std::str::FromStr;
+
     use secp256k1_zkp::{
-        schnorr::Signature, All, KeyPair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
+        hashes::{hex::FromHex, Hash},
+        schnorr::Signature,
+        All, KeyPair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
     };
 
     use crate::oracle::crypto::{
@@ -98,7 +103,7 @@ pub(super) mod test {
     }
 
     #[test]
-    fn test_one_one() {
+    fn test_digit_decomposition() {
         check_bit_conversion(
             2f64,
             20,
@@ -108,9 +113,6 @@ pub(super) mod test {
                 .map(|c| c.to_string())
                 .collect(),
         );
-    }
-    #[test]
-    fn test_realistic_price() {
         check_bit_conversion(
             24156.2f64,
             20,
@@ -120,9 +122,6 @@ pub(super) mod test {
                 .map(|c| c.to_string())
                 .collect::<Vec<String>>(),
         );
-    }
-    #[test]
-    fn test_all_one() {
         check_bit_conversion(
             (2_i32.pow(20) - 1) as f64,
             20,
@@ -132,9 +131,6 @@ pub(super) mod test {
                 .map(|c| c.to_string())
                 .collect::<Vec<String>>(),
         );
-    }
-    #[test]
-    fn test_precision() {
         check_bit_conversion(
             0.125f64,
             20,
@@ -169,5 +165,87 @@ pub(super) mod test {
         //     &Message::from_slice(&[&[0_u8; 31], outcome.as_bytes()].concat()).unwrap(),
         //     key,
         // )
+    }
+
+    pub fn check_signature_with_tag(
+        secp: &Secp256k1<All>,
+        key: &XOnlyPublicKey,
+        msg: impl AsRef<[u8]>,
+        tag: &str,
+        result: Signature,
+    ) -> Result<(), UpstreamError> {
+        let taghash = <secp256k1_zkp::hashes::sha256::Hash>::hash(tag.as_bytes());
+        let tag = taghash.as_ref();
+        let payload = [tag.clone(), tag, msg.as_ref()].concat();
+        secp.verify_schnorr(
+            &result,
+            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
+            key,
+        )
+        // secp.verify_schnorr(
+        //     &result,
+        //     &Message::from_slice(&[&[0_u8; 31], outcome.as_bytes()].concat()).unwrap(),
+        //     key,
+        // )
+    }
+
+    fn test_bip340_convertion(
+        secp: &Secp256k1<All>,
+        sig_str: &str,
+        msg_hex: &str,
+        pubkey_str: &str,
+        nonce_secret_str: Option<&str>,
+    ) {
+        // Check if passing bip340 test vec
+        let sig_secp = Signature::from_str(sig_str).unwrap();
+        let zero_msg = Message::from_slice(&<[u8; 32]>::from_hex(msg_hex).unwrap()).unwrap();
+        let pubkey = XOnlyPublicKey::from_str(pubkey_str).unwrap();
+        secp.verify_schnorr(&sig_secp, &zero_msg, &pubkey).unwrap();
+
+        // Convert into nonce and scalar
+
+        let oracle_sig = OracleSignature::from(sig_secp);
+        let (oracle_nonce, oracle_scalar) = oracle_sig.into();
+
+        // If secret nonce is given, check that it match public one in signature
+
+        match nonce_secret_str {
+            Some(secret_str) => assert_eq!(
+                &NoncePoint(
+                    KeyPair::from_seckey_str(secp, secret_str)
+                        .unwrap()
+                        .x_only_public_key()
+                        .0
+                ),
+                &oracle_nonce
+            ),
+            None => {}
+        }
+
+        // Aggregate back into a signature
+        let oracle_sig: OracleSignature = (oracle_nonce, oracle_scalar).into();
+
+        // Check if Signature if still valid after manipulations
+        secp.verify_schnorr(&oracle_sig.into(), &zero_msg, &pubkey)
+            .unwrap();
+    }
+
+    fn hash_zero() -> String {
+        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).as_ref())
+    }
+    fn hash_one() -> String {
+        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).as_ref())
+    }
+
+    #[test]
+    fn test_vec_bip340_convertion() {
+        let secp = Secp256k1::new();
+        test_bip340_convertion(&secp, "e907831f80848D1069a5371b402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0", "0000000000000000000000000000000000000000000000000000000000000000", "F9308A019258C31049344F85F89D5229B531C845836F99B08601F113Bce036f9", None);
+        test_bip340_convertion(&secp, "6896BD60EEAE296DB48A229FF71DFE071BDE413E6D43F917DC8DCF8C78DE33418906D11AC976ABCCB20B091292BFF4EA897EFCB639EA871CFA95F6DE339E4B0A", "243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89", "DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659", None);
+        test_bip340_convertion(&secp, "00000000000000000000003B78CE563F89A0ED9414F5AA28AD0D96D6795F9C6376AFB1548AF603B3EB45C9F8207DEE1060CB71C04E80F593060B07D28308D7F4", "4DF3C3F68FCC83B27E9D42C90431A72499F17875C81A599B566C9889B9696703", "D69C3509BB99E412E68B0FE8544E72837DFA30746D8BE2AA65975F29D22DC7B9", None);
+        test_bip340_convertion(&secp, "ff19c598971a495aed75a3b2f8bcdac124fc4f7491ce23124052656321baf5301eb081c1da3ca58bd631ed60ae9dded44071e88aca8ddf6dacf646cf02f85d74", &hash_zero(), "ce4b7ad2b45de01f0897aa716f67b4c2f596e54506431e693f898712fe7e9bf3", None);
+        test_bip340_convertion(&secp, "7a43247533372a1ea782dff57f3c691c7e2dcd8b8ec6c57d59977f7101785bb40666a8b521034ce010130ba3d8fb1e358074e3a3854a8f7e31da8a8a41ec6c89", &hash_zero(), "24653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c", None);
+        test_bip340_convertion(&secp, "b9f70047b2fe621b2b4af36abc3cd4e0d155dcc2f300a8238d48108a4a1d5510283c2058d7210737f2baf60bd05d98f86ebb832d108f08455ffea58fda9b7283", &hash_zero(), "24653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c", None);
+        test_bip340_convertion(&secp, "49a2c17b1eb2bcfb08d90728f301e8f80d6296cb7964129312c769cf7dd1942761cd6df12fe1d88fa5628042e676c4deaaf2aef07e516a8efdd2a4e2fa397159", &hash_one(), "24653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c", None);
     }
 }

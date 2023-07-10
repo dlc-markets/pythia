@@ -60,7 +60,7 @@ enum EventType {
     Attestation,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AttestationResponse {
     event_id: String,
@@ -167,8 +167,8 @@ async fn oracle_event_service(
                     Some(attestation) => {
                         let attestation_response = AttestationResponse {
                             event_id,
-                            signatures: attestation.signatures,
-                            values: attestation.outcomes,
+                            signatures: attestation.signatures.clone(),
+                            values: attestation.outcomes.clone(),
                         };
                         Ok(HttpResponse::Ok().json(attestation_response))
                     }
