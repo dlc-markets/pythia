@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Result};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
@@ -186,6 +187,7 @@ pub async fn run_api(
     info!("starting server");
     HttpServer::new(move || {
         App::new()
+            .wrap(Cors::permissive())
             .app_data(web::Data::new((oracles.clone(), oracles_scheduler_config)))
             .service(
                 web::scope("/v1")

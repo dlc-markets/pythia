@@ -12,8 +12,8 @@ pub struct Lnm {}
 //#[serde(rename_all = "camelCase")]
 pub struct LnmQuote {
     #[serde(with = "ts_milliseconds")]
-    pub timestamp: NaiveDateTime,
-    pub last_price: f64,
+    pub time: NaiveDateTime,
+    pub index: f64,
 }
 
 #[async_trait]
@@ -32,6 +32,7 @@ impl PriceFeed for Lnm {
             .get("https://api.Lnmarkets.com/v2/oracle/index")
             .query(&[
                 ("to", (1_000 * &start_time).to_string().as_ref()),
+                ("from", (1_000 * &start_time).to_string().as_ref()),
                 ("limit", "1"),
             ])
             .send()
@@ -44,10 +45,10 @@ impl PriceFeed for Lnm {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
         }
 
-        if res[0].timestamp.timestamp() != start_time {
+        if res[0].time.timestamp() != start_time {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
         }
 
-        Ok(res[0].last_price)
+        Ok(res[0].index)
     }
 }
