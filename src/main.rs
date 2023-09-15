@@ -39,7 +39,9 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = match &args.secret_key_file {
         None => {
             info!("no secret key file was found, generating secret key");
-            secp.generate_keypair(&mut rand::thread_rng()).0
+            let secret_key = secp.generate_keypair(&mut rand::thread_rng()).0;
+            error!("no secret key file was found, generated secret key is {} only use for testing and drop DB next time you generate a key", secret_key.display_secret());
+            secret_key
         }
         Some(path) => {
             info!(
@@ -47,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
                 path.as_os_str().to_string_lossy()
             );
             File::open(path)?.read_to_string(&mut secret_key)?;
-            secret_key.retain(|c| !c.is_whitespace());
+            secret_key.retain(|c| !c.is_whitespace() && !c.is_ascii_control());
             SecretKey::from_str(&secret_key)?
         }
     };
