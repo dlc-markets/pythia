@@ -232,7 +232,7 @@ mod test {
     use crate::{
         common::{AssetPair, AssetPairInfo},
         pricefeeds::{
-            ImplementedPriceFeed::{self, Lnm},
+            ImplementedPriceFeed::{self, Lnmarkets},
             PriceFeedError,
         },
     };
@@ -273,10 +273,10 @@ mod test {
             "postgres://postgres:postgres@127.0.0.1:5432".into(),
             Path::new("./migrations"),
         );
-        let oracle = setup_oracle(&tbd, 0, 20, Lnm).await;
+        let oracle = setup_oracle(&tbd, 0, 20, Lnmarkets).await;
         let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
         assert_eq!((0, 20), (event.precision, event.nb_digits));
-        let oracle = setup_oracle(&tbd, 10, 20, Lnm).await;
+        let oracle = setup_oracle(&tbd, 10, 20, Lnmarkets).await;
         let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
@@ -310,7 +310,7 @@ mod test {
             "postgres://postgres:postgres@127.0.0.1:5432".into(),
             Path::new("./migrations"),
         );
-        let oracle = setup_oracle(&tbd, 12, 32, Lnm).await;
+        let oracle = setup_oracle(&tbd, 12, 32, Lnmarkets).await;
         let now = OffsetDateTime::now_utc();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
             .iter()
@@ -407,7 +407,7 @@ mod test {
             "postgres://postgres:postgres@127.0.0.1:5432".into(),
             Path::new("./migrations"),
         );
-        let oracle = setup_oracle(&tbd, 12, 32, Lnm).await;
+        let oracle = setup_oracle(&tbd, 12, 32, Lnmarkets).await;
         let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()

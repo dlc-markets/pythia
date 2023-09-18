@@ -1,6 +1,6 @@
 [
 	{
-		"pricefeed": "lnm",
+		"pricefeed": "lnmarkets",
 		"asset_pair": "btcusd",
 		"event_descriptor": {
 			"digitDecompositionEvent": {

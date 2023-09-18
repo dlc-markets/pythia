@@ -25,13 +25,13 @@ mod lnm;
 pub use bitstamp::Bitstamp;
 pub use gateio::GateIo;
 pub use kraken::Kraken;
-pub use lnm::Lnm;
+pub use lnm::Lnmarkets;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]
 pub enum ImplementedPriceFeed {
-    Lnm,
+    Lnmarkets,
     Kraken,
     GateIo,
     Bitstamp,
@@ -40,7 +40,7 @@ pub enum ImplementedPriceFeed {
 impl ImplementedPriceFeed {
     pub fn get_pricefeed(self) -> Box<dyn PriceFeed + Send + Sync> {
         match self {
-            Self::Lnm => Box::new(lnm::Lnm {}),
+            Self::Lnmarkets => Box::new(lnm::Lnmarkets {}),
             Self::Kraken => Box::new(kraken::Kraken {}),
             Self::GateIo => Box::new(gateio::GateIo {}),
             Self::Bitstamp => Box::new(bitstamp::Bitstamp {}),
