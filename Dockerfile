@@ -1,28 +1,35 @@
 FROM rust:1.72.0-slim-bookworm AS builder
 
-WORKDIR /usr
+ENV SQLX_OFFLINE true
 
-COPY Cargo.toml ./
-
-COPY src ./src
-
-COPY .docker/ ./
+WORKDIR /usr/src/pythia
 
 RUN apt-get update -y && \
   apt-get install -y pkg-config make g++ libssl-dev
 
-ENV SQLX_OFFLINE true
+COPY Cargo.toml sqlx-data.json ./
+
+COPY src ./src
+
+COPY migrations ./migrations
 
 RUN cargo build --release
 
 FROM debian:bookworm-slim
 
+ENV RUST_LOG info
+
 RUN apt-get update -y && apt-get install -y libssl-dev
 
-COPY --from=builder /usr/target/release/pythia /usr/bin/pythia
+RUN groupadd --gid 1000 pythia \
+    && useradd --uid 1000 --gid 1000 -m pythia
+
+COPY --from=builder /usr/src/pythia/target/release/pythia /usr/bin/pythia
 
 COPY config ./config
 
-ENV RUST_LOG info
+USER pythia
 
-CMD [ "/usr/bin/pythia" ]
+EXPOSE 8000
+
+CMD [ "pythia" ]
