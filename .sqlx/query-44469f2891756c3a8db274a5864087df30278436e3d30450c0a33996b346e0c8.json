@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT nonce_public, signature FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce_public",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "signature",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "44469f2891756c3a8db274a5864087df30278436e3d30450c0a33996b346e0c8"
+}

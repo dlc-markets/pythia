@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "digits",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "precision",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "maturity",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "announcement_signature",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 4,
+        "name": "outcome",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "400a002758add82137ef65940c7161be66ae0b1310820f6bf22e4cc76f9a91e6"
+}

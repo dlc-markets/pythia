@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce_public",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "nonce_secret",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "11c62d9b137b9bad8b98d198db7d4d1766dd0c8226f862ae20db0d1e5620b14b"
+}
