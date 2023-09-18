@@ -1,7 +1,2 @@
-/target
-
-.DS_STORE
-
-/events
-
-nohup.out
+target
+Cargo.lock
