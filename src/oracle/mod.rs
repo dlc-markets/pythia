@@ -75,7 +75,11 @@ impl Oracle {
         &self,
         maturation: OffsetDateTime,
     ) -> Result<OracleAnnouncement> {
-        let EventDescriptor::DigitDecompositionEvent(event) = &self.asset_pair_info.event_descriptor else {panic!("Error in db")};
+        let EventDescriptor::DigitDecompositionEvent(event) =
+            &self.asset_pair_info.event_descriptor
+        else {
+            panic!("Error in db")
+        };
         let digits = event.nb_digits;
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
@@ -128,8 +132,12 @@ impl Oracle {
     /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
     /// Store in DB and returm some oracle attestation if event is attested successfully.
     pub async fn try_attest_event(&self, event_id: String) -> Result<Option<OracleAttestation>> {
-        let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
-        let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {return Err(OracleError::AlreadyAttestatedError(event_id))};
+        let Some(event) = self.app_state.db.get_event(&event_id).await? else {
+            return Ok(None);
+        };
+        let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
+            return Err(OracleError::AlreadyAttestatedError(event_id));
+        };
         info!("retrieving pricefeeds for attestation");
         let outcome = self
             .app_state
@@ -169,7 +177,9 @@ impl Oracle {
         &self,
         event_id: String,
     ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
-        let Some(event) = self.app_state.db.get_event(&event_id).await? else {return Ok(None)};
+        let Some(event) = self.app_state.db.get_event(&event_id).await? else {
+            return Ok(None);
+        };
         let oracle_event = OracleEvent {
             oracle_nonces: event.nonce_public.clone(),
             event_maturity_epoch: event.maturity.unix_timestamp() as u32,
@@ -272,10 +282,18 @@ mod test {
     #[sqlx::test]
     async fn test_oracle_setup(tbd: PgPool) {
         let oracle = setup_oracle(tbd.clone(), 0, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
+        let EventDescriptor::DigitDecompositionEvent(event) =
+            oracle.asset_pair_info.clone().event_descriptor
+        else {
+            panic!("Invalid event type")
+        };
         assert_eq!((0, 20), (event.precision, event.nb_digits));
         let oracle = setup_oracle(tbd, 10, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
+        let EventDescriptor::DigitDecompositionEvent(event) =
+            oracle.asset_pair_info.clone().event_descriptor
+        else {
+            panic!("Invalid event type")
+        };
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
 
@@ -330,7 +348,13 @@ mod test {
         {
             Ok(attestation) => attestation,
             Err(OracleError::PriceFeedError(error)) => {
-                let PriceFeedError::PriceNotAvailableError(_, asked_date) = error else {panic!("Pricefeeder {:?} did not respond for this date {}", oracle.asset_pair_info.pricefeed, date.clone())};
+                let PriceFeedError::PriceNotAvailableError(_, asked_date) = error else {
+                    panic!(
+                        "Pricefeeder {:?} did not respond for this date {}",
+                        oracle.asset_pair_info.pricefeed,
+                        date.clone()
+                    )
+                };
                 // Pricefeeder can only respond that price is not available if our query was asking in the future
                 if asked_date < now {
                     panic!("Pricefeeder {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
@@ -361,7 +385,10 @@ mod test {
             ),
             Some(attestation) => {
                 let EventDescriptor::DigitDecompositionEvent(event) =
-                    &oracle.asset_pair_info.event_descriptor else {panic!("Invalid event type")};
+                    &oracle.asset_pair_info.event_descriptor
+                else {
+                    panic!("Invalid event type")
+                };
                 let precision = event.precision;
                 assert_eq!(
                     oracle

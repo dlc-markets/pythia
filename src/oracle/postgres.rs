@@ -66,9 +66,13 @@ impl DBconnection {
         announcement: &OracleAnnouncement,
         outstanding_sk_nonces: Vec<[u8; 32]>,
     ) -> Result<()> {
-        let EventDescriptor::DigitDecompositionEvent(ref digits) = announcement.oracle_event.event_descriptor else {
-      return Err(sqlx::Error::TypeNotFound { type_name: "Only DigitDecomposition event type is supported".to_string() })
-    };
+        let EventDescriptor::DigitDecompositionEvent(ref digits) =
+            announcement.oracle_event.event_descriptor
+        else {
+            return Err(sqlx::Error::TypeNotFound {
+                type_name: "Only DigitDecomposition event type is supported".to_string(),
+            });
+        };
 
         let sk_nonces = outstanding_sk_nonces
             .into_iter()
