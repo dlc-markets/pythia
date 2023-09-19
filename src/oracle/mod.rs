@@ -214,14 +214,14 @@ impl Oracle {
 
 #[cfg(test)]
 mod test {
-    use std::{path::Path, str::FromStr};
+    use std::str::FromStr;
 
     use dlc_messages::oracle_msgs::{
         DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
         OracleEvent, Writeable,
     };
     use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
-    use sqlx_mock::TestPostgres;
+    use sqlx::postgres::PgPool;
     use time::{macros::datetime, Duration, OffsetDateTime};
 
     use super::{
@@ -240,7 +240,7 @@ mod test {
     use secp256k1_zkp::hashes::Hash;
 
     async fn setup_oracle(
-        tbd: &TestPostgres,
+        tbd: PgPool,
         precision: i32,
         nb_digits: u16,
         pricefeed: ImplementedPriceFeed,
@@ -263,20 +263,16 @@ mod test {
         let secp = Secp256k1::new();
         let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
         let keypair = KeyPair::from_secret_key(&secp, &secret_key);
-        let db = DBconnection(tbd.get_pool().await);
+        let db = DBconnection(tbd);
         return Oracle::new(asset_pair_info, secp, db, keypair).unwrap();
     }
 
-    #[actix_web::test]
-    async fn test_oracle_setup() {
-        let tbd = TestPostgres::new(
-            "postgres://postgres:postgres@127.0.0.1:5432".into(),
-            Path::new("./migrations"),
-        );
-        let oracle = setup_oracle(&tbd, 0, 20, Lnmarkets).await;
+    #[sqlx::test]
+    async fn test_oracle_setup(tbd: PgPool) {
+        let oracle = setup_oracle(tbd.clone(), 0, 20, Lnmarkets).await;
         let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
         assert_eq!((0, 20), (event.precision, event.nb_digits));
-        let oracle = setup_oracle(&tbd, 10, 20, Lnmarkets).await;
+        let oracle = setup_oracle(tbd, 10, 20, Lnmarkets).await;
         let EventDescriptor::DigitDecompositionEvent(event) = oracle.asset_pair_info.clone().event_descriptor else {panic!("Invalid event type")};
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
@@ -304,13 +300,9 @@ mod test {
         .unwrap();
     }
 
-    #[actix_web::test]
-    async fn announcements_tests() {
-        let tbd = TestPostgres::new(
-            "postgres://postgres:postgres@127.0.0.1:5432".into(),
-            Path::new("./migrations"),
-        );
-        let oracle = setup_oracle(&tbd, 12, 32, Lnmarkets).await;
+    #[sqlx::test]
+    async fn announcements_tests(tbd: PgPool) {
+        let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
         let now = OffsetDateTime::now_utc();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
             .iter()
@@ -401,13 +393,9 @@ mod test {
         }
     }
 
-    #[actix_web::test]
-    async fn attestations_test() {
-        let tbd = TestPostgres::new(
-            "postgres://postgres:postgres@127.0.0.1:5432".into(),
-            Path::new("./migrations"),
-        );
-        let oracle = setup_oracle(&tbd, 12, 32, Lnmarkets).await;
+    #[sqlx::test]
+    async fn attestations_test(tbd: PgPool) {
+        let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
         let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()
