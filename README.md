@@ -18,7 +18,7 @@ This endpoint return all asset pairs supported of the running oracle instance.
 ### Get configuration
 
 ```sh
-curl -X GET http://localhost:8080/v1/{asset_id}/config
+curl -X GET http://localhost:8000/v1/{asset_id}/config
 ```
 
 This endpoint returns the [oracle config](#configure) for the asset pair specified with the asset_id that is returned by previous endpoint.
@@ -27,7 +27,7 @@ Output example:
 
 ```json
 {
-    "pricefeed": "lnm",
+    "pricefeed": "lnmarkets",
     "announcement_offset": "1day",
     "frequency": "1min"
 }

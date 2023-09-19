@@ -9,7 +9,6 @@ x-defaults: &defaults
     POSTGRES_USER: postgres
     POSTGRES_DB: postgres
     POSTGRES_HOST: postgres
-    POSTGRES_PORT: 5432
 
   logging: &logging
     driver: 'json-file'
@@ -22,10 +21,6 @@ name: pythia
 
 networks:
   network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.83.0.0/24
 
 volumes:
   postgres:
