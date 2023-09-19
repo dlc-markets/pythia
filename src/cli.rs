@@ -77,7 +77,7 @@ impl PythiaArgs {
 
         let port: u16 = self.port.unwrap_or(8000);
 
-        match self.postgres_url {
+        match self.url_postgres {
             None => {
                 let db_connect = PgConnectOptions::from_str(
                     "postgres://postgres:postgres@127.0.0.1:5432/oracle",
