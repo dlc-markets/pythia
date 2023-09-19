@@ -1,0 +1,21 @@
+{
+    "asset_pair_infos": [
+        {
+            "pricefeed": "lnmarkets",
+            "asset_pair": "btcusd",
+            "event_descriptor": {
+                "digitDecompositionEvent": {
+                    "base": 2,
+                    "isSigned": false,
+                    "unit": "usd/btc",
+                    "precision": 0,
+                    "nbDigits": 20
+                }
+            }
+        }
+    ],
+    "oracle_scheduler_config": {
+        "frequency": "1min",
+        "announcement_offset": "1h"
+    }
+}

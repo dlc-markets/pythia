@@ -6,7 +6,7 @@ use std::{
 
 use clap::Parser;
 
-use crate::common::{AssetPairInfo, OracleSchedulerConfig};
+use crate::common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig};
 
 use sqlx::postgres::PgConnectOptions;
 
@@ -19,17 +19,9 @@ pub struct PythiaArgs {
     #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
     pub secret_key_file: Option<std::path::PathBuf>,
 
-    /// Optional asset pair config file; if not provided, it is assumed to exist at "config/asset_pair.json"
+    /// Optional config file; if not provided, it is assumed to exist at "config.json"
     #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    asset_pair_config_file: Option<std::path::PathBuf>,
-
-    /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
-    #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    oracle_scheduler_config_file: Option<std::path::PathBuf>,
-
-    /// Optional oracle config file; if not provided, it is assumed to exist at "config/oracle.json"
-    #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    oracle_config_file: Option<std::path::PathBuf>,
+    config_file: Option<std::path::PathBuf>,
 
     /// Optional port for API; if not provided, use 8000
     #[clap(short, long, value_name = "PORT")]
@@ -37,7 +29,7 @@ pub struct PythiaArgs {
 
     /// Optional postgres URL for oracle DB, if not provided use "postgres://postgres:postgres@127.0.0.1:5432/oracle"
     #[clap(short, long, value_name = "URL", value_hint = clap::ValueHint::Url)]
-    postgres_url: Option<PgConnectOptions>,
+    url_postgres: Option<PgConnectOptions>,
 
     /// Optional number of maximum postgres connection, default to 10 if not provided
     #[clap(short, long, value_name = "NB_CONNECTIONS")]
@@ -54,45 +46,33 @@ impl PythiaArgs {
         PgConnectOptions,
         u32,
     )> {
-        let asset_pair_infos: Vec<AssetPairInfo> = match self.asset_pair_config_file {
+        let config_file: ConfigurationFile = match self.config_file {
             None => {
-                info!("reading asset pair config from config/asset_pair.json");
-                serde_json::from_str(&fs::read_to_string("config/asset_pair.json")?)?
+                info!("reading asset pair and oracle scheduler config from config.json");
+                serde_json::from_str(&fs::read_to_string("config.json")?)?
             }
             Some(path) => {
                 info!(
-                    "reading asset pair config from {}",
+                    "reading asset pair and oracle scheduler config from {}",
                     path.as_os_str().to_string_lossy()
                 );
-                let mut asset_pair_info = String::new();
-                File::open(path)?.read_to_string(&mut asset_pair_info)?;
-                serde_json::from_str(&asset_pair_info)?
+                let mut config_file = String::new();
+                File::open(path)?.read_to_string(&mut config_file)?;
+                serde_json::from_str(&config_file)?
             }
         };
-        info!(
-            "asset pair config successfully read: {:#?}",
-            asset_pair_infos
+
+        let (asset_pair_infos, oracle_scheduler_config): (
+            Vec<AssetPairInfo>,
+            OracleSchedulerConfig,
+        ) = (
+            config_file.asset_pair_infos,
+            config_file.oracle_scheduler_config,
         );
 
-        let oracle_scheduler_config: OracleSchedulerConfig = match self.oracle_scheduler_config_file
-        {
-            None => {
-                info!("reading oracle config from config/oracle_scheduler.json");
-                serde_json::from_str(&fs::read_to_string("config/oracle_scheduler.json")?)?
-            }
-            Some(path) => {
-                info!(
-                    "reading oracle scheduler config from {}",
-                    path.as_os_str().to_string_lossy()
-                );
-                let mut oracle_scheduler_config = String::new();
-                File::open(path)?.read_to_string(&mut oracle_scheduler_config)?;
-                serde_json::from_str(&oracle_scheduler_config)?
-            }
-        };
         info!(
-            "oracle scheduler config successfully read: {:#?}",
-            oracle_scheduler_config
+            "asset pair and oracle scheduler config successfully read: {:#?}",
+            (&asset_pair_infos, &oracle_scheduler_config)
         );
 
         let port: u16 = self.port.unwrap_or(8000);

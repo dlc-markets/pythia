@@ -86,6 +86,13 @@ pub struct OracleSchedulerConfig {
     pub announcement_offset: Duration,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub struct ConfigurationFile {
+    pub asset_pair_infos: Vec<AssetPairInfo>,
+    pub oracle_scheduler_config: OracleSchedulerConfig,
+}
+
 #[derive(Serialize)]
 pub struct ConfigResponse {
     pricefeed: ImplementedPriceFeed,
