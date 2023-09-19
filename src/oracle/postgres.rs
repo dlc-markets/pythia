@@ -70,7 +70,10 @@ impl DBconnection {
       return Err(sqlx::Error::TypeNotFound { type_name: "Only DigitDecomposition event type is supported".to_string() })
     };
 
-    let sk_nonces = outstanding_sk_nonces.into_iter().map(|x| x.into()).collect::<Vec<_>>();
+        let sk_nonces = outstanding_sk_nonces
+            .into_iter()
+            .map(|x| x.into())
+            .collect::<Vec<_>>();
 
         sqlx::query!(
             "WITH events AS (
@@ -100,7 +103,7 @@ impl DBconnection {
                 .iter()
                 .map(|x| x.serialize().to_vec())
                 .collect::<Vec<Vec<u8>>>(),
-                sk_nonces.as_slice()
+            sk_nonces.as_slice()
         )
         .execute(&self.0)
         .await?;
