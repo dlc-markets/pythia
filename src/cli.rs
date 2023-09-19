@@ -1,12 +1,14 @@
 use std::{
     fs::{self, File},
     io::Read,
-    str::FromStr,
 };
 
 use clap::Parser;
 
-use crate::common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig};
+use crate::{
+    common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
+    env::match_postgres_env,
+};
 
 use sqlx::postgres::PgConnectOptions;
 
@@ -79,9 +81,8 @@ impl PythiaArgs {
 
         match self.url_postgres {
             None => {
-                let db_connect = PgConnectOptions::from_str(
-                    "postgres://postgres:postgres@127.0.0.1:5432/postgres",
-                )?;
+                let db_connect = match_postgres_env()?;
+
                 Ok((
                     asset_pair_infos,
                     oracle_scheduler_config,

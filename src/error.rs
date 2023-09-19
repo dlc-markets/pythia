@@ -1,3 +1,5 @@
+use std::num::ParseIntError;
+
 use crate::{oracle::OracleError, AssetPair};
 use displaydoc::Display;
 use thiserror::Error;
@@ -19,6 +21,9 @@ pub enum PythiaError {
 
     /// Oracle Error: {0}
     OracleError(#[from] OracleError),
+
+    /// Port is not a valid number: {0}
+    ConfigError(#[from] ParseIntError),
 }
 
 impl actix_web::error::ResponseError for PythiaError {

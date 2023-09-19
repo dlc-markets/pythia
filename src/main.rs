@@ -19,7 +19,7 @@ mod pricefeeds;
 
 mod oracle_scheduler;
 
-use crate::{env::match_postgres_env, oracle::postgres::DBconnection};
+use crate::oracle::postgres::DBconnection;
 
 mod api;
 mod cli;
@@ -60,12 +60,8 @@ async fn main() -> anyhow::Result<()> {
         keypair.public_key().serialize().encode_hex::<String>()
     );
 
-    let (asset_pair_infos, oracle_scheduler_config, port, mut db_connect, max_connections_postgres) =
+    let (asset_pair_infos, oracle_scheduler_config, port, db_connect, max_connections_postgres) =
         args.match_args()?;
-
-    if let Some(env_postgres) = match_postgres_env() {
-        db_connect = env_postgres
-    }
 
     let db = DBconnection::new(db_connect, max_connections_postgres).await?;
 
