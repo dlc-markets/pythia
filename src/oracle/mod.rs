@@ -1,8 +1,9 @@
 use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
 
 use dlc_messages::oracle_msgs::{
-    EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent, Writeable,
+    EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
+use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     rand::{thread_rng, RngCore},
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
@@ -218,8 +219,9 @@ mod test {
 
     use dlc_messages::oracle_msgs::{
         DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
-        OracleEvent, Writeable,
+        OracleEvent,
     };
+    use lightning::util::ser::Writeable;
     use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
     use sqlx::postgres::PgPool;
     use time::{macros::datetime, Duration, OffsetDateTime};
