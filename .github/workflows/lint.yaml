@@ -2,11 +2,11 @@ name: lint
 
 on:
   push:
-    branches:
-      - '**'
-    tags-ignore:
-      - '**'
+    paths:
+      - '**.rs'
   pull_request:
+    paths:
+      - '**.rs'
 
 env:
   SQLX_OFFLINE: 'true'
