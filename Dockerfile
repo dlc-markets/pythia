@@ -1,4 +1,4 @@
-FROM rust:1.72.0-slim-bookworm AS builder
+FROM rust:1.70.0-slim-bookworm AS builder
 
 ENV SQLX_OFFLINE=true
 

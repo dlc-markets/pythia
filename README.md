@@ -1,11 +1,10 @@
 # pythia
-a numeric (and extensible) oracle implementation for bitcoin forked from sibyls, the oracle of lava.xyz.
 
 ![alt text](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg/2560px-Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg)
 
-## API Description
+A numeric (and extensible) oracle implementation for bitcoin forked from sibyls, the oracle of lava.xyz.
 
-A working version of this oracle is hosted at https://lnmarkets.com/
+## API Description
 
 ### Get supported assets
 
