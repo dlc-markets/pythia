@@ -29,11 +29,11 @@ RUN groupadd --gid 1000 pythia \
 
 COPY --from=builder /usr/src/pythia/target/release/pythia /usr/bin/pythia
 
-COPY migrations ./migrations
-
 WORKDIR /home/pythia
 
 COPY config.json /home/pythia/config.json
+
+COPY migrations ./migrations
 
 USER pythia
 

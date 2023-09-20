@@ -22,4 +22,6 @@ jobs:
 
       - run: sudo apt install -y pkg-config make g++ libssl-dev
 
+      - uses: Swatinem/rust-cache@v2
+
       - run: cargo build --release
