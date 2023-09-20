@@ -65,6 +65,8 @@ async fn main() -> anyhow::Result<()> {
 
     let db = DBconnection::new(db_connect, max_connections_postgres).await?;
 
+    db.migrate().await?;
+
     // setup event databases
     let oracles = asset_pair_infos
         .iter()

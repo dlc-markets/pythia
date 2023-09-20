@@ -52,6 +52,13 @@ impl DBconnection {
         ))
     }
 
+    pub async fn migrate (&self) -> Result<()> {
+        sqlx::migrate!("./migrations")
+            .run(&self.0)
+            .await?;
+        Ok(())
+    }
+
     pub async fn is_empty(&self) -> bool {
         sqlx::query_as!(EventResponse, "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1")
             .fetch_optional(&self.0)

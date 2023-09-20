@@ -13,6 +13,7 @@ COPY src ./src
 
 COPY .sqlx ./.sqlx
 
+# Needed for compiling
 COPY migrations ./migrations
 
 RUN cargo build --release
@@ -27,6 +28,8 @@ RUN groupadd --gid 1000 pythia \
     && useradd --uid 1000 --gid 1000 -m pythia
 
 COPY --from=builder /usr/src/pythia/target/release/pythia /usr/bin/pythia
+
+COPY migrations ./migrations
 
 WORKDIR /home/pythia
 
