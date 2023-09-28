@@ -18,11 +18,13 @@ pub trait PriceFeed {
 }
 
 mod bitstamp;
+mod deribit;
 mod gateio;
 mod kraken;
 mod lnm;
 
 pub use bitstamp::Bitstamp;
+pub use deribit::Deribit;
 pub use gateio::GateIo;
 pub use kraken::Kraken;
 pub use lnm::Lnmarkets;
@@ -32,6 +34,7 @@ pub use lnm::Lnmarkets;
 #[serde(rename_all = "lowercase")]
 pub enum ImplementedPriceFeed {
     Lnmarkets,
+    Deribit,
     Kraken,
     GateIo,
     Bitstamp,
@@ -41,6 +44,7 @@ impl ImplementedPriceFeed {
     pub fn get_pricefeed(self) -> Box<dyn PriceFeed + Send + Sync> {
         match self {
             Self::Lnmarkets => Box::new(lnm::Lnmarkets {}),
+            Self::Deribit => Box::new(deribit::Deribit {}),
             Self::Kraken => Box::new(kraken::Kraken {}),
             Self::GateIo => Box::new(gateio::GateIo {}),
             Self::Bitstamp => Box::new(bitstamp::Bitstamp {}),
