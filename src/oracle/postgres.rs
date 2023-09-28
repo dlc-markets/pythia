@@ -52,10 +52,8 @@ impl DBconnection {
         ))
     }
 
-    pub async fn migrate (&self) -> Result<()> {
-        sqlx::migrate!("./migrations")
-            .run(&self.0)
-            .await?;
+    pub async fn migrate(&self) -> Result<()> {
+        sqlx::migrate!("./migrations").run(&self.0).await?;
         Ok(())
     }
 
