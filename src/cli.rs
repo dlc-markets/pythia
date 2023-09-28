@@ -15,8 +15,6 @@ use crate::{
 
 use sqlx::postgres::PgConnectOptions;
 
-use anyhow::Result;
-
 #[derive(Parser)]
 /// Simple DLC oracle implementation
 pub struct PythiaArgs {
@@ -44,14 +42,17 @@ pub struct PythiaArgs {
 impl PythiaArgs {
     pub fn match_args(
         self,
-    ) -> Result<(
-        SecretKey,
-        Vec<AssetPairInfo>,
-        OracleSchedulerConfig,
-        u16,
-        PgConnectOptions,
-        u32,
-    )> {
+    ) -> Result<
+        (
+            SecretKey,
+            Vec<AssetPairInfo>,
+            OracleSchedulerConfig,
+            u16,
+            PgConnectOptions,
+            u32,
+        ),
+        PythiaError,
+    > {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");

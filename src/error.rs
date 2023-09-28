@@ -4,6 +4,8 @@ use crate::{oracle::OracleError, AssetPair};
 use displaydoc::Display;
 use thiserror::Error;
 
+use std::io;
+
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Display, Error)]
 pub enum PythiaError {
@@ -30,6 +32,12 @@ pub enum PythiaError {
 
     /// Secret key must be a 32 bytes hex string
     InvalidSecretKey,
+
+    /// Config file not found: {0}
+    NoConfigFileError(#[from] io::Error),
+
+    /// Fail to parse config file: {0}
+    ParseConfigError(#[from] serde_json::Error),
 }
 
 impl actix_web::error::ResponseError for PythiaError {
