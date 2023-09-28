@@ -20,7 +20,7 @@ struct Response {
 impl PriceFeed for Kraken {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "XXBTZUSD",
+            AssetPair::Btcusd => "XXBTZUSD",
         }
     }
 

@@ -29,7 +29,7 @@ pub struct DeribitResponse {
 impl PriceFeed for Deribit {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "btc_usd",
+            AssetPair::Btcusd => "btc_usd",
         }
     }
 

@@ -257,7 +257,7 @@ mod test {
         nb_digits: u16,
         pricefeed: ImplementedPriceFeed,
     ) -> Oracle {
-        let asset_pair = AssetPair::BTCUSD;
+        let asset_pair = AssetPair::Btcusd;
         let event_descriptor =
             EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
                 base: 2,
@@ -394,7 +394,7 @@ mod test {
                     oracle
                         .app_state
                         .pricefeed
-                        .retrieve_price(AssetPair::BTCUSD, date)
+                        .retrieve_price(AssetPair::Btcusd, date)
                         .await
                         .unwrap(),
                     attestation

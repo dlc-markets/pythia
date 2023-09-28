@@ -30,7 +30,7 @@ struct Ohlc {
 impl PriceFeed for Bitstamp {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "btcusd",
+            AssetPair::Btcusd => "btcusd",
         }
     }
 

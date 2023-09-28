@@ -39,20 +39,17 @@ pub struct PythiaArgs {
     max_connections: Option<u32>,
 }
 
+type InitParams = (
+    SecretKey,
+    Vec<AssetPairInfo>,
+    OracleSchedulerConfig,
+    u16,
+    PgConnectOptions,
+    u32,
+);
+
 impl PythiaArgs {
-    pub fn match_args(
-        self,
-    ) -> Result<
-        (
-            SecretKey,
-            Vec<AssetPairInfo>,
-            OracleSchedulerConfig,
-            u16,
-            PgConnectOptions,
-            u32,
-        ),
-        PythiaError,
-    > {
+    pub fn match_args(self) -> Result<InitParams, PythiaError> {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");

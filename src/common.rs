@@ -8,7 +8,7 @@ use crate::pricefeeds::ImplementedPriceFeed;
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetPair {
-    BTCUSD,
+    Btcusd,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -107,7 +107,7 @@ impl From<(ImplementedPriceFeed, OracleSchedulerConfig)> for ConfigResponse {
         (pricefeed, oracle_scheduler_config): (ImplementedPriceFeed, OracleSchedulerConfig),
     ) -> Self {
         ConfigResponse {
-            pricefeed: pricefeed,
+            pricefeed,
             announcement_offset: oracle_scheduler_config.announcement_offset,
             frequency: oracle_scheduler_config.frequency,
         }

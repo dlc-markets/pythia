@@ -71,7 +71,7 @@ mod test {
             let _ = pricefeed
                 .get_pricefeed()
                 .retrieve_price(
-                    AssetPair::BTCUSD,
+                    AssetPair::Btcusd,
                     OffsetDateTime::now_utc().replace_second(0).unwrap(),
                 )
                 .await

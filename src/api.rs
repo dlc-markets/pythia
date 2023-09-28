@@ -34,7 +34,7 @@ impl Default for Filters {
         Filters {
             sort_by: SortOrder::ReverseInsertion,
             page: 0,
-            asset_pair: AssetPair::BTCUSD,
+            asset_pair: AssetPair::Btcusd,
         }
     }
 }
@@ -87,7 +87,7 @@ async fn pubkey(
 
 #[get("/asset")]
 async fn asset_return() -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json([AssetPair::BTCUSD]))
+    Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
 }
 
 #[get("/asset/{asset_id}/config")]
@@ -168,8 +168,8 @@ async fn oracle_event_service(
                     Some(attestation) => {
                         let attestation_response = AttestationResponse {
                             event_id,
-                            signatures: attestation.signatures.clone(),
-                            values: attestation.outcomes.clone(),
+                            signatures: attestation.signatures,
+                            values: attestation.outcomes,
                         };
                         Ok(HttpResponse::Ok().json(attestation_response))
                     }

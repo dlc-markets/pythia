@@ -20,7 +20,7 @@ pub struct LnmarketsQuote {
 impl PriceFeed for Lnmarkets {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "",
+            AssetPair::Btcusd => "",
         }
     }
 
