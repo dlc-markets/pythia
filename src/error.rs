@@ -24,6 +24,12 @@ pub enum PythiaError {
 
     /// Port is not a valid number: {0}
     ConfigError(#[from] ParseIntError),
+
+    /// Secret key was not found
+    NoSecretKey,
+
+    /// Secret key must be a 32 bytes hex string
+    InvalidSecretKey,
 }
 
 impl actix_web::error::ResponseError for PythiaError {

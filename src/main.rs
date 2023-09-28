@@ -3,9 +3,9 @@ extern crate log;
 
 use clap::Parser;
 use hex::ToHex;
-use secp256k1_zkp::{rand, KeyPair, Secp256k1, SecretKey};
+use secp256k1_zkp::{KeyPair, Secp256k1};
 
-use std::{collections::HashMap, fs::File, io::Read, str::FromStr};
+use std::collections::HashMap;
 
 mod oracle;
 use oracle::Oracle;
@@ -34,34 +34,21 @@ async fn main() -> anyhow::Result<()> {
 
     let args = cli::PythiaArgs::parse();
 
-    let mut secret_key = String::new();
     let secp = Secp256k1::new();
 
-    let secret_key = match &args.secret_key_file {
-        None => {
-            info!("no secret key file was found, generating secret key");
-            let secret_key = secp.generate_keypair(&mut rand::thread_rng()).0;
-            error!("no secret key file was found, generated secret key is {} only use for testing and drop DB next time you generate a key", secret_key.display_secret());
-            secret_key
-        }
-        Some(path) => {
-            info!(
-                "reading secret key from {}",
-                path.as_os_str().to_string_lossy()
-            );
-            File::open(path)?.read_to_string(&mut secret_key)?;
-            secret_key.retain(|c| !c.is_whitespace() && !c.is_ascii_control());
-            SecretKey::from_str(&secret_key)?
-        }
-    };
+    let (
+        secret_key,
+        asset_pair_infos,
+        oracle_scheduler_config,
+        port,
+        db_connect,
+        max_connections_postgres,
+    ) = args.match_args()?;
     let keypair = KeyPair::from_secret_key(&secp, &secret_key);
     info!(
-        "oracle keypair successfully generated, pubkey is {}",
+        "oracle pubkey is {}",
         keypair.public_key().serialize().encode_hex::<String>()
     );
-
-    let (asset_pair_infos, oracle_scheduler_config, port, db_connect, max_connections_postgres) =
-        args.match_args()?;
 
     let db = DBconnection::new(db_connect, max_connections_postgres).await?;
 

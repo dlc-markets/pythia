@@ -1,5 +1,6 @@
-use std::env;
+use std::{env, str::FromStr};
 
+use secp256k1_zkp::SecretKey;
 use sqlx::postgres::PgConnectOptions;
 
 use crate::error::PythiaError;
@@ -19,4 +20,9 @@ pub(super) fn match_postgres_env() -> Result<PgConnectOptions, PythiaError> {
         .host(&pg_host)
         .username(&pg_user)
         .password(&pg_password))
+}
+
+pub(super) fn match_secret_key_env() -> Result<SecretKey, PythiaError> {
+    let secret_key = env::var("ORACLE_SECRET_KEY").map_err(|_e| PythiaError::NoSecretKey)?;
+    SecretKey::from_str(secret_key.as_str()).map_err(|_e| PythiaError::InvalidSecretKey)
 }

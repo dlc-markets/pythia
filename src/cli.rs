@@ -1,13 +1,16 @@
 use std::{
     fs::{self, File},
     io::Read,
+    str::FromStr,
 };
 
 use clap::Parser;
+use secp256k1_zkp::SecretKey;
 
 use crate::{
     common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
-    env::match_postgres_env,
+    env::{match_postgres_env, match_secret_key_env},
+    error::PythiaError,
 };
 
 use sqlx::postgres::PgConnectOptions;
@@ -17,9 +20,9 @@ use anyhow::Result;
 #[derive(Parser)]
 /// Simple DLC oracle implementation
 pub struct PythiaArgs {
-    /// Optional private key file; if not provided, one is generated
-    #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
-    pub secret_key_file: Option<std::path::PathBuf>,
+    /// Private key, MUST be set if ORACLE_SECRET_KEY is not
+    #[clap(short, long, value_name = "HEX")]
+    pub secret_key_file: Option<String>,
 
     /// Optional config file; if not provided, it is assumed to exist at "config.json"
     #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
@@ -42,6 +45,7 @@ impl PythiaArgs {
     pub fn match_args(
         self,
     ) -> Result<(
+        SecretKey,
         Vec<AssetPairInfo>,
         OracleSchedulerConfig,
         u16,
@@ -79,25 +83,22 @@ impl PythiaArgs {
 
         let port: u16 = self.port.unwrap_or(8000);
 
-        match self.url_postgres {
-            None => {
-                let db_connect = match_postgres_env()?;
+        let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 
-                Ok((
-                    asset_pair_infos,
-                    oracle_scheduler_config,
-                    port,
-                    db_connect,
-                    self.max_connections.unwrap_or(10),
-                ))
+        let secret_key = match self.secret_key_file {
+            Some(s) => {
+                SecretKey::from_str(s.as_str()).map_err(|_e| PythiaError::InvalidSecretKey)?
             }
-            Some(db_connect) => Ok((
-                asset_pair_infos,
-                oracle_scheduler_config,
-                port,
-                db_connect,
-                self.max_connections.unwrap_or(10),
-            )),
-        }
+            None => match_secret_key_env()?,
+        };
+
+        Ok((
+            secret_key,
+            asset_pair_infos,
+            oracle_scheduler_config,
+            port,
+            db_connect,
+            self.max_connections.unwrap_or(10),
+        ))
     }
 }
