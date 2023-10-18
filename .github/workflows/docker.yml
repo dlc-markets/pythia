@@ -13,7 +13,10 @@ on:
 
 jobs:
   docker:
-    runs-on: 'self-hosted'
+    runs-on: [self-hosted, linux, '${{ matrix.platform }}']
+    strategy:
+      matrix:
+        platform: [x64, arm64]
     permissions:
       contents: read
       packages: write
