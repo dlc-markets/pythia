@@ -41,15 +41,15 @@ jobs:
         id: meta
         with:
           images: |
-            ghcr.io/l2clear/pythia
-            l2clear/pythia
+            ghcr.io/dlc-markets/pythia
+            dlcmarkets/pythia
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
             type=semver,pattern={{version}}
             type=sha
           labels: |
             org.opencontainers.image.title=Pythia
-            org.opencontainers.image.vendor=L2Clear
+            org.opencontainers.image.vendor=DLC Markets
             org.opencontainers.image.description=A numeric and extensible Oracle for Bitcoin
 
       - uses: docker/bake-action@v4
