@@ -61,7 +61,7 @@ jobs:
           files: |
             ./docker-bake.hcl
             ${{ steps.meta.outputs.bake-file }}
-          targets: build
+          targets: pythia
           set: |
             *.cache-from=type=registry,ref=ghrc.io/dlc-markets/pythia:${{ steps.branch.outputs.current_branch }}-cache
             *.cache-to=type=registry,ref=ghrc.io/dlc-markets/pythia:${{ steps.branch.outputs.current_branch }}-cache,mode=max

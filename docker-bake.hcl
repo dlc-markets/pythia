@@ -1,6 +1,6 @@
 target "docker-metadata-action" {}
 
-target "build" {
+target "pythia" {
   inherits = ["docker-metadata-action"]
   context = "./"
   dockerfile = "Dockerfile"

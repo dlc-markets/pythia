@@ -3,10 +3,10 @@ name: lint
 on:
   push:
     paths:
-      - '**.rs'
+      - src/**.rs
   pull_request:
     paths:
-      - '**.rs'
+      - src/**.rs
 
 env:
   SQLX_OFFLINE: 'true'

@@ -21,12 +21,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
 COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
-    --mount=type=cache,target=/app/target,id=pythia \ <<EOF
-  set -e
-  touch /app/src/main.rs
-  cargo build --release
-  mv /app/target/release/pythia /app/pythia
-EOF
+    --mount=type=cache,target=/app/target,id=pythia \
+    touch /app/src/main.rs && \
+    cargo build --release && \
+    mv /app/target/release/pythia /app/pythia
 
 FROM debian:bookworm-slim
 
