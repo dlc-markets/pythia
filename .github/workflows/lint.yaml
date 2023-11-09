@@ -14,7 +14,7 @@ env:
 jobs:
   lint:
     name: lint
-    runs-on: 'self-hosted'
+    runs-on: [self-hosted, linux, 'x64']
     steps:
       - uses: actions/checkout@v3
 
