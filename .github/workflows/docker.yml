@@ -60,5 +60,5 @@ jobs:
             ${{ steps.meta.outputs.bake-file }}
           targets: pythia
           set: |
-            *.cache-from=type=registry,ref=ghcr.io/dlc-markets/pythia:${{ steps.branch.outputs.current_branch }}-cache
-            *.cache-to=type=registry,ref=ghcr.io/dlc-markets/pythia:${{ steps.branch.outputs.current_branch }}-cache,mode=max
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
