@@ -23,8 +23,17 @@ jobs:
 
       - run: sudo apt install -y pkg-config make g++ libssl-dev
 
-      - uses: Swatinem/rust-cache@v2
+      # https://ectobit.com/blog/speed-up-github-actions-rust-pipelines/
+      - uses: actions/cache@v3
+        continue-on-error: false
         with:
-          cache-targets: true
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/            
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - run: cargo build --release
