@@ -18,10 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: dtolnay/rust-toolchain@1.70.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+  
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
 
-      - run: cargo fmt -- --check
-
-      - run: cargo clippy
+      - name: Lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy

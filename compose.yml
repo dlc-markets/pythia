@@ -28,7 +28,7 @@ volumes:
 services:
   postgres:
     <<: *defaults
-    image: postgres:15.4-alpine
+    image: postgres:16.0-alpine
     volumes:
       - postgres:/var/lib/postgresql
     ports:
@@ -45,6 +45,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      RUST_LOG: info
+      ORACLE_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
     ports:
       - 8000:8000
     healthcheck:
