@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 
 WORKDIR /app
 
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
     --mount=type=cache,target=/app/target,id=pythia \

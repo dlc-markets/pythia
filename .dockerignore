@@ -4,7 +4,6 @@ compose.yml
 docker-bake.hcl
 LICENSE
 README.md
-Cargo.lock
 gitignore
 .env
 scripts
