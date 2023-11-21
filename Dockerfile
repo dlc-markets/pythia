@@ -48,4 +48,6 @@ USER pythia
 
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "nc", "-z", "localhost", "8000" ]
+
 CMD [ "pythia", "-c", "/home/pythia/config.json" ]

@@ -10,18 +10,12 @@ x-defaults: &defaults
     POSTGRES_DB: postgres
     POSTGRES_HOST: postgres
 
-  logging: &logging
+  logging:
     driver: 'json-file'
     options:
       max-size: '5m'
       max-file: '10'
       tag: '{{.Name}}'
-
-  healthcheck: &healthcheck
-    interval: 15s
-    timeout: 7s
-    retries: 3
-    start_period: 15s
 
 name: oracle
 
@@ -39,9 +33,6 @@ services:
       - postgres:/var/lib/postgresql
     ports:
       - 5432:5432
-    healthcheck:
-      <<: *healthcheck
-      test: ['CMD', 'nc', '-zv', 'localhost', '5432']
   
   pythia:
     <<: *defaults
@@ -54,6 +45,3 @@ services:
       ORACLE_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
     ports:
       - 8000:8000
-    healthcheck:
-      <<: *healthcheck
-      test: ['CMD', 'nc', '-zv', 'localhost', '8000']
