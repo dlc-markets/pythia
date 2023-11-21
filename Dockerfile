@@ -30,7 +30,10 @@ FROM debian:bookworm-slim
 
 COPY --from=builder /app/pythia /usr/bin/pythia
 
-RUN apt update -y && apt install -y libssl-dev ca-certificates
+RUN apt update -y && apt install -y \
+    libssl-dev \
+    ca-certificates \
+    netcat-traditional
 
 RUN groupadd --gid 1000 pythia \
     && useradd --uid 1000 --gid 1000 -m pythia
