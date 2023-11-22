@@ -1,12 +1,22 @@
 name: build
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
       - '**'
     tags-ignore:
       - '**'
+    paths:
+      - src/**
+      - .github/workflows/build.yml
   pull_request:
+    paths:
+      - src/**
+      - .github/workflows/build.yml
   workflow_dispatch:
 
 env:
@@ -14,7 +24,6 @@ env:
 
 jobs:
   build:
-    name: build
     runs-on: [self-hosted, linux, 'x64']
     steps:
       - uses: actions/checkout@v3

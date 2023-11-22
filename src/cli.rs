@@ -37,6 +37,10 @@ pub struct PythiaArgs {
     /// Optional number of maximum postgres connection, default to 10 if not provided
     #[clap(short, long, value_name = "NB_CONNECTIONS")]
     max_connections: Option<u32>,
+
+    /// Debug mode: allow using force API path DO NOT SET TO TRUE IN PRODUCTION
+    #[clap(short, long, value_name = "FALSE_IF_IN_PROD")]
+    debug_mode: Option<bool>,
 }
 
 type InitParams = (
@@ -46,6 +50,7 @@ type InitParams = (
     u16,
     PgConnectOptions,
     u32,
+    bool,
 );
 
 impl PythiaArgs {
@@ -97,6 +102,7 @@ impl PythiaArgs {
             port,
             db_connect,
             self.max_connections.unwrap_or(10),
+            self.debug_mode.unwrap_or(false),
         ))
     }
 }

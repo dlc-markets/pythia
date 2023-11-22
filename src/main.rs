@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
         port,
         db_connect,
         max_connections_postgres,
+        debug_mode,
     ) = args.match_args()?;
     let keypair = KeyPair::from_secret_key(&secp, &secret_key);
     info!(
@@ -74,8 +75,13 @@ async fn main() -> anyhow::Result<()> {
         .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
     // setup and run server
+    if debug_mode {
+        info!(
+            "!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!! DATA INTEGRITY IS NOT GARANTED !!!"
+        )
+    };
 
-    api::run_api((oracles, oracle_scheduler_config), port).await?;
+    api::run_api((oracles, oracle_scheduler_config, debug_mode), port).await?;
 
     Ok(())
 }

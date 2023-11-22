@@ -69,7 +69,7 @@ pub fn init(oracle: Arc<Oracle>, config: OracleSchedulerConfig) -> Result<()> {
         if let Err(err) = create_events(oracle, config, tx).await {
             panic!("oracle scheduler create_events error: {}", err);
         }
-        while let Some(err) = rx.recv().await {
+        if let Some(err) = rx.recv().await {
             panic!("oracle scheduler error: {}", err);
         }
         // never be reached

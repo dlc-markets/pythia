@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use actix_cors::Cors;
-use actix_web::{get, web, App, HttpResponse, HttpServer, Result};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Result};
+use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -179,24 +180,69 @@ async fn oracle_event_service(
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct ForceData {
+    maturation: String,
+    price: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForceResponse {
+    announcement: OracleAnnouncement,
+    attestation: AttestationResponse,
+}
+
+#[post("/force")]
+async fn force(
+    data: web::Json<ForceData>,
+    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+) -> Result<HttpResponse> {
+    info!("!!! Forced Request !!!");
+    let ForceData { maturation, price } = data.0;
+
+    let timestamp =
+        OffsetDateTime::parse(&maturation, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
+
+    let oracle = match oracles.0.get(&AssetPair::Btcusd) {
+        None => return Err(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd).into()),
+        Some(val) => val,
+    };
+
+    let (announcement, attestation) = oracle
+        .force_new_attest_with_price(timestamp, price)
+        .await
+        .map_err(PythiaError::OracleError)?;
+    Ok(HttpResponse::Ok().json(ForceResponse {
+        announcement: announcement.clone(),
+        attestation: AttestationResponse {
+            event_id: announcement.oracle_event.event_id,
+            signatures: attestation.signatures,
+            values: attestation.outcomes,
+        },
+    }))
+}
+
 pub async fn run_api(
-    data: (HashMap<AssetPair, Oracle>, OracleSchedulerConfig),
+    data: (HashMap<AssetPair, Oracle>, OracleSchedulerConfig, bool),
     port: u16,
 ) -> anyhow::Result<()> {
-    let (oracles, oracles_scheduler_config) = data;
+    let (oracles, oracles_scheduler_config, debug_mode) = data;
     info!("starting server");
     HttpServer::new(move || {
+        let mut factory = web::scope("/v1")
+            // .service(announcements)
+            .service(oracle_event_service)
+            .service(config)
+            .service(pubkey)
+            .service(asset_return);
+        if debug_mode {
+            factory = factory.service(force)
+        }
         App::new()
             .wrap(Cors::permissive())
             .app_data(web::Data::new((oracles.clone(), oracles_scheduler_config)))
-            .service(
-                web::scope("/v1")
-                    // .service(announcements)
-                    .service(oracle_event_service)
-                    .service(config)
-                    .service(pubkey)
-                    .service(asset_return),
-            )
+            .service(factory)
     })
     .bind(("0.0.0.0", port))?
     .run()
