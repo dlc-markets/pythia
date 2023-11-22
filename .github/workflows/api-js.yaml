@@ -2,11 +2,11 @@ name: api-js
 
 on:
   push:
-    branches: [**]
-    tags-ignore: [**]
-    paths: [api-js/**]
+    paths: 
+      - api-js/**
   pull_request:
-    paths: [api-js/**]
+    paths:
+      - api-js/**
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v3
         with:
-          node-version-file: .nvmrc
+          node-version-file: api-js/.nvmrc
 
       - uses: pnpm/action-setup@v2
         with:
