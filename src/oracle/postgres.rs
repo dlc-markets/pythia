@@ -270,10 +270,10 @@ impl DBconnection {
 
             info!("!!! Forced Deletion !!! : Event {} was attested with price {} and has been deleted from oracle DB", event_id, outcome);
 
-            return Ok(Some(outcome));
+            Ok(Some(outcome))
         } else {
             info!("!!! Forced Deletion !!! : Event {} was announced but not attested and has been deleted from oracle DB", event_id);
-            return Ok(None);
+            Ok(None)
         }
     }
 }
