@@ -4,9 +4,11 @@ on:
   push:
     paths: 
       - api-js/**
+      - .github/workflows/api-js.yml
   pull_request:
     paths:
       - api-js/**
+      - .github/workflows/api-js.yml
   workflow_dispatch:
 
 jobs:
