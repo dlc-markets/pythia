@@ -1,0 +1,42 @@
+{
+  "include": ["src"],
+  "exclude": ["node_modules"],
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "baseUrl": ".",
+    // Language and Environment
+    "target": "ESNext",
+    "module": "NodeNext",
+    "lib": ["es2023"],
+    // Module
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    // Emit
+    "removeComments": true,
+    // Output format
+    "noErrorTruncation": true,
+    // Interop constraints
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    // Type Checking
+    "strict": true,
+    "alwaysStrict": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "useUnknownInCatchVariables": true,
+    "strictPropertyInitialization": true,
+    "noUnusedLocals": true,
+    "allowUnreachableCode": true,
+    "noFallthroughCasesInSwitch": true,
+    // Completeness
+    "skipLibCheck": true,
+    "allowUnusedLabels": false
+  }
+}
