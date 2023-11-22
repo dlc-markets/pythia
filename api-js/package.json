@@ -1,79 +1,57 @@
 {
-    "name": "@dlc-markets/pythia",
-    "version": "0.0.0",
-    "description": "A set of wrappers to easily communicate with Pythia",
-    "author": "Victor Afanassieff <victo@afanassieff.com>",
-    "license": "MIT",
-    "bugs": {
-      "url": "https://github.com/dlc-markets/pythia/issues"
-    },
-    "homepage": "https://github.com/dlc-markets/pythia/api-js/#readme",
-    "repository": {
-      "type": "git",
-      "url": "git+https://github.com/dlc-markets/pythia.git"
-    },
-    "publishConfig": {
-      "access": "public"
-    },
-    "packageManager": "pnpm@8.10.5",
-    "engines": {
-      "node": ">=20.9.0"
-    },
-    "type": "module",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "files": [
-      "dist",
-      "LICENSE",
-      "README.md",
-      "package.json"
-    ],
-    "scripts": {
-      "lint": "eslint --color './**/*.ts'",
-      "format": "prettier --write './**/*.ts'",
-      "build": "tsc --build",
-      "type-check": "tsc --noEmit",
-      "test": "vitest --run",
-      "prepublishOnly": "tsc",
-      "release": "np --no-cleanup --no-tests --no-yarn"
-    },
-    "dependencies": {
-      "ws": "8.14.2"
-    },
-    "devDependencies": {
-      "@commitlint/cli": "18.4.2",
-      "@commitlint/config-conventional": "18.4.2",
-      "@types/node": "20.9.2",
-      "@types/ws": "8.5.9",
-      "@typescript-eslint/eslint-plugin": "6.11.0",
-      "@typescript-eslint/parser": "6.11.0",
-      "eslint": "8.54.0",
-      "eslint-config-prettier": "9.0.0",
-      "eslint-import-resolver-typescript": "3.6.1",
-      "eslint-plugin-import": "2.29.0",
-      "eslint-plugin-promise": "6.1.1",
-      "husky": "8.0.3",
-      "lint-staged": "15.1.0",
-      "prettier": "3.1.0",
-      "typescript": "5.2.2",
-      "vitest": "0.34.6"
-    },
-    "commitlint": {
-      "extends": [
-        "@commitlint/config-conventional"
-      ]
-    },
-    "prettier": {
-      "printWidth": 80,
-      "tabWidth": 2,
-      "semi": false,
-      "singleQuote": true,
-      "trailingComma": "es5",
-      "arrowParens": "always"
-    },
-    "lint-staged": {
-      "*": "prettier --ignore-unknown --write",
-      "*.ts": "eslint --fix"
-    }
+  "name": "@dlc-markets/pythia",
+  "version": "0.0.0",
+  "description": "A set of wrappers to easily communicate with Pythia",
+  "author": "Victor Afanassieff <victo@afanassieff.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dlc-markets/pythia/issues"
+  },
+  "homepage": "https://github.com/dlc-markets/pythia/api-js/#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dlc-markets/pythia.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@8.10.5",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "lint": "eslint --color './**/*.ts'",
+    "format": "prettier --write './**/*.ts'",
+    "build": "tsc --build",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "20.9.4",
+    "@typescript-eslint/eslint-plugin": "6.12.0",
+    "@typescript-eslint/parser": "6.12.0",
+    "eslint": "8.54.0",
+    "eslint-config-prettier": "9.0.0",
+    "eslint-import-resolver-typescript": "3.6.1",
+    "eslint-plugin-import": "2.29.0",
+    "eslint-plugin-promise": "6.1.1",
+    "prettier": "3.1.0",
+    "typescript": "5.3.2"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "tabWidth": 2,
+    "semi": false,
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "arrowParens": "always"
   }
-  
+}
