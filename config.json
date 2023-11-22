@@ -8,8 +8,8 @@
                     "base": 2,
                     "isSigned": false,
                     "unit": "usd/btc",
-                    "precision": 0,
-                    "nbDigits": 20
+                    "precision": 7,
+                    "nbDigits": 30
                 }
             }
         }

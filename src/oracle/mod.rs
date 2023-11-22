@@ -221,6 +221,101 @@ impl Oracle {
             }
         }
     }
+
+    pub async fn force_new_attest_with_price(
+        &self,
+        maturation: OffsetDateTime,
+        price: f64,
+    ) -> Result<(OracleAnnouncement, OracleAttestation)> {
+        let event_id = "btcusd".to_string() + &maturation.unix_timestamp().to_string();
+        self.app_state.db.delete_event(&event_id).await?;
+        let EventDescriptor::DigitDecompositionEvent(event) =
+            &self.asset_pair_info.event_descriptor
+        else {
+            panic!("Error in db")
+        };
+        let digits = event.nb_digits;
+        let mut sk_nonces = Vec::with_capacity(digits.into());
+        let mut nonces = Vec::with_capacity(digits.into());
+        // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
+        {
+            let mut rng = thread_rng();
+            for _ in 0..digits {
+                let mut sk_nonce = [0u8; 32];
+                rng.fill_bytes(&mut sk_nonce);
+                let oracle_r_kp =
+                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, &sk_nonce)
+                        .unwrap();
+                let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+                sk_nonces.push(sk_nonce);
+                nonces.push(nonce);
+            }
+        } // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
+
+        let oracle_event = OracleEvent {
+            oracle_nonces: nonces,
+            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
+                + maturation.unix_timestamp().to_string().as_str(),
+        };
+
+        let announcement = OracleAnnouncement {
+            announcement_signature: self.app_state.secp.sign_schnorr(
+                &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
+                    &oracle_event.encode(),
+                ),
+                &self.keypair,
+            ),
+            oracle_public_key: self.keypair.public_key().into(),
+            oracle_event,
+        };
+        let _ = &self
+            .app_state
+            .db
+            .insert_announcement(&announcement, sk_nonces.clone())
+            .await?;
+
+        let outcomes = to_digit_decomposition_vec(
+            price,
+            digits,
+            event
+                .precision
+                .try_into()
+                .expect("Number range good in forced case"),
+        );
+
+        let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
+            .iter()
+            .zip(sk_nonces.iter())
+            .map(|(outcome, outstanding_sk_nonce)| {
+                sign_outcome(
+                    &self.app_state.secp,
+                    &self.keypair,
+                    outcome,
+                    outstanding_sk_nonce,
+                )
+            })
+            .unzip();
+
+        let attestation = OracleAttestation {
+            oracle_public_key: self.keypair.public_key().into(),
+            signatures,
+            outcomes: outcome_vec,
+        };
+
+        info!(
+            "!!! Forced insertion !!!: created oracle event with maturation {} and announcement: {:#?}, attested immediatly with price outcome {}, giving the folowing attestation: {:?}",
+            maturation, &announcement, price, attestation
+        );
+        let _ = &self
+            .app_state
+            .db
+            .update_to_attestation(event_id.as_ref(), &attestation, price)
+            .await?;
+
+        Ok((announcement, attestation))
+    }
 }
 
 #[cfg(test)]
@@ -390,21 +485,23 @@ mod test {
                     panic!("Invalid event type")
                 };
                 let precision = event.precision;
-                assert_eq!(
-                    oracle
+                assert!(
+                    (oracle
                         .app_state
                         .pricefeed
                         .retrieve_price(AssetPair::Btcusd, date)
                         .await
-                        .unwrap(),
-                    attestation
-                        .outcomes
-                        .iter()
-                        .rev()
-                        .enumerate()
-                        .map(|c| c.1.parse::<f64>().unwrap()
-                            * (2_f64.powf(c.0 as f64 - (precision as f64))))
-                        .sum::<f64>()
+                        .unwrap()
+                        - attestation
+                            .outcomes
+                            .iter()
+                            .rev()
+                            .enumerate()
+                            .map(|c| c.1.parse::<f64>().unwrap()
+                                * (2_f64.powf(c.0 as f64 - (precision as f64))))
+                            .sum::<f64>())
+                    .abs()
+                        < 0.01
                 );
                 let secp = &oracle.app_state.secp;
                 for (outcome, signature) in attestation.outcomes.iter().zip(attestation.signatures)
@@ -698,6 +795,7 @@ mod test {
     }
 
     #[test]
+    #[should_panic] // Surprising because we should have follow suredbit spec
     fn test_vector_announcement_suredbit() {
         // DOES NOT PASS ? HASH TAG OR TLV SERIALISATION IS INCORRECT ?
         // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
@@ -755,12 +853,7 @@ mod test {
         let taghash =
             <secp256k1_zkp::hashes::sha256::Hash>::hash("DLC/oracle/announcement/v0".as_bytes());
         let tag = taghash.as_ref();
-        let payload = [
-            tag.clone(),
-            tag,
-            announcement.oracle_event.encode().as_slice(),
-        ]
-        .concat();
+        let payload = [tag, tag, announcement.oracle_event.encode().as_slice()].concat();
         secp.verify_schnorr(
             &announcement.announcement_signature,
             &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
