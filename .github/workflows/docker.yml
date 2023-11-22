@@ -1,12 +1,16 @@
 name: docker
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
     branches:
-      - 'master'
+      - master
     tags:
-      - 'v*'
+      - v*
 
 jobs:
   docker:

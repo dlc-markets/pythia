@@ -1,12 +1,18 @@
 name: lint
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     paths:
-      - src/**.rs
+      - src/**
+      - .github/workflows/lint.yaml
   pull_request:
     paths:
-      - src/**.rs
+      - src/**
+      - .github/workflows/lint.yml
   workflow_dispatch:
 
 env:
@@ -14,10 +20,11 @@ env:
 
 jobs:
   lint:
-    name: lint
     runs-on: [self-hosted, linux, 'x64']
     steps:
       - uses: actions/checkout@v3
+
+      - run: sudo apt install -y pkg-config make g++ libssl-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
