@@ -7,8 +7,35 @@ on:
     types: [edited, dismissed]
   workflow_dispatch:
 
+env:
+  SQLX_OFFLINE: 'true'
+
 jobs:
-  lint:
-    uses: ./.github/workflows/lint.yml
-  build:
-    uses: ./.github/workflows/build.yml
+  check:
+    runs-on: [self-hosted, linux, 'x64']
+    steps:
+      - uses: actions/checkout@v3
+
+      - run: sudo apt install -y pkg-config make g++ libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+  
+      # https://ectobit.com/blog/speed-up-github-actions-rust-pipelines/
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/            
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo fmt --all -- --check
+
+      - run: cargo clippy
+
+      - run: cargo build --release
