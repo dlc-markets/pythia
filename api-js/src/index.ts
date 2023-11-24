@@ -31,13 +31,18 @@ interface PythiaAttestation {
   values: string[]
 }
 
+interface Contructor {
+  version?: string,
+  url?: string
+}
+
 export class Pythia {
   url: string
   version: string
 
-  constructor() {
-    this.version = process.env.PYTHIA_API_VERSION || 'v1'
-    this.url = process.env.PYTHIA_URL || 'http://localhost:8000'
+  constructor(options: Contructor = {}) {
+    this.version = process.env.PYTHIA_API_VERSION || options.version || 'v1'
+    this.url = process.env.PYTHIA_URL || options.url || 'http://localhost:8000'
   }
 
   async request<Result>(
