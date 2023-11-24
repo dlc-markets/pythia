@@ -9,7 +9,10 @@ use secp256k1_zkp::SecretKey;
 
 use crate::{
     common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
-    env::{match_postgres_env, match_secret_key_env},
+    env::{
+        match_debug_mode_env, match_nb_connection, match_port_env, match_postgres_env,
+        match_secret_key_env,
+    },
     error::PythiaError,
 };
 
@@ -84,8 +87,6 @@ impl PythiaArgs {
             (&asset_pair_infos, &oracle_scheduler_config)
         );
 
-        let port: u16 = self.port.unwrap_or(8000);
-
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 
         let secret_key = match self.secret_key_file {
@@ -95,14 +96,29 @@ impl PythiaArgs {
             None => match_secret_key_env()?,
         };
 
+        let debug_mode = match self.debug_mode {
+            Some(s) => s,
+            None => match_debug_mode_env(),
+        };
+
+        let port: u16 = match self.port {
+            Some(s) => s,
+            None => match_port_env(),
+        };
+
+        let max_connections: u32 = match self.max_connections {
+            Some(s) => s,
+            None => match_nb_connection(),
+        };
+
         Ok((
             secret_key,
             asset_pair_infos,
             oracle_scheduler_config,
             port,
             db_connect,
-            self.max_connections.unwrap_or(10),
-            self.debug_mode.unwrap_or(false),
+            max_connections,
+            debug_mode,
         ))
     }
 }
