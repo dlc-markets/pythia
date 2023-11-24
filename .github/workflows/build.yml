@@ -13,11 +13,8 @@ on:
     paths:
       - src/**
       - .github/workflows/build.yml
-  pull_request:
-    paths:
-      - src/**
-      - .github/workflows/build.yml
   workflow_dispatch:
+  workflow_call:
 
 env:
   SQLX_OFFLINE: 'true'
