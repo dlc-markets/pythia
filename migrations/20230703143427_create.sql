@@ -1,4 +1,3 @@
--- Add migration script here
 CREATE SCHEMA IF NOT EXISTS oracle;
 
 CREATE TABLE IF NOT EXISTS oracle.events (
