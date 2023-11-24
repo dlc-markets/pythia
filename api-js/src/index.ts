@@ -32,7 +32,7 @@ interface PythiaAttestation {
 }
 
 interface Contructor {
-  version?: string,
+  version?: string
   url?: string
 }
 
