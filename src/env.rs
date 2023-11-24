@@ -39,5 +39,5 @@ pub(super) fn match_port_env() -> u16 {
 
 pub(super) fn match_nb_connection() -> u32 {
     let max_connections = env::var("PYTHIA_NB_CONNECTION").unwrap_or("10".to_owned());
-    u32::from_str(max_connections.as_str()).unwrap_or(8000)
+    u32::from_str(max_connections.as_str()).unwrap_or(10)
 }
