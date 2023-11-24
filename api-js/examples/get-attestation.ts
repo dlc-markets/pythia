@@ -9,7 +9,7 @@ try {
     input: process.stdin,
     output: process.stdout,
   })
-  const time = (await new Promise((resolve, reject) => {
+  const time: string = await new Promise((resolve, reject) => {
     rl.question('When?', (time) => {
       if (!time || !isRFC3339DateTime(time)) {
         reject('Invalid time, must be RFC3339 format')
@@ -17,7 +17,7 @@ try {
       resolve(time)
       rl.close()
     })
-  })) as string
+  })
   const result = await pythia.getAttestation({ pair: 'btcusd', time })
   console.log(result)
 } catch (e) {

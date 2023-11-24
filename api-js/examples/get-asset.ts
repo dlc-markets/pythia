@@ -8,7 +8,7 @@ try {
     input: process.stdin,
     output: process.stdout,
   })
-  const asset = (await new Promise((resolve, reject) => {
+  const asset: string = await new Promise((resolve, reject) => {
     rl.question('Enter asset: ', (asset) => {
       if (!asset) {
         reject('Invalid asset')
@@ -16,7 +16,7 @@ try {
       resolve(asset)
       rl.close()
     })
-  })) as string
+  })
   const result = await pythia.getAsset(asset)
   console.log(result)
 } catch (e) {

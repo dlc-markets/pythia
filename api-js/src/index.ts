@@ -16,7 +16,7 @@ export class Pythia {
   async request<Result>(
     method: string,
     path: string,
-    params?: any
+    params?: unknown
   ): Promise<Result> {
     const url = new URL(`${this.version}/${path}`, this.url)
     let body = undefined
@@ -31,7 +31,7 @@ export class Pythia {
     const options = { method, headers, body }
     const response = await fetch(url.href, options)
     if (!response.ok) throw new Error(response.statusText)
-    const json = await response.json()
+    const json: Result = (await response.json()) as Result
     return json
   }
 

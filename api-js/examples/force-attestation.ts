@@ -9,15 +9,15 @@ try {
     input: process.stdin,
     output: process.stdout,
   })
-  const time = (await new Promise((resolve, reject) => {
+  const time: string = await new Promise((resolve, reject) => {
     rl.question('When?', (time) => {
       if (!time || !isRFC3339DateTime(time)) {
         reject('Invalid time, must be RFC3339 format')
       }
       resolve(time)
     })
-  })) as string
-  const price = (await new Promise((resolve, reject) => {
+  })
+  const price: number = await new Promise((resolve, reject) => {
     rl.question('At which price?', (price) => {
       if (!price) {
         reject('Invalid price')
@@ -25,7 +25,7 @@ try {
       resolve(Number.parseInt(price))
       rl.close()
     })
-  })) as number
+  })
   const result = await pythia.forceAttestation({ time, price })
   console.log(result)
 } catch (e) {
