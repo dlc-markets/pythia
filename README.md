@@ -4,6 +4,24 @@
 
 A numeric (and extensible) oracle implementation for bitcoin forked from sibyls, the oracle of lava.xyz.
 
+## Configuration
+
+You can configure Pythia with the CLI arguments  with `pythia --help` or environment variables.
+
+Pythia will run an http server on port `8000` by default but you can change it with the `--port` argument or the `PORT` environment variable.
+
+- `POSTGRES_PASSWORD`: The password for the PostgreSQL database.
+- `POSTGRES_USER`: The username for the PostgreSQL database.
+- `POSTGRES_DB`: The name of the PostgreSQL database.
+- `POSTGRES_HOST`: The host address of the PostgreSQL server.
+- `POSTGRES_PORT`: The port on which the PostgreSQL server is running.
+- `PYTHIA_SECRET_KEY`: The secret key used for secure operations.
+- `PYTHIA_DEBUG_MODE`: If set to `true`, the server will run in debug mode.
+- `PYTHIA_PORT`: The port on which the HTTP server will run.
+- `PYTHIA_NB_CONNECTION`: The number of connection to the database.
+- `RUST_LOG`: Log level for the application. See [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more.
+- `PORT`: The port on which the HTTP server will run.
+
 ## API Description
 
 ### Get supported assets
@@ -53,51 +71,6 @@ sqlx migrate run
 This will create a database oracle in your running postgres server by default. You can change this by editing the `DATABASE_URL` value in the .env file of the repo before running the migrations.
 
 Then, you can run pythia by executing:
-
-```sh
-./target/release/pythia
-```
-Pythia API uses port 8000 by default. You can specify another port in CLI. To specify another port, use `--port` argument in CLI:
-
-```sh
-./target/release/pythia --port <PORT>
-```
-
-If you use another database than default, do not forget to specify the postgres URL using `--postgres-url` argument:
-
-```sh
-./target/release/pythia --postgres-url <URL>
-```
-
-To specify a file to read the oracle secret key from, execute:
-
-```sh
-./target/release/pythia -s <FILE>
-```
-
-One is generated if not provided.
-
-To specify a file to read asset pair configs from (more on this in [Asset Pairs](#asset-pairs)), execute:
-
-```sh
-./target/release/pythia -a <FILE>
-```
-
-One is expected at `config/asset_pair.json` if not provided.
-
-To specify a file to read oracle configs from (more on this in [Configure](#configure)), execute:
-
-```sh
-./target/release/pythia -o <FILE>
-```
-
-One is expected at `config/oracle.json` if not provided.
-
-For help, execute:
-
-```sh
-./target/release/pythia -h
-```
 
 For optional logging, you can run the above commands with the `RUST_LOG` environment variable set (see [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more), for example:
 

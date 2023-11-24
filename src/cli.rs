@@ -22,27 +22,27 @@ use sqlx::postgres::PgConnectOptions;
 /// Simple DLC oracle implementation
 pub struct PythiaArgs {
     /// Private key, MUST be set if ORACLE_SECRET_KEY is not
-    #[clap(short, long, value_name = "HEX")]
+    #[clap(short, long, value_name = "hex")]
     pub secret_key_file: Option<String>,
 
     /// Optional config file; if not provided, it is assumed to exist at "config.json"
-    #[clap(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+    #[clap(short, long, value_name = "file", value_hint = clap::ValueHint::FilePath)]
     config_file: Option<std::path::PathBuf>,
 
     /// Optional port for API; if not provided, use 8000
-    #[clap(short, long, value_name = "PORT")]
+    #[clap(short, long, value_name = "port")]
     port: Option<u16>,
 
     /// Optional postgres URL for oracle DB, if not provided use "postgres://postgres:postgres@127.0.0.1:5432/postgres"
-    #[clap(short, long, value_name = "URL", value_hint = clap::ValueHint::Url)]
+    #[clap(short, long, value_name = "url", value_hint = clap::ValueHint::Url)]
     url_postgres: Option<PgConnectOptions>,
 
     /// Optional number of maximum postgres connection, default to 10 if not provided
-    #[clap(short, long, value_name = "NB_CONNECTIONS")]
+    #[clap(short, long, value_name = "connections")]
     max_connections: Option<u32>,
 
-    /// Debug mode: allow using force API path DO NOT SET TO TRUE IN PRODUCTION
-    #[clap(short, long, value_name = "FALSE_IF_IN_PROD")]
+    /// Debug mode: allow using /force API path DO NOT SET TO TRUE IN PRODUCTION
+    #[clap(short, long, value_name = "enabled")]
     debug_mode: Option<bool>,
 }
 
