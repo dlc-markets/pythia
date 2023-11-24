@@ -1,7 +1,34 @@
 import process from 'node:process'
 
-export interface PublicKey {
-  public_key: string
+interface FetchOptions {
+  method: string
+  headers: Record<string, string>
+  body?: string
+}
+
+interface PythiaAnnoucement {
+  announcementSignature: string
+  oraclePublicKey: string
+  oracleEvent: {
+    oracleNonces: string[]
+    eventMaturityEpoch: number
+    eventDescriptor: {
+      digitDecompositionEvent: {
+        base: number
+        isSigned: boolean
+        unit: string
+        precision: number
+        nbDigits: number
+      }
+    }
+    eventId: string
+  }
+}
+
+interface PythiaAttestation {
+  eventId: string
+  signatures: string[]
+  values: string[]
 }
 
 export class Pythia {
@@ -9,7 +36,7 @@ export class Pythia {
   version: string
 
   constructor() {
-    this.version = 'v1'
+    this.version = process.env.PYTHIA_API_VERSION || 'v1'
     this.url = process.env.PYTHIA_URL || 'http://localhost:8000'
   }
 
@@ -19,43 +46,64 @@ export class Pythia {
     params?: unknown
   ): Promise<Result> {
     const url = new URL(`${this.version}/${path}`, this.url)
-    let body = undefined
-    if (method === 'GET' && params) {
+
+    const options = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: undefined,
+    } as FetchOptions
+
+    if (method === 'GET' && params && Object.keys(params).length > 0) {
       for (const [key, value] of Object.entries(params)) {
         url.searchParams.append(key, value as string)
       }
     } else if (method === 'POST' && params) {
-      body = JSON.stringify(params)
+      options.body = JSON.stringify(params)
     }
-    const headers = { 'Content-Type': 'application/json' }
-    const options = { method, headers, body }
-    const response = await fetch(url.href, options)
-    if (!response.ok) throw new Error(response.statusText)
-    const json: Result = (await response.json()) as Result
-    return json
+
+    const response = await fetch(url, options)
+
+    if (!response.ok) {
+      throw new Error(response.statusText)
+    }
+
+    return response.json() as Result
   }
 
   getOraclePublicKey() {
-    return this.request<PublicKey>('GET', 'oracle/publickey')
+    return this.request<{ public_key: string }>('GET', 'oracle/publickey')
   }
 
   getAssets() {
-    return this.request('GET', 'asset')
+    return this.request<string[]>('GET', 'asset')
   }
 
-  getAsset(pair: string) {
-    return this.request('GET', `asset/${pair}/config`)
+  getAsset({ asset }: { asset: string }) {
+    return this.request<{
+      pricefeed: string
+      announcement_offset: string
+      frequency: string
+    }>('GET', `asset/${asset}/config`)
   }
 
-  getAnnouncement({ pair, time }: { pair: string; time: string }) {
-    return this.request('GET', `asset/${pair}/announcement/${time}`)
+  getAnnouncement({ pair, time }: { pair: string; time: Date }) {
+    return this.request<PythiaAnnoucement>(
+      'GET',
+      `asset/${pair}/announcement/${time.toISOString()}`
+    )
   }
 
-  getAttestation({ pair, time }: { pair: string; time: string }) {
-    return this.request('GET', `asset/${pair}/attestation/${time}`)
+  getAttestation({ pair, time }: { pair: string; time: Date }) {
+    return this.request<PythiaAttestation>(
+      'GET',
+      `asset/${pair}/attestation/${time.toISOString()}`
+    )
   }
 
-  forceAttestation({ time, price }: { time: string; price: number }) {
-    return this.request('POST', 'force', { maturation: time, price })
+  forceAttestation({ time, price }: { time: Date; price: number }) {
+    return this.request<{
+      annoucement: PythiaAnnoucement
+      attestation: PythiaAttestation
+    }>('POST', 'force', { maturation: time.toISOString(), price })
   }
 }
