@@ -2,7 +2,18 @@
   "name": "@dlc-markets/pythia",
   "version": "0.0.0",
   "description": "A set of wrappers to easily communicate with Pythia",
-  "author": "Victor Afanassieff <victo@afanassieff.com>",
+  "contributors": [
+    {
+      "name": "Victor Afanassieff",
+      "email": "victor@afanassieff.com",
+      "url": "https://victor.afanassieff.com"
+    },
+    {
+      "name": "Fanis Michalakis",
+      "email": "fanis@michalakis.com",
+      "url": "https://fanismichalakis.fr/"
+    }
+  ],
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/dlc-markets/pythia/issues"
@@ -24,6 +35,7 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "src",
     "LICENSE",
     "README.md",
     "package.json"
@@ -32,7 +44,7 @@
     "lint": "eslint --color './**/*.ts'",
     "format": "prettier --write './**/*.ts'",
     "format:check": "prettier --check './**/*.ts'",
-    "build": "tsc --build",
+    "build": "tsc --build tsconfig.build.json",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
