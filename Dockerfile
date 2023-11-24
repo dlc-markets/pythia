@@ -28,6 +28,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
 
 FROM debian:bookworm-slim
 
+ENV PYTHIA_PORT=8000
+
 COPY --from=builder /app/pythia /usr/bin/pythia
 
 RUN apt update -y && apt install -y \
@@ -40,14 +42,17 @@ RUN groupadd --gid 1000 pythia \
 
 WORKDIR /home/pythia
 
+USER pythia
+
 COPY config.json /home/pythia/config.json
 
 COPY migrations ./migrations
 
-USER pythia
+COPY scripts/healthcheck.sh ./healthcheck.sh
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "nc", "-z", "localhost", "8000" ]
+HEALTHCHECK --interval=30s --timeout=15s --start-period=5s --retries=3 \
+    CMD [ "/home/pythia/healthcheck.sh" ]
 
 CMD [ "pythia", "-c", "/home/pythia/config.json" ]
