@@ -1,9 +1,8 @@
 {
-  "include": ["src"],
+  "include": ["src", "examples"],
   "exclude": ["node_modules"],
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
     "baseUrl": ".",
     // Language and Environment
     "target": "ESNext",

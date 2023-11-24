@@ -30,8 +30,8 @@ const typescript = {
 module.exports = {
   env: { es2022: true, node: true },
   overrides: [typescript, {
-    files: ['src/examples/**'],
-    extends: './src/examples/.eslintrc.js',
+    files: ['examples/**'],
+    extends: './examples/.eslintrc.js',
   }],
   extends: [
     'eslint:recommended',

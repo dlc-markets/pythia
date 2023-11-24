@@ -13,32 +13,49 @@ export class Pythia {
     this.url = process.env.PYTHIA_URL || 'http://localhost:8000'
   }
 
-  async request<Result>(path: string, method: string, params?: any): Promise<Result> {
-    const url = `${this.url}/${this.version}/${path}`
+  async request<Result>(
+    method: string,
+    path: string,
+    params?: any
+  ): Promise<Result> {
+    const url = new URL(`${this.version}/${path}`, this.url)
+    let body = undefined
+    if (method === 'GET' && params) {
+      for (const [key, value] of Object.entries(params)) {
+        url.searchParams.append(key, value as string)
+      }
+    } else if (method === 'POST' && params) {
+      body = JSON.stringify(params)
+    }
     const headers = { 'Content-Type': 'application/json' }
-    const options = { method, headers, body: JSON.stringify(params) }
-    const response = await fetch(url, options)
+    const options = { method, headers, body }
+    const response = await fetch(url.href, options)
+    if (!response.ok) throw new Error(response.statusText)
     const json = await response.json()
     return json
   }
 
   getOraclePublicKey() {
-    return this.request<PublicKey>('oracle/publickey', 'GET')
+    return this.request<PublicKey>('GET', 'oracle/publickey')
   }
 
   getAssets() {
-    return this.request('asset', 'GET')
+    return this.request('GET', 'asset')
   }
 
-  getAsset(assetId: string) {
-    return this.request(`asset/${assetId}/config`, 'GET')
+  getAsset(pair: string) {
+    return this.request('GET', `asset/${pair}/config`)
   }
 
-  getAnnouncement({ assetId, time }: { assetId: string; time: string }) {
-    return this.request(`asset/${assetId}/announcement/${time}`, 'GET')
+  getAnnouncement({ pair, time }: { pair: string; time: string }) {
+    return this.request('GET', `asset/${pair}/announcement/${time}`)
   }
 
-  getAttestation({ assetId, time }: { assetId: string; time: string }) {
-    return this.request(`asset/${assetId}/attestation/${time}`, 'GET')
+  getAttestation({ pair, time }: { pair: string; time: string }) {
+    return this.request('GET', `asset/${pair}/attestation/${time}`)
+  }
+
+  forceAttestation({ time, price }: { time: string; price: number }) {
+    return this.request('POST', 'force', { maturation: time, price })
   }
 }
