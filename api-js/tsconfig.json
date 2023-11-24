@@ -8,7 +8,7 @@
     // Language and Environment
     "target": "ESNext",
     "module": "NodeNext",
-    "lib": ["es2023"],
+    "lib": ["DOM", "es2023"],
     // Module
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
