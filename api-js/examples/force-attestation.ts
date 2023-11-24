@@ -1,33 +1,16 @@
 import { Pythia } from '../src/index.js'
-import { isRFC3339DateTime } from './utils.js'
-import readline from 'node:readline'
+import { createInterface } from 'node:readline/promises'
 
 const pythia = new Pythia()
 
-try {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  })
-  const time: string = await new Promise((resolve, reject) => {
-    rl.question('When?', (time) => {
-      if (!time || !isRFC3339DateTime(time)) {
-        reject('Invalid time, must be RFC3339 format')
-      }
-      resolve(time)
-    })
-  })
-  const price: number = await new Promise((resolve, reject) => {
-    rl.question('At which price?', (price) => {
-      if (!price) {
-        reject('Invalid price')
-      }
-      resolve(Number.parseInt(price))
-      rl.close()
-    })
-  })
-  const result = await pythia.forceAttestation({ time, price })
-  console.log(result)
-} catch (e) {
-  console.error(e)
-}
+const rl = createInterface({ input: process.stdin, output: process.stdout })
+
+const time = await rl.question('When? ')
+const price = await rl.question('At which price? ')
+
+const result = await pythia.forceAttestation({
+  time: new Date(time),
+  price: Number(price),
+})
+
+console.log(JSON.stringify(result, null, 2))

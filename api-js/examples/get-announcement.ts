@@ -1,25 +1,16 @@
 import { Pythia } from '../src/index.js'
-import { isRFC3339DateTime } from './utils.js'
-import readline from 'node:readline'
+
+import { createInterface } from 'node:readline/promises'
 
 const pythia = new Pythia()
 
-try {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  })
-  const time: string = await new Promise((resolve, reject) => {
-    rl.question('When?', (time) => {
-      if (!time || !isRFC3339DateTime(time)) {
-        reject('Invalid time, must be RFC3339 format')
-      }
-      resolve(time)
-      rl.close()
-    })
-  })
-  const result = await pythia.getAnnouncement({ pair: 'btcusd', time })
-  console.log(result)
-} catch (e) {
-  console.error(e)
-}
+const rl = createInterface({ input: process.stdin, output: process.stdout })
+
+const time = await rl.question('When? ')
+
+const result = await pythia.getAnnouncement({
+  pair: 'btcusd',
+  time: new Date(time),
+})
+
+console.log(JSON.stringify(result, null, 2))
