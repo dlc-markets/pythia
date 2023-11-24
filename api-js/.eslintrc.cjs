@@ -31,7 +31,7 @@ module.exports = {
   env: { es2022: true, node: true },
   overrides: [typescript, {
     files: ['examples/**'],
-    extends: './examples/.eslintrc.js',
+    extends: './examples/.eslintrc.cjs',
   }],
   extends: [
     'eslint:recommended',
