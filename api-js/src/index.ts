@@ -6,7 +6,7 @@ interface FetchOptions {
   body?: string
 }
 
-interface PythiaAnnoucement {
+interface PythiaAnnouncement {
   announcementSignature: string
   oraclePublicKey: string
   oracleEvent: {
@@ -92,7 +92,7 @@ export class Pythia {
   }
 
   getAnnouncement({ pair, time }: { pair: string; time: Date }) {
-    return this.request<PythiaAnnoucement>(
+    return this.request<PythiaAnnouncement>(
       'GET',
       `asset/${pair}/announcement/${time.toISOString()}`
     )
@@ -107,7 +107,7 @@ export class Pythia {
 
   forceAttestation({ time, price }: { time: Date; price: number }) {
     return this.request<{
-      annoucement: PythiaAnnoucement
+      announcement: PythiaAnnouncement
       attestation: PythiaAttestation
     }>('POST', 'force', { maturation: time.toISOString(), price })
   }
