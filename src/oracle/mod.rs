@@ -77,7 +77,7 @@ impl Oracle {
     ) -> Result<OracleAnnouncement> {
         let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
             + maturation.unix_timestamp().to_string().as_str();
-        if let Some(_) = self.app_state.db.get_event(&event_id).await? {
+        if self.app_state.db.get_event(&event_id).await?.is_some() {
             info!(
                 "Event {} already announced (should be possible only in debug mode)",
                 &event_id
