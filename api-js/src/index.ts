@@ -1,4 +1,4 @@
-import process from 'node:process'
+
 
 interface FetchOptions {
   method: string
@@ -41,8 +41,8 @@ export class Pythia {
   version: string
 
   constructor(options: Contructor = {}) {
-    this.version = process.env.PYTHIA_API_VERSION || options.version || 'v1'
-    this.url = process.env.PYTHIA_URL || options.url || 'http://localhost:8000'
+    this.version = options.version || 'v1'
+    this.url = options.url || 'http://localhost:8000'
   }
 
   async request<Result>(
