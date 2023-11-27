@@ -5,8 +5,8 @@ const pythia = new Pythia()
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
 
-const asset = await rl.question('Which asset? ')
+const assetPair = await rl.question('Which assetPair? ')
 
-const result = await pythia.getAsset({ asset })
+const result = await pythia.getAsset({ assetPair })
 
 console.log(result)

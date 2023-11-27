@@ -83,25 +83,25 @@ export class Pythia {
     return this.request<string[]>('GET', 'asset')
   }
 
-  getAsset({ asset }: { asset: string }) {
+  getAsset({ assetPair }: { assetPair: string }) {
     return this.request<{
       pricefeed: string
       announcement_offset: string
       frequency: string
-    }>('GET', `asset/${asset}/config`)
+    }>('GET', `asset/${assetPair}/config`)
   }
 
-  getAnnouncement({ pair, time }: { pair: string; time: Date }) {
+  getAnnouncement({ assetPair, time }: { assetPair: string; time: Date }) {
     return this.request<PythiaAnnouncement>(
       'GET',
-      `asset/${pair}/announcement/${time.toISOString()}`
+      `asset/${assetPair}/announcement/${time.toISOString()}`
     )
   }
 
-  getAttestation({ pair, time }: { pair: string; time: Date }) {
+  getAttestation({ assetPair, time }: { assetPair: string; time: Date }) {
     return this.request<PythiaAttestation>(
       'GET',
-      `asset/${pair}/attestation/${time.toISOString()}`
+      `asset/${assetPair}/attestation/${time.toISOString()}`
     )
   }
 

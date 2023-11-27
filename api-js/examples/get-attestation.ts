@@ -8,7 +8,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout })
 const time = await rl.question('When? ')
 
 const result = await pythia.getAttestation({
-  pair: 'btcusd',
+  assetPair: 'btc_usd',
   time: new Date(time),
 })
 
