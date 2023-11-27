@@ -8,9 +8,6 @@ pub enum OracleError {
     /// database error: {0}
     DatabaseError(#[from] sqlx::Error),
 
-    /// Event already attested
-    AlreadyAttestatedError(String),
-
     /// pricefeed error: {0}
     PriceFeedError(#[from] crate::pricefeeds::PriceFeedError),
 }
