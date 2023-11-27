@@ -249,31 +249,4 @@ impl DBconnection {
             }
         }
     }
-
-    pub(super) async fn delete_event(&self, event_id: &String) -> Result<Option<f64>> {
-        let Some(DeleteResponse { outcome }) = sqlx::query_as!(
-            DeleteResponse,
-            "DELETE FROM oracle.events WHERE id = $1 RETURNING outcome",
-            event_id
-        )
-        .fetch_optional(&self.0)
-        .await?
-        else {
-            info!("!!! Forced Deletion !!! failed: Event {} was not in DB when forcing deletion (maybe not yet announced)", event_id);
-            return Ok(None);
-        };
-
-        if let Some(outcome) = outcome {
-            sqlx::query!("DELETE FROM oracle.digits WHERE event_id = $1", event_id)
-                .execute(&self.0)
-                .await?;
-
-            info!("!!! Forced Deletion !!! : Event {} was attested with price {} and has been deleted from oracle DB", event_id, outcome);
-
-            Ok(Some(outcome))
-        } else {
-            info!("!!! Forced Deletion !!! : Event {} was announced but not attested and has been deleted from oracle DB", event_id);
-            Ok(None)
-        }
-    }
 }

@@ -8,7 +8,7 @@ use secp256k1_zkp::{
     rand::{thread_rng, RngCore},
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use time::OffsetDateTime;
 
 use crate::pricefeeds::PriceFeed;
@@ -228,30 +228,62 @@ impl Oracle {
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id = "btcusd".to_string() + &maturation.unix_timestamp().to_string();
-        self.app_state.db.delete_event(&event_id).await?;
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
         else {
             panic!("Error in db")
         };
         let digits = event.nb_digits;
-        let mut sk_nonces = Vec::with_capacity(digits.into());
-        let mut nonces = Vec::with_capacity(digits.into());
-        // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
-        {
-            let mut rng = thread_rng();
-            for _ in 0..digits {
-                let mut sk_nonce = [0u8; 32];
-                rng.fill_bytes(&mut sk_nonce);
-                let oracle_r_kp =
-                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, &sk_nonce)
-                        .unwrap();
-                let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
-                sk_nonces.push(sk_nonce);
-                nonces.push(nonce);
-            }
-        } // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
+        let (sk_nonces, nonces) = match self.app_state.db.get_event(&event_id).await? {
+            Some(postgres_response) => match postgres_response.scalars_records {
+                ScalarsRecords::DigitsSkNonce(sk_nonces) => {
+                    info!(
+                        "!!! Forced attestation !!!: {} event is already announced, will attest it immediatly with price outcome {}",
+                        event_id, price
+                    );
+                    let nonces = sk_nonces
+                        .iter()
+                        .map(|sk| XOnlyPublicKey::from_slice(sk).expect("valid nonce secret"))
+                        .collect::<Vec<_>>();
+                    (sk_nonces, nonces)
+                }
+                ScalarsRecords::DigitsAttestations(outcome, sigs) => {
+                    info!(
+                        "!!! Forced attestation !!!: {} event is already attested with price {}, ignore forcing",
+                        event_id, outcome
+                    );
+                    let (oracle_annoncement, oracle_attestation) =
+                        self.oracle_state(event_id).await?.expect("is announced");
 
+                    return Ok((oracle_annoncement, oracle_attestation.expect("is attested")));
+                }
+            },
+            None => {
+                let mut sk_nonces = Vec::with_capacity(digits.into());
+                let mut nonces = Vec::with_capacity(digits.into());
+                info!(
+                    "!!! Forced insertion !!!: created oracle event and announcement with maturation {}",
+                    maturation
+                );
+                // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
+                {
+                    let mut rng = thread_rng();
+                    for _ in 0..digits {
+                        let mut sk_nonce = [0u8; 32];
+                        rng.fill_bytes(&mut sk_nonce);
+                        let oracle_r_kp = secp256k1_zkp::KeyPair::from_seckey_slice(
+                            &self.app_state.secp,
+                            &sk_nonce,
+                        )
+                        .unwrap();
+                        let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+                        sk_nonces.push(sk_nonce);
+                        nonces.push(nonce);
+                    }
+                }; // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
+                (sk_nonces, nonces)
+            }
+        };
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.unix_timestamp() as u32,
@@ -305,8 +337,8 @@ impl Oracle {
         };
 
         info!(
-            "!!! Forced insertion !!!: created oracle event with maturation {} and announcement: {:#?}, attested immediatly with price outcome {}, giving the folowing attestation: {:?}",
-            maturation, &announcement, price, attestation
+            "!!! Forced attestation !!!: attested from announcement {:?} with price outcome {}, giving the following attestation: {:?}",
+            &announcement, price, attestation
         );
         let _ = &self
             .app_state
