@@ -23,10 +23,6 @@ struct DigitAttestationResponse {
     signature: Option<Vec<u8>>,
 }
 
-struct DeleteResponse {
-    outcome: Option<f64>,
-}
-
 #[derive(Clone)]
 pub enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),

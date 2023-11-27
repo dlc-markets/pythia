@@ -8,7 +8,7 @@ use secp256k1_zkp::{
     rand::{thread_rng, RngCore},
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 use time::OffsetDateTime;
 
 use crate::pricefeeds::PriceFeed;
@@ -75,6 +75,20 @@ impl Oracle {
         &self,
         maturation: OffsetDateTime,
     ) -> Result<OracleAnnouncement> {
+        let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
+            + maturation.unix_timestamp().to_string().as_str();
+        if let Some(_) = self.app_state.db.get_event(&event_id).await? {
+            info!(
+                "Event {} already announced (should be possible only in debug mode)",
+                &event_id
+            );
+            let announcement = self
+                .oracle_state(event_id)
+                .await?
+                .expect("announcement exist if event in DB")
+                .0;
+            return Ok(announcement);
+        }
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
         else {
@@ -102,8 +116,7 @@ impl Oracle {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.unix_timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
-            event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
-                + maturation.unix_timestamp().to_string().as_str(),
+            event_id,
         };
 
         let announcement = OracleAnnouncement {
@@ -136,7 +149,7 @@ impl Oracle {
             return Ok(None);
         };
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
-            return Err(OracleError::AlreadyAttestatedError(event_id));
+            return Ok(None);
         };
         info!("retrieving pricefeeds for attestation");
         let outcome = self
@@ -234,20 +247,30 @@ impl Oracle {
             panic!("Error in db")
         };
         let digits = event.nb_digits;
-        let (sk_nonces, nonces) = match self.app_state.db.get_event(&event_id).await? {
+        let (sk_nonces, nonces, was_not_announced) = match self
+            .app_state
+            .db
+            .get_event(&event_id)
+            .await?
+        {
             Some(postgres_response) => match postgres_response.scalars_records {
                 ScalarsRecords::DigitsSkNonce(sk_nonces) => {
                     info!(
-                        "!!! Forced attestation !!!: {} event is already announced, will attest it immediatly with price outcome {}",
+                        "!!! Forced announcement !!!: {} event is already announced, will attest it immediatly with price outcome {}",
                         event_id, price
                     );
                     let nonces = sk_nonces
                         .iter()
-                        .map(|sk| XOnlyPublicKey::from_slice(sk).expect("valid nonce secret"))
+                        .map(|sk| {
+                            let oracle_r_kp =
+                                secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, sk)
+                                    .expect("too low probability of secret to be invalid");
+                            XOnlyPublicKey::from_keypair(&oracle_r_kp).0
+                        })
                         .collect::<Vec<_>>();
-                    (sk_nonces, nonces)
+                    (sk_nonces, nonces, false)
                 }
-                ScalarsRecords::DigitsAttestations(outcome, sigs) => {
+                ScalarsRecords::DigitsAttestations(outcome, _) => {
                     info!(
                         "!!! Forced attestation !!!: {} event is already attested with price {}, ignore forcing",
                         event_id, outcome
@@ -262,7 +285,7 @@ impl Oracle {
                 let mut sk_nonces = Vec::with_capacity(digits.into());
                 let mut nonces = Vec::with_capacity(digits.into());
                 info!(
-                    "!!! Forced insertion !!!: created oracle event and announcement with maturation {}",
+                    "!!! Forced announcement !!!: created oracle event and announcement with maturation {}",
                     maturation
                 );
                 // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
@@ -281,7 +304,7 @@ impl Oracle {
                         nonces.push(nonce);
                     }
                 }; // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
-                (sk_nonces, nonces)
+                (sk_nonces, nonces, true)
             }
         };
         let oracle_event = OracleEvent {
@@ -302,11 +325,14 @@ impl Oracle {
             oracle_public_key: self.keypair.public_key().into(),
             oracle_event,
         };
-        let _ = &self
-            .app_state
-            .db
-            .insert_announcement(&announcement, sk_nonces.clone())
-            .await?;
+
+        if was_not_announced {
+            let _ = &self
+                .app_state
+                .db
+                .insert_announcement(&announcement, sk_nonces.clone())
+                .await?;
+        }
 
         let outcomes = to_digit_decomposition_vec(
             price,
@@ -486,13 +512,6 @@ mod test {
                 if asked_date < now {
                     panic!("Pricefeeder {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
                 };
-                return;
-            }
-            Err(OracleError::AlreadyAttestatedError(eventid)) => {
-                let (_, ts_str) = eventid.split_at(6);
-                let date =
-                    OffsetDateTime::from_unix_timestamp(ts_str.parse::<i64>().unwrap()).unwrap();
-                println!("Event already at date: {}", date);
                 return;
             }
             _ => panic!("DB error"),

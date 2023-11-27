@@ -16,6 +16,6 @@
     ],
     "oracle_scheduler_config": {
         "frequency": "1min",
-        "announcement_offset": "1h"
+        "announcement_offset": "2min"
     }
 }

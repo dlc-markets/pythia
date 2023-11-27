@@ -47,10 +47,22 @@ impl OracleScheduler {
             .expect("queue should never be empty");
 
         let attestation = self.oracle.try_attest_event(event_id).await?;
-        info!(
-            "attesting with maturation {} and attestation {:#?}",
-            self.next_attestation, attestation
-        );
+        match attestation {
+            Some(attestation) => {
+                info!(
+                    "attesting with maturation {} and attestation {:#?}",
+                    self.next_attestation, attestation
+                );
+            }
+
+            None => {
+                info!(
+                    "maturation {} already attested (should be possible only in debug mode)",
+                    self.next_attestation
+                );
+            }
+        }
+
         self.next_attestation += self.config.frequency;
         Ok(())
     }
