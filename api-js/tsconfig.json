@@ -4,6 +4,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "baseUrl": ".",
+    "declaration": true,
     // Language and Environment
     "target": "ESNext",
     "module": "NodeNext",
