@@ -6,6 +6,12 @@ interface FetchOptions {
   body?: string
 }
 
+interface PythiAsset {
+  pricefeed: string
+  announcement_offset: string
+  frequency: string
+}
+
 interface PythiaAnnouncement {
   announcementSignature: string
   oraclePublicKey: string
@@ -76,7 +82,7 @@ export class Pythia {
   }
 
   getOraclePublicKey() {
-    return this.request<{ public_key: string }>('GET', 'oracle/publickey')
+    return this.request<{ publicKey: string }>('GET', 'oracle/publickey')
   }
 
   getAssets() {
@@ -84,11 +90,7 @@ export class Pythia {
   }
 
   getAsset({ assetPair }: { assetPair: string }) {
-    return this.request<{
-      pricefeed: string
-      announcement_offset: string
-      frequency: string
-    }>('GET', `asset/${assetPair}/config`)
+    return this.request<PythiAsset>('GET', `asset/${assetPair}/config`)
   }
 
   getAnnouncement({ assetPair, time }: { assetPair: string; time: Date }) {
