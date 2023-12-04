@@ -4,7 +4,7 @@ interface FetchOptions {
   body?: string
 }
 
-interface PythiAsset {
+interface PythiaAsset {
   pricefeed: string
   announcement_offset: string
   frequency: string
@@ -88,7 +88,7 @@ export class Pythia {
   }
 
   getAsset({ assetPair }: { assetPair: string }) {
-    return this.request<PythiAsset>('GET', `asset/${assetPair}/config`)
+    return this.request<PythiaAsset>('GET', `asset/${assetPair}/config`)
   }
 
   getAnnouncement({ assetPair, time }: { assetPair: string; time: Date }) {
@@ -103,6 +103,15 @@ export class Pythia {
       'GET',
       `asset/${assetPair}/attestation/${time.toISOString()}`
     )
+  }
+
+  getAttestationByEventId({ eventId }: { eventId: string }) {
+    const match = eventId.match(/([a-z]+)(\d+)/i)?.slice(1)
+    if (!match || match.length !== 2) {
+      throw new Error('Invalid event id')
+    }
+    const [assetPair, time] = match as [string, string]
+    return this.getAttestation({ assetPair, time: new Date(+time * 1000) })
   }
 
   forceAttestation({ time, price }: { time: Date; price: number }) {

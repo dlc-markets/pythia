@@ -9,7 +9,7 @@ const rl = createInterface({ input: process.stdin, output: process.stdout })
 const time = await rl.question('When? ')
 
 const result = await pythia.getAnnouncement({
-  assetPair: 'btc_usd',
+  assetPair: 'btcusd',
   time: new Date(time),
 })
 

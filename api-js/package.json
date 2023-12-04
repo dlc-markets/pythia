@@ -1,6 +1,6 @@
 {
   "name": "@dlc-markets/pythia",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "A set of wrappers to easily communicate with Pythia",
   "contributors": [
     {
@@ -12,6 +12,10 @@
       "name": "Fanis Michalakis",
       "email": "dev@fanismichalakis.fr",
       "url": "https://fanismichalakis.fr/"
+    },
+    {
+      "name": "Lounès Ksouri",
+      "email": "dev@louneskmt.com"
     }
   ],
   "license": "MIT",
