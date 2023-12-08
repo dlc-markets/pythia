@@ -45,6 +45,12 @@ impl actix_web::error::ResponseError for PythiaError {
         if let PythiaError::DatetimeParseError(_) = self {
             return actix_web::http::StatusCode::BAD_REQUEST;
         }
+        if let PythiaError::OracleEventNotFoundError(_) = self {
+            return actix_web::http::StatusCode::NOT_FOUND;
+        }
+        if let PythiaError::UnrecordedAssetPairError(_) = self {
+            return actix_web::http::StatusCode::NOT_FOUND;
+        }
         actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
     }
 }
