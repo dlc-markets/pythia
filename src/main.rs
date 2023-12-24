@@ -24,6 +24,7 @@ use crate::oracle::postgres::DBconnection;
 mod api;
 mod cli;
 mod env;
+mod ws;
 
 // const PAGE_SIZE: u32 = 100;
 

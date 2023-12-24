@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use actix_cors::Cors;
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Result};
-use dlc_messages::oracle_msgs::OracleAnnouncement;
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Result};
+use actix_web_actors::ws;
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -11,6 +12,7 @@ use crate::{
     common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
     error::PythiaError,
     oracle::Oracle,
+    ws::PythiaWebSocket,
 };
 
 use serde::{Deserialize, Serialize};
@@ -64,7 +66,7 @@ enum EventType {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AttestationResponse {
+pub(super) struct AttestationResponse {
     event_id: String,
     signatures: Vec<Signature>,
     values: Vec<String>,
@@ -235,7 +237,8 @@ pub async fn run_api(
             .service(oracle_event_service)
             .service(config)
             .service(pubkey)
-            .service(asset_return);
+            .service(asset_return)
+            .service(index);
         if debug_mode {
             factory = factory.service(force)
         }
@@ -258,3 +261,34 @@ pub async fn run_api(
 //         .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
 //         .await
 // }
+
+#[get("/ws")]
+async fn index(
+    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+    stream: web::Payload,
+    req: HttpRequest,
+) -> Result<HttpResponse> {
+    let resp = ws::start(
+        PythiaWebSocket::new(
+            oracles
+                .0
+                .get(&AssetPair::Btcusd)
+                .ok_or(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd))?
+                .clone(),
+        ),
+        &req,
+        stream,
+    );
+    println!("{:?}", resp);
+    resp
+}
+
+impl From<(OracleAttestation, &str)> for AttestationResponse {
+    fn from(value: (OracleAttestation, &str)) -> Self {
+        AttestationResponse {
+            event_id: value.1.to_owned(),
+            signatures: value.0.signatures,
+            values: value.0.outcomes,
+        }
+    }
+}
