@@ -87,9 +87,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
             Ok(ws::Message::Text(request)) => {
                 let request: Result<AttestationJRpcRequest, serde_json::Error> =
                     from_str(request.as_ref());
-                let Ok(request) = request else {
-                    info!("WS: received invalid JRPC request");
-                    return;
+                let request = match request {
+                    Ok(serialized_request) => serialized_request,
+                    Err(e) => {
+                        info!("WS: received invalid JRPC request: {}", e);
+                        return;
+                    }
                 };
                 let Some(event_id) = request.params.clone() else {
                     info!("WS: notification JRPC requests are not supported");
@@ -142,8 +145,10 @@ impl StreamHandler<Result<AttestationResponse, BroadcastStreamRecvError>> for Py
         // broadcast attestation to websocket clients
         println!("WS: Broadcasting attestation !");
         ctx.text(
-            to_string_pretty(&item.expect("attestation are rare enough it should not lag begind"))
-                .expect("serializable response"),
+            to_string_pretty(&AttestationBroadcast::from(
+                item.expect("attestation are rare enough it should not lag begind"),
+            ))
+            .expect("serializable response"),
         );
     }
 }

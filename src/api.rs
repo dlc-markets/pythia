@@ -67,7 +67,7 @@ enum EventType {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct AttestationResponse {
+pub struct AttestationResponse {
     event_id: String,
     signatures: Vec<Signature>,
     values: Vec<String>,
@@ -309,7 +309,7 @@ impl From<(&OracleAttestation, &str)> for AttestationResponse {
     }
 }
 
-pub(crate) struct ReceiverHandle(pub(crate) Receiver<AttestationResponse>);
+pub struct ReceiverHandle(pub(crate) Receiver<AttestationResponse>);
 
 impl Clone for ReceiverHandle {
     fn clone(&self) -> Self {
