@@ -1,4 +1,4 @@
-use crate::{common::OracleSchedulerConfig, oracle::Oracle};
+use crate::{api::AttestationResponse, common::OracleSchedulerConfig, oracle::Oracle};
 use chrono::Utc;
 use clokwerk::{AsyncScheduler, Interval};
 use log::info;
@@ -6,7 +6,11 @@ use queues::{queue, IsQueue, Queue};
 use std::sync::Arc;
 use time::OffsetDateTime;
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{
+        broadcast::Sender,
+        mpsc::{self},
+        Mutex,
+    },
     time::sleep,
 };
 
@@ -40,19 +44,20 @@ impl OracleScheduler {
         Ok(())
     }
 
-    async fn attest(&mut self) -> Result<()> {
+    async fn attest(&mut self, attestation_transmitter: Sender<AttestationResponse>) -> Result<()> {
         let event_id = self
             .event_queue
             .remove()
             .expect("queue should never be empty");
 
-        let attestation = self.oracle.try_attest_event(event_id).await?;
-        match attestation {
+        let attestation = self.oracle.try_attest_event(event_id.clone()).await?;
+        let attestation = match attestation {
             Some(attestation) => {
                 info!(
                     "attesting with maturation {} and attestation {:#?}",
                     self.next_attestation, attestation
                 );
+                attestation
             }
 
             None => {
@@ -60,15 +65,30 @@ impl OracleScheduler {
                     "maturation {} already attested (should be possible only in debug mode)",
                     self.next_attestation
                 );
+                self.oracle
+                    .oracle_state(event_id.clone())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .1
+                    .expect("Already attested using debug mode")
             }
-        }
+        };
+
+        attestation_transmitter
+            .send((&attestation, event_id.as_str()).into())
+            .expect("usable channel");
 
         self.next_attestation += self.config.frequency;
         Ok(())
     }
 }
 
-pub fn init(oracle: Arc<Oracle>, config: OracleSchedulerConfig) -> Result<()> {
+pub fn init(
+    oracle: Arc<Oracle>,
+    config: OracleSchedulerConfig,
+    attestation_tx: Sender<AttestationResponse>,
+) -> Result<()> {
     if !config.announcement_offset.is_positive() {
         return Err(OracleSchedulerError::InvalidAnnouncementTimeError(
             config.announcement_offset,
@@ -78,7 +98,7 @@ pub fn init(oracle: Arc<Oracle>, config: OracleSchedulerConfig) -> Result<()> {
     info!("creating oracle events and schedules");
     tokio::spawn(async move {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        if let Err(err) = create_events(oracle, config, tx).await {
+        if let Err(err) = create_events(oracle, config, attestation_tx, tx).await {
             panic!("oracle scheduler create_events error: {}", err);
         }
         if let Some(err) = rx.recv().await {
@@ -93,6 +113,7 @@ pub fn init(oracle: Arc<Oracle>, config: OracleSchedulerConfig) -> Result<()> {
 async fn create_events(
     oracle: Arc<Oracle>,
     config: OracleSchedulerConfig,
+    attestation_transmitter: Sender<AttestationResponse>,
     error_transmitter: mpsc::UnboundedSender<OracleSchedulerError>,
 ) -> Result<()> {
     let now = OffsetDateTime::now_utc();
@@ -169,8 +190,14 @@ async fn create_events(
     scheduler.every(interval).run(move || {
         let oracle_scheduler_clone = oracle_scheduler.clone();
         let error_transmitter_clone = error_transmitter.clone();
+        let attestation_transmitter = attestation_transmitter.clone();
         async move {
-            if let Err(err) = oracle_scheduler_clone.lock().await.attest().await {
+            if let Err(err) = oracle_scheduler_clone
+                .lock()
+                .await
+                .attest(attestation_transmitter)
+                .await
+            {
                 info!("error from attestation scheduler");
                 error_transmitter_clone.send(err).unwrap();
             }

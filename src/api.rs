@@ -7,6 +7,7 @@ use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use tokio::sync::broadcast::Receiver;
 
 use crate::{
     common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
@@ -64,7 +65,7 @@ enum EventType {
     Attestation,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AttestationResponse {
     event_id: String,
@@ -226,10 +227,15 @@ async fn force(
 }
 
 pub async fn run_api(
-    data: (HashMap<AssetPair, Oracle>, OracleSchedulerConfig, bool),
+    data: (
+        HashMap<AssetPair, Oracle>,
+        OracleSchedulerConfig,
+        ReceiverHandle,
+        bool,
+    ),
     port: u16,
 ) -> anyhow::Result<()> {
-    let (oracles, oracles_scheduler_config, debug_mode) = data;
+    let (oracles, oracles_scheduler_config, rx, debug_mode) = data;
     info!("starting server");
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
@@ -244,7 +250,11 @@ pub async fn run_api(
         }
         App::new()
             .wrap(Cors::permissive())
-            .app_data(web::Data::new((oracles.clone(), oracles_scheduler_config)))
+            .app_data(web::Data::new((
+                oracles.clone(),
+                oracles_scheduler_config,
+                rx.clone(),
+            )))
             .service(factory)
     })
     .bind(("0.0.0.0", port))?
@@ -264,7 +274,11 @@ pub async fn run_api(
 
 #[get("/ws")]
 async fn index(
-    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+    oracles: web::Data<(
+        HashMap<AssetPair, Oracle>,
+        OracleSchedulerConfig,
+        ReceiverHandle,
+    )>,
     stream: web::Payload,
     req: HttpRequest,
 ) -> Result<HttpResponse> {
@@ -275,6 +289,7 @@ async fn index(
                 .get(&AssetPair::Btcusd)
                 .ok_or(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd))?
                 .clone(),
+            oracles.2.clone(),
         ),
         &req,
         stream,
@@ -283,12 +298,27 @@ async fn index(
     resp
 }
 
-impl From<(OracleAttestation, &str)> for AttestationResponse {
-    fn from(value: (OracleAttestation, &str)) -> Self {
+impl From<(&OracleAttestation, &str)> for AttestationResponse {
+    fn from(value: (&OracleAttestation, &str)) -> Self {
+        let attestation = value.0.clone();
         AttestationResponse {
             event_id: value.1.to_owned(),
-            signatures: value.0.signatures,
-            values: value.0.outcomes,
+            signatures: attestation.signatures,
+            values: attestation.outcomes,
         }
+    }
+}
+
+pub(crate) struct ReceiverHandle(pub(crate) Receiver<AttestationResponse>);
+
+impl Clone for ReceiverHandle {
+    fn clone(&self) -> Self {
+        Self(self.0.resubscribe())
+    }
+}
+
+impl From<Receiver<AttestationResponse>> for ReceiverHandle {
+    fn from(value: Receiver<AttestationResponse>) -> Self {
+        Self(value)
     }
 }

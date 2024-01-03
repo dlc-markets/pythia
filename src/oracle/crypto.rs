@@ -176,7 +176,7 @@ pub(super) mod test {
     ) -> Result<(), UpstreamError> {
         let taghash = <secp256k1_zkp::hashes::sha256::Hash>::hash(tag.as_bytes());
         let tag = taghash.as_ref();
-        let payload = [tag.clone(), tag, msg.as_ref()].concat();
+        let payload = [tag, tag, msg.as_ref()].concat();
         secp.verify_schnorr(
             &result,
             &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
