@@ -83,7 +83,7 @@ impl Oracle {
                 &event_id
             );
             let announcement = self
-                .oracle_state(event_id)
+                .oracle_state(&event_id)
                 .await?
                 .expect("announcement exist if event in DB")
                 .0;
@@ -144,8 +144,8 @@ impl Oracle {
 
     /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
     /// Store in DB and returm some oracle attestation if event is attested successfully.
-    pub async fn try_attest_event(&self, event_id: String) -> Result<Option<OracleAttestation>> {
-        let Some(event) = self.app_state.db.get_event(&event_id).await? else {
+    pub async fn try_attest_event(&self, event_id: &str) -> Result<Option<OracleAttestation>> {
+        let Some(event) = self.app_state.db.get_event(event_id).await? else {
             return Ok(None);
         };
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
@@ -180,7 +180,7 @@ impl Oracle {
         let _ = &self
             .app_state
             .db
-            .update_to_attestation(event_id.as_ref(), &attestation, outcome)
+            .update_to_attestation(event_id, &attestation, outcome)
             .await?;
         Ok(Some(attestation))
     }
@@ -188,7 +188,7 @@ impl Oracle {
     /// If it exists, return an event announcement and attestation.
     pub async fn oracle_state(
         &self,
-        event_id: String,
+        event_id: &str,
     ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
         let Some(event) = self.app_state.db.get_event(&event_id).await? else {
             return Ok(None);
@@ -197,7 +197,7 @@ impl Oracle {
             oracle_nonces: event.nonce_public.clone(),
             event_maturity_epoch: event.maturity.unix_timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
-            event_id,
+            event_id: event_id.to_string(),
         };
 
         let announcement = OracleAnnouncement {
@@ -240,7 +240,8 @@ impl Oracle {
         maturation: OffsetDateTime,
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
-        let event_id = "btcusd".to_string() + &maturation.unix_timestamp().to_string();
+        let event_id =
+            ("btcusd".to_string() + &maturation.unix_timestamp().to_string()).into_boxed_str();
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
         else {
@@ -276,7 +277,7 @@ impl Oracle {
                         event_id, outcome
                     );
                     let (oracle_annoncement, oracle_attestation) =
-                        self.oracle_state(event_id).await?.expect("is announced");
+                        self.oracle_state(&event_id).await?.expect("is announced");
 
                     return Ok((oracle_annoncement, oracle_attestation.expect("is attested")));
                 }
@@ -455,7 +456,7 @@ mod test {
         assert_eq!(
             oracle_announcement,
             oracle
-                .oracle_state("btcusd".to_owned() + date.unix_timestamp().to_string().as_str())
+                .oracle_state(&("btcusd".to_owned() + date.unix_timestamp().to_string().as_str()))
                 .await
                 .unwrap()
                 .unwrap()
@@ -496,7 +497,7 @@ mod test {
         let oracle_announcement = oracle.create_announcement(date.clone()).await.unwrap();
         let now = OffsetDateTime::now_utc();
         let oracle_attestation = match oracle
-            .try_attest_event(oracle_announcement.oracle_event.event_id.clone())
+            .try_attest_event(&oracle_announcement.oracle_event.event_id)
             .await
         {
             Ok(attestation) => attestation,
@@ -519,7 +520,7 @@ mod test {
         assert_eq!(
             oracle_attestation,
             oracle
-                .oracle_state(oracle_announcement.oracle_event.event_id)
+                .oracle_state(&oracle_announcement.oracle_event.event_id)
                 .await
                 .unwrap()
                 .unwrap()

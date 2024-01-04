@@ -20,7 +20,7 @@ mod pricefeeds;
 
 mod oracle_scheduler;
 
-use crate::{api::AttestationResponse, oracle::postgres::DBconnection};
+use crate::{oracle::postgres::DBconnection, ws::EventNotification};
 
 mod api;
 mod cli;
@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     db.migrate().await?;
 
     // Initialise websocket event channel
-    let (attestation_tx, attestation_rx) = broadcast::channel::<AttestationResponse>(5);
+    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(1);
 
     // setup event databases
     let oracles = asset_pair_infos

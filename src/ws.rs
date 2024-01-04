@@ -3,13 +3,13 @@ use std::time::{Duration, Instant};
 use actix::{fut::wrap_future, prelude::*};
 use actix_web_actors::ws;
 use bytestring::ByteString;
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+use serde::Serialize;
 use serde_json::{from_str, to_string_pretty};
+use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
-use crate::{
-    api::{AttestationResponse, ReceiverHandle},
-    oracle::Oracle,
-};
+use crate::{api::AttestationResponse, common::AssetPair, oracle::Oracle};
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -26,15 +26,15 @@ pub struct PythiaWebSocket {
     /// The Oracle instance the websocket allow to interact with
     oracle: Oracle,
     /// The stream of attestation to broadcast
-    attestation_rx: ReceiverHandle,
+    event_rx: ReceiverHandle,
 }
 
 impl PythiaWebSocket {
-    pub fn new(oracle: Oracle, attestation_rx: ReceiverHandle) -> Self {
+    pub fn new(oracle: Oracle, event_rx: ReceiverHandle) -> Self {
         Self {
             hb: Instant::now(),
             oracle,
-            attestation_rx,
+            event_rx,
         }
     }
 
@@ -67,7 +67,7 @@ impl Actor for PythiaWebSocket {
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
         // Attach the stream of attestations to the websocket
-        ctx.add_stream(BroadcastStream::from(self.attestation_rx.clone().0));
+        ctx.add_stream(BroadcastStream::from(self.event_rx.clone().0));
     }
 }
 
@@ -104,10 +104,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 };
                 let oracle = self.oracle.clone();
                 let future_state = async move {
-                    let state = oracle.oracle_state(event_id.clone().into()).await.unwrap();
+                    let state = oracle.oracle_state(&event_id).await.unwrap();
                     if let Some((_, Some(attestation))) = state {
-                        let attestation_response: AttestationResponse =
-                            (&attestation, event_id.as_ref()).into();
+                        let attestation_response: EventNotification =
+                            (oracle.asset_pair_info.asset_pair, attestation, event_id).into();
                         to_string_pretty(&jrpc_build_response(&request, Some(attestation_response)))
                             .expect("JRPC Response can always be parsed")
                     } else {
@@ -136,16 +136,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
 }
 
 /// Handle produced attestation and send them to clients
-impl StreamHandler<Result<AttestationResponse, BroadcastStreamRecvError>> for PythiaWebSocket {
+impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for PythiaWebSocket {
     fn handle(
         &mut self,
-        item: Result<AttestationResponse, BroadcastStreamRecvError>,
+        item: Result<EventNotification, BroadcastStreamRecvError>,
         ctx: &mut Self::Context,
     ) {
         // broadcast attestation to websocket clients
         println!("WS: Broadcasting attestation !");
         ctx.text(
-            to_string_pretty(&AttestationBroadcast::from(
+            to_string_pretty(&EventBroadcast::from(
                 item.expect("attestation are rare enough it should not lag begind"),
             ))
             .expect("serializable response"),
@@ -153,14 +153,14 @@ impl StreamHandler<Result<AttestationResponse, BroadcastStreamRecvError>> for Py
     }
 }
 
-type AttestationBroadcast = json_rpc_types::Request<AttestationResponse, &'static str>;
+type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;
 
-impl From<AttestationResponse> for AttestationBroadcast {
-    fn from(value: AttestationResponse) -> Self {
+impl From<EventNotification> for EventBroadcast {
+    fn from(value: EventNotification) -> Self {
         json_rpc_types::Request {
             jsonrpc: json_rpc_types::Version::V2,
             method: "broadcast",
-            params: Some(value),
+            params: Some(value.into()),
             id: None,
         }
     }
@@ -168,16 +168,16 @@ impl From<AttestationResponse> for AttestationBroadcast {
 
 type AttestationJRpcRequest = json_rpc_types::Request<Box<str>>;
 type AttestationJRpcResponse =
-    json_rpc_types::Response<AttestationResponse, Box<str>, &'static str>;
+    json_rpc_types::Response<EventBroadcastContent, Box<str>, &'static str>;
 
 fn jrpc_build_response(
     request: &AttestationJRpcRequest,
-    attestation_response: Option<AttestationResponse>,
+    attestation_response: Option<EventNotification>,
 ) -> AttestationJRpcResponse {
     match (&request.params, attestation_response) {
-        (Some(_), Some(attestation_response)) => AttestationJRpcResponse {
+        (Some(_), Some(event_response)) => AttestationJRpcResponse {
             jsonrpc: json_rpc_types::Version::V2,
-            payload: Ok(attestation_response),
+            payload: Ok(event_response.into()),
             id: request.id.clone(),
         },
         (_, _) => AttestationJRpcResponse {
@@ -189,5 +189,76 @@ fn jrpc_build_response(
             }),
             id: request.id.clone(),
         },
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum EventNotification {
+    Announcement(AssetPair, OracleAnnouncement),
+    Attestation(AssetPair, AttestationResponse),
+}
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(untagged)]
+pub enum EventData {
+    Announcement(OracleAnnouncement),
+    Attestation(AttestationResponse),
+}
+pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
+
+impl Clone for ReceiverHandle {
+    fn clone(&self) -> Self {
+        Self(self.0.resubscribe())
+    }
+}
+
+impl From<Receiver<EventNotification>> for ReceiverHandle {
+    fn from(value: Receiver<EventNotification>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<(AssetPair, OracleAttestation, Box<str>)> for EventNotification {
+    fn from(value: (AssetPair, OracleAttestation, Box<str>)) -> Self {
+        EventNotification::Attestation(
+            value.0,
+            AttestationResponse {
+                event_id: value.2,
+                signatures: value.1.signatures,
+                values: value.1.outcomes,
+            },
+        )
+    }
+}
+
+impl From<(AssetPair, OracleAnnouncement)> for EventNotification {
+    fn from(value: (AssetPair, OracleAnnouncement)) -> Self {
+        EventNotification::Announcement(value.0, value.1)
+    }
+}
+
+#[derive(Serialize)]
+pub struct EventBroadcastContent {
+    channel: Box<str>,
+    data: EventData,
+}
+
+impl From<EventNotification> for EventBroadcastContent {
+    fn from(value: EventNotification) -> Self {
+        let (channel_string, event_data) = match value {
+            EventNotification::Announcement(asset_pair, event_data) => (
+                asset_pair.to_string().to_lowercase() + "/announcement",
+                EventData::Announcement(event_data),
+            ),
+            EventNotification::Attestation(asset_pair, event_data) => (
+                asset_pair.to_string().to_lowercase() + "/attestation",
+                EventData::Attestation(event_data),
+            ),
+        };
+
+        Self {
+            channel: channel_string.into_boxed_str(),
+            data: event_data,
+        }
     }
 }

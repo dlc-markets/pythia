@@ -3,17 +3,16 @@ use std::collections::HashMap;
 use actix_cors::Cors;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Result};
 use actix_web_actors::ws;
-use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-use tokio::sync::broadcast::Receiver;
 
 use crate::{
     common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
     error::PythiaError,
     oracle::Oracle,
-    ws::PythiaWebSocket,
+    ws::{PythiaWebSocket, ReceiverHandle},
 };
 
 use serde::{Deserialize, Serialize};
@@ -68,9 +67,9 @@ enum EventType {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AttestationResponse {
-    event_id: String,
-    signatures: Vec<Signature>,
-    values: Vec<String>,
+    pub(crate) event_id: Box<str>,
+    pub(crate) signatures: Vec<Signature>,
+    pub(crate) values: Vec<String>,
 }
 
 #[get("/oracle/publickey")]
@@ -136,8 +135,9 @@ async fn oracle_event_service(
     }
 
     info!("retrieving oracle event with maturation {}", ts);
-    let event_id = "btcusd".to_string() + &timestamp.unix_timestamp().to_string();
-    match oracle.oracle_state(event_id.clone()).await {
+    let event_id =
+        ("btcusd".to_string() + &timestamp.unix_timestamp().to_string()).into_boxed_str();
+    match oracle.oracle_state(&event_id).await {
         Err(error) => Err(PythiaError::OracleError(error).into()),
         Ok(event_option) => match event_option {
             None => Err(PythiaError::OracleEventNotFoundError(
@@ -149,12 +149,12 @@ async fn oracle_event_service(
                 EventType::Attestation => match maybe_attestation {
                     None => {
                         if timestamp < OffsetDateTime::now_utc() {
-                            match oracle.try_attest_event(event_id.clone()).await {
+                            match oracle.try_attest_event(&event_id).await {
                                 Err(error) => Err(PythiaError::OracleError(error).into()),
                                 Ok(maybe_attestation) => {
                                     let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exists now");
                                     let attestation_response = AttestationResponse {
-                                        event_id,
+                                        event_id: event_id.clone(),
                                         signatures: attestation.signatures,
                                         values: attestation.outcomes,
                                     };
@@ -219,7 +219,7 @@ async fn force(
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
         attestation: AttestationResponse {
-            event_id: announcement.oracle_event.event_id,
+            event_id: announcement.oracle_event.event_id.into(),
             signatures: attestation.signatures,
             values: attestation.outcomes,
         },
@@ -296,29 +296,4 @@ async fn index(
     );
     println!("{:?}", resp);
     resp
-}
-
-impl From<(&OracleAttestation, &str)> for AttestationResponse {
-    fn from(value: (&OracleAttestation, &str)) -> Self {
-        let attestation = value.0.clone();
-        AttestationResponse {
-            event_id: value.1.to_owned(),
-            signatures: attestation.signatures,
-            values: attestation.outcomes,
-        }
-    }
-}
-
-pub struct ReceiverHandle(pub(crate) Receiver<AttestationResponse>);
-
-impl Clone for ReceiverHandle {
-    fn clone(&self) -> Self {
-        Self(self.0.resubscribe())
-    }
-}
-
-impl From<Receiver<AttestationResponse>> for ReceiverHandle {
-    fn from(value: Receiver<AttestationResponse>) -> Self {
-        Self(value)
-    }
 }
