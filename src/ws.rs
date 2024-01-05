@@ -1,10 +1,13 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use actix::{fut::wrap_future, prelude::*};
 use actix_web_actors::ws;
-use bytestring::ByteString;
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
@@ -23,18 +26,26 @@ pub struct PythiaWebSocket {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
-    /// The Oracle instance the websocket allow to interact with
-    oracle: Oracle,
-    /// The stream of attestation to broadcast
+    /// The Oracles instances the websocket allow to interact with
+    oracles: Arc<HashMap<AssetPair, Oracle>>,
+    /// The stream of bradcasted event for the client
     event_rx: ReceiverHandle,
+    /// Subscription option to channels
+    subscribed_to: Vec<EventChannel>,
 }
 
 impl PythiaWebSocket {
-    pub fn new(oracle: Oracle, event_rx: ReceiverHandle) -> Self {
+    pub fn new(oracles: Arc<HashMap<AssetPair, Oracle>>, event_rx: ReceiverHandle) -> Self {
+        let mut subscrition_vec = Vec::with_capacity(2);
+        // A client is by defaut subscribing to the channel of btcusd attestation
+        subscrition_vec.push(EventChannel::Attestation {
+            asset_pair: AssetPair::Btcusd,
+        });
         Self {
             hb: Instant::now(),
-            oracle,
+            oracles,
             event_rx,
+            subscribed_to: subscrition_vec,
         }
     }
 
@@ -71,6 +82,22 @@ impl Actor for PythiaWebSocket {
     }
 }
 
+async fn future_oracle_state(oracle: Oracle, request: GetRequest) -> Option<EventData> {
+    let state = oracle.oracle_state(&request.event_id).await.unwrap();
+    match (request.asset_pair, state) {
+        (EventChannel::Announcement { asset_pair: _ }, Some((announcement, _))) => {
+            Some(EventData::Announcement(announcement))
+        }
+        (EventChannel::Attestation { asset_pair: _ }, Some((_, Some(attestation)))) => Some(
+            EventData::Attestation(Some((request.event_id, attestation).into())),
+        ),
+        (EventChannel::Attestation { asset_pair: _ }, Some((_, None))) => {
+            Some(EventData::Attestation(None))
+        }
+        (_, None) => None,
+    }
+}
+
 /// Handler for `ws::Message`
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
@@ -85,42 +112,71 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(request)) => {
-                let request: Result<AttestationJRpcRequest, serde_json::Error> =
-                    from_str(request.as_ref());
+                let request: Result<JRpcRequest, serde_json::Error> = from_str(request.as_ref());
                 let request = match request {
                     Ok(serialized_request) => serialized_request,
                     Err(e) => {
-                        info!("WS: received invalid JRPC request: {}", e);
+                        info!("WS: received invalid JRPC request: {}", &e);
+                        ctx.text(format!("Received invalid JSON-RPC request: {}", &e));
                         return;
                     }
                 };
-                let Some(event_id) = request.params.clone() else {
-                    info!("WS: notification JRPC requests are not supported");
-                    ctx.text(ByteString::from(
-                        to_string_pretty(&jrpc_build_response(&request, None))
-                            .expect("JRPC Response can always be parsed"),
-                    ));
+
+                let Some(params) = request.params.clone() else {
+                    ctx.text("JSON-RPC request must have parameters");
                     return;
                 };
-                let oracle = self.oracle.clone();
-                let future_state = async move {
-                    let state = oracle.oracle_state(&event_id).await.unwrap();
-                    if let Some((_, Some(attestation))) = state {
-                        let attestation_response: EventNotification =
-                            (oracle.asset_pair_info.asset_pair, attestation, event_id).into();
-                        to_string_pretty(&jrpc_build_response(&request, Some(attestation_response)))
-                            .expect("JRPC Response can always be parsed")
-                    } else {
-                        info!("WS: eventID of received JRPC Request is invalid");
-                        to_string_pretty(&jrpc_build_response(&request, None))
-                            .expect("JRPC Response can always be parsed")
+
+                let future_state = match params {
+                    RequestContent::Get(get_request) => {
+                        let asset_pair = match get_request.asset_pair {
+                            EventChannel::Announcement { asset_pair } => asset_pair,
+                            EventChannel::Attestation { asset_pair } => asset_pair,
+                        };
+                        match self.oracles.get(&asset_pair) {
+                            Some(oracle) => future_oracle_state(oracle.clone(), get_request),
+                            None => {
+                                ctx.text(
+                                    to_string_pretty(&jrpc_error_response(&request, None))
+                                        .expect("JRPC Response can always be parsed"),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    RequestContent::Subscription(channel) => {
+                        match request.method.as_str() {
+                            "subscribe" => {
+                                if !self.subscribed_to.contains(&channel) {
+                                    self.subscribed_to.push(channel.clone())
+                                }
+                            }
+                            "unsubscribe" => {
+                                self.subscribed_to.retain(|c| c != &channel);
+                            }
+                            _ => {
+                                ctx.text(
+                                    to_string_pretty(&jrpc_error_response(&request, None))
+                                        .expect("JRPC Response can always be parsed"),
+                                );
+                                return;
+                            }
+                        }
+                        ctx.text(
+                            to_string_pretty(&jrpc_subscription_response(&request, channel))
+                                .expect("JRPC Response can always be parsed"),
+                        );
+                        return;
                     }
                 };
 
                 // https://stackoverflow.com/questions/72068485/how-use-postgres-deadpool-postgres-with-websocket-actix-actix-web-actors
                 let fut = wrap_future::<_, Self>(future_state);
-                let fut = fut.map(|result, _actor, ctx| {
-                    ctx.text(result.to_string());
+                let fut = fut.map(move |result, _actor, ctx| {
+                    ctx.text(
+                        to_string_pretty(&jrpc_event_response(&request, result))
+                            .expect("JRPC Response can always be parsed"),
+                    );
                 });
                 ctx.spawn(fut);
                 // future_state.into_actor(self).spawn(ctx);
@@ -142,14 +198,34 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
         item: Result<EventNotification, BroadcastStreamRecvError>,
         ctx: &mut Self::Context,
     ) {
-        // broadcast attestation to websocket clients
-        println!("WS: Broadcasting attestation !");
-        ctx.text(
-            to_string_pretty(&EventBroadcast::from(
-                item.expect("attestation are rare enough it should not lag begind"),
-            ))
-            .expect("serializable response"),
-        );
+        let event = item.expect("attestation are rare enough it should not lag begind");
+
+        match &event {
+            EventNotification::Announcement(asset_pair, _) => {
+                if self.subscribed_to.contains(&EventChannel::Announcement {
+                    asset_pair: *asset_pair,
+                }) {
+                    // broadcast attestation to websocket client
+                    println!("WS: Broadcasting event !");
+                    ctx.text(
+                        to_string_pretty(&EventBroadcast::from(event))
+                            .expect("serializable response"),
+                    );
+                }
+            }
+            EventNotification::Attestation(asset_pair, _) => {
+                if self.subscribed_to.contains(&EventChannel::Attestation {
+                    asset_pair: *asset_pair,
+                }) {
+                    // broadcast attestation to websocket client
+                    println!("WS: Broadcasting event !");
+                    ctx.text(
+                        to_string_pretty(&EventBroadcast::from(event))
+                            .expect("serializable response"),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -166,27 +242,88 @@ impl From<EventNotification> for EventBroadcast {
     }
 }
 
-type AttestationJRpcRequest = json_rpc_types::Request<Box<str>>;
-type AttestationJRpcResponse =
-    json_rpc_types::Response<EventBroadcastContent, Box<str>, &'static str>;
+#[derive(PartialEq, Deserialize, Clone)]
+#[serde(tag = "type")]
+#[serde(rename_all = "camelCase")]
+enum EventChannel {
+    Announcement { asset_pair: AssetPair },
+    Attestation { asset_pair: AssetPair },
+}
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GetRequest {
+    #[serde(flatten)]
+    asset_pair: EventChannel,
+    event_id: Box<str>,
+}
 
-fn jrpc_build_response(
-    request: &AttestationJRpcRequest,
-    attestation_response: Option<EventNotification>,
-) -> AttestationJRpcResponse {
-    match (&request.params, attestation_response) {
-        (Some(_), Some(event_response)) => AttestationJRpcResponse {
+#[derive(Deserialize, Clone)]
+#[serde(untagged, rename_all = "camelCase")]
+enum RequestContent {
+    Get(GetRequest),
+    Subscription(EventChannel),
+}
+
+type JRpcRequest = json_rpc_types::Request<RequestContent>;
+type JRpcResponse = json_rpc_types::Response<EventData, Box<str>, &'static str>;
+
+fn jrpc_event_response(request: &JRpcRequest, event_response: Option<EventData>) -> JRpcResponse {
+    match (&request.params, event_response) {
+        (Some(_), Some(event_response)) => JRpcResponse {
             jsonrpc: json_rpc_types::Version::V2,
-            payload: Ok(event_response.into()),
+            payload: Ok(event_response),
             id: request.id.clone(),
         },
-        (_, _) => AttestationJRpcResponse {
+        (_, None) => JRpcResponse {
             jsonrpc: json_rpc_types::Version::V2,
             payload: Err(json_rpc_types::Error {
                 code: json_rpc_types::ErrorCode::InvalidParams,
                 message: "eventId not found",
-                data: request.params.clone(),
+                data: None,
             }),
+            id: request.id.clone(),
+        },
+        (None, Some(_)) => unreachable!(),
+    }
+}
+
+fn jrpc_error_response(
+    request: &JRpcRequest,
+    error: Option<serde_json::error::Error>,
+) -> json_rpc_types::Response<Box<str>, Box<str>, Box<str>> {
+    let error = error
+        .map(|e| e.to_string())
+        .unwrap_or("method unknown or no oracle set for this asset pair".to_owned());
+    json_rpc_types::Response {
+        jsonrpc: json_rpc_types::Version::V2,
+        payload: Err(json_rpc_types::Error {
+            code: json_rpc_types::ErrorCode::InvalidParams,
+            message: error.into_boxed_str(),
+            data: None,
+        }),
+        id: request.id.clone(),
+    }
+}
+
+fn jrpc_subscription_response(
+    request: &JRpcRequest,
+    channel: EventChannel,
+) -> json_rpc_types::Response<String, &str> {
+    match channel {
+        EventChannel::Announcement { asset_pair } => json_rpc_types::Response {
+            jsonrpc: json_rpc_types::Version::V2,
+            payload: Ok(format!(
+                "Successfully {} for announcement of the {} pair",
+                request.method, asset_pair
+            )),
+            id: request.id.clone(),
+        },
+        EventChannel::Attestation { asset_pair } => json_rpc_types::Response {
+            jsonrpc: json_rpc_types::Version::V2,
+            payload: Ok(format!(
+                "Successfully {} for attestation of the {} pair",
+                request.method, asset_pair
+            )),
             id: request.id.clone(),
         },
     }
@@ -202,8 +339,9 @@ pub enum EventNotification {
 #[serde(untagged)]
 pub enum EventData {
     Announcement(OracleAnnouncement),
-    Attestation(AttestationResponse),
+    Attestation(Option<AttestationResponse>),
 }
+
 pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
 
 impl Clone for ReceiverHandle {
@@ -252,7 +390,7 @@ impl From<EventNotification> for EventBroadcastContent {
             ),
             EventNotification::Attestation(asset_pair, event_data) => (
                 asset_pair.to_string().to_lowercase() + "/attestation",
-                EventData::Attestation(event_data),
+                EventData::Attestation(Some(event_data)),
             ),
         };
 

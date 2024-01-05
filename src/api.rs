@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use actix_cors::Cors;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Result};
 use actix_web_actors::ws;
-use dlc_messages::oracle_msgs::OracleAnnouncement;
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -72,9 +72,19 @@ pub struct AttestationResponse {
     pub(crate) values: Vec<String>,
 }
 
+impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
+    fn from(value: (Box<str>, OracleAttestation)) -> Self {
+        Self {
+            event_id: value.0,
+            signatures: value.1.signatures,
+            values: value.1.outcomes,
+        }
+    }
+}
+
 #[get("/oracle/publickey")]
 async fn pubkey(
-    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+    oracles: web::Data<(Arc<HashMap<AssetPair, Oracle>>, OracleSchedulerConfig)>,
     filters: web::Query<Filters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
@@ -93,11 +103,10 @@ async fn asset_return() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
 }
 
+type WebData = web::Data<(Arc<HashMap<AssetPair, Oracle>>, OracleSchedulerConfig)>;
+
 #[get("/asset/{asset_id}/config")]
-async fn config(
-    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
-    path: web::Path<AssetPair>,
-) -> Result<HttpResponse> {
+async fn config(oracles: WebData, path: web::Path<AssetPair>) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
     let oracle = oracles
@@ -112,7 +121,7 @@ async fn config(
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
 async fn oracle_event_service(
-    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
+    oracles: WebData,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
 ) -> Result<HttpResponse> {
@@ -197,10 +206,7 @@ struct ForceResponse {
 }
 
 #[post("/force")]
-async fn force(
-    data: web::Json<ForceData>,
-    oracles: web::Data<(HashMap<AssetPair, Oracle>, OracleSchedulerConfig)>,
-) -> Result<HttpResponse> {
+async fn force(data: web::Json<ForceData>, oracles: WebData) -> Result<HttpResponse> {
     info!("!!! Forced Request !!!");
     let ForceData { maturation, price } = data.0;
 
@@ -236,6 +242,7 @@ pub async fn run_api(
     port: u16,
 ) -> anyhow::Result<()> {
     let (oracles, oracles_scheduler_config, rx, debug_mode) = data;
+    let oracles = Arc::new(oracles);
     info!("starting server");
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
@@ -275,7 +282,7 @@ pub async fn run_api(
 #[get("/ws")]
 async fn index(
     oracles: web::Data<(
-        HashMap<AssetPair, Oracle>,
+        Arc<HashMap<AssetPair, Oracle>>,
         OracleSchedulerConfig,
         ReceiverHandle,
     )>,
@@ -283,14 +290,7 @@ async fn index(
     req: HttpRequest,
 ) -> Result<HttpResponse> {
     let resp = ws::start(
-        PythiaWebSocket::new(
-            oracles
-                .0
-                .get(&AssetPair::Btcusd)
-                .ok_or(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd))?
-                .clone(),
-            oracles.2.clone(),
-        ),
+        PythiaWebSocket::new(oracles.0.clone(), oracles.2.clone()),
         &req,
         stream,
     );

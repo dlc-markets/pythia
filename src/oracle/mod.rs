@@ -190,7 +190,7 @@ impl Oracle {
         &self,
         event_id: &str,
     ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
-        let Some(event) = self.app_state.db.get_event(&event_id).await? else {
+        let Some(event) = self.app_state.db.get_event(event_id).await? else {
             return Ok(None);
         };
         let oracle_event = OracleEvent {
