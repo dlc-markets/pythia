@@ -205,8 +205,6 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
                 if self.subscribed_to.contains(&EventChannel::Announcement {
                     asset_pair: *asset_pair,
                 }) {
-                    // broadcast attestation to websocket client
-                    println!("WS: Broadcasting event !");
                     ctx.text(
                         to_string_pretty(&EventBroadcast::from(event))
                             .expect("serializable response"),
@@ -217,8 +215,6 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
                 if self.subscribed_to.contains(&EventChannel::Attestation {
                     asset_pair: *asset_pair,
                 }) {
-                    // broadcast attestation to websocket client
-                    println!("WS: Broadcasting event !");
                     ctx.text(
                         to_string_pretty(&EventBroadcast::from(event))
                             .expect("serializable response"),
@@ -235,7 +231,7 @@ impl From<EventNotification> for EventBroadcast {
     fn from(value: EventNotification) -> Self {
         json_rpc_types::Request {
             jsonrpc: json_rpc_types::Version::V2,
-            method: "broadcast",
+            method: "subscriptions",
             params: Some(value.into()),
             id: None,
         }
