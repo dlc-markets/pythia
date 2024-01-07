@@ -35,7 +35,7 @@ interface PythiaAttestation {
   values: string[]
 }
 
-interface Contructor {
+interface Constructor {
   version?: string
   url?: string
 }
@@ -44,7 +44,7 @@ export class Pythia {
   url: string
   version: string
 
-  constructor(options: Contructor = {}) {
+  constructor(options: Constructor = {}) {
     this.version = options.version || 'v1'
     this.url = options.url || 'http://localhost:8000'
   }
