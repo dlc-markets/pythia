@@ -4,6 +4,7 @@ extern crate log;
 use clap::Parser;
 use hex::ToHex;
 use secp256k1_zkp::{KeyPair, Secp256k1};
+use tokio::sync::broadcast;
 
 use std::collections::HashMap;
 
@@ -19,11 +20,12 @@ mod pricefeeds;
 
 mod oracle_scheduler;
 
-use crate::oracle::postgres::DBconnection;
+use crate::{oracle::postgres::DBconnection, ws::EventNotification};
 
 mod api;
 mod cli;
 mod env;
+mod ws;
 
 // const PAGE_SIZE: u32 = 100;
 
@@ -55,6 +57,9 @@ async fn main() -> anyhow::Result<()> {
 
     db.migrate().await?;
 
+    // Initialise websocket event channel
+    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(1);
+
     // setup event databases
     let oracles = asset_pair_infos
         .iter()
@@ -67,7 +72,11 @@ async fn main() -> anyhow::Result<()> {
 
             info!("scheduling oracle events for {}", asset_pair);
             // schedule oracle events (announcements/attestations)
-            oracle_scheduler::init(oracle.clone().into(), oracle_scheduler_config)?;
+            oracle_scheduler::init(
+                oracle.clone().into(),
+                oracle_scheduler_config,
+                attestation_tx.clone(),
+            )?;
 
             Ok(oracle)
         }))
@@ -76,12 +85,19 @@ async fn main() -> anyhow::Result<()> {
 
     // setup and run server
     if debug_mode {
-        info!(
-            "!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!! DATA INTEGRITY IS NOT GARANTED !!!"
-        )
+        info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    api::run_api((oracles, oracle_scheduler_config, debug_mode), port).await?;
+    api::run_api(
+        (
+            oracles,
+            oracle_scheduler_config,
+            attestation_rx.into(),
+            debug_mode,
+        ),
+        port,
+    )
+    .await?;
 
     Ok(())
 }

@@ -162,7 +162,7 @@ impl DBconnection {
     }
 
     /// Retrieve the current state of an event in oracle's DB
-    pub(super) async fn get_event(&self, event_id: &String) -> Result<Option<PostgresResponse>> {
+    pub(super) async fn get_event(&self, event_id: &str) -> Result<Option<PostgresResponse>> {
         let Some(event) = sqlx::query_as!(
         EventResponse,
         "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events e WHERE e.id = $1",
