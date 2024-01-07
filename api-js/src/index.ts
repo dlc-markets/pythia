@@ -1,3 +1,6 @@
+import { EventEmitter } from 'eventemitter3'
+import process from 'node:process'
+import { WebSocket } from 'ws'
 interface FetchOptions {
   method: string
   headers: Record<string, string>
@@ -35,18 +38,71 @@ interface PythiaAttestation {
   values: string[]
 }
 
+interface Events {
+  connected: () => void
+  disconnected: () => void
+  [key: `${string}/attestation`]: (attestation: PythiaAttestation) => void
+}
+
 interface Constructor {
   version?: string
   url?: string
 }
 
-export class Pythia {
-  url: string
+export class Pythia extends EventEmitter<Events> {
   version: string
+  url: string
+  websocket?: WebSocket
 
   constructor(options: Constructor = {}) {
+    super()
     this.version = options.version || 'v1'
-    this.url = options.url || 'http://localhost:8000'
+    this.url = options.url || process.env.PYTHIA_URL || 'http://localhost:8000'
+  }
+
+  async connect() {
+    this.disconnect()
+
+    const wsUrl = `${this.url.replace('http', 'ws')}/${this.version}/ws`
+    this.websocket = new WebSocket(wsUrl)
+
+    await new Promise<void>((resolve, reject) => {
+      this.websocket!.on('open', () => {
+        this.emit('connected')
+        resolve()
+      })
+
+      this.websocket!.onerror = (error) => {
+        reject(error)
+      }
+    })
+
+    this.websocket.on('message', (message: string) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = JSON.parse(message) as { method: string; params: any }
+
+        if (data.method === 'broadcast') {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
+          this.emit(data.params.channel, data.params.data)
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error(error)
+      }
+    })
+
+    this.websocket.on('close', () => {
+      this.emit('disconnected')
+
+      setTimeout(() => {
+        void this.connect()
+      }, 5000)
+    })
+  }
+
+  disconnect() {
+    this.websocket?.close()
   }
 
   async request<Result>(
