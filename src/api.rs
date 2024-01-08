@@ -82,13 +82,19 @@ impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
     }
 }
 
+type Context = web::Data<(
+    Arc<HashMap<AssetPair, Oracle>>,
+    OracleSchedulerConfig,
+    ReceiverHandle,
+)>;
+
 #[get("/oracle/publickey")]
 async fn pubkey(
-    oracles: web::Data<(Arc<HashMap<AssetPair, Oracle>>, OracleSchedulerConfig)>,
+    context: Context,
     filters: web::Query<Filters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
-    let oracle = match oracles.0.get(&filters.asset_pair) {
+    let oracle = match context.0.get(&filters.asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
         Some(val) => val,
     };
@@ -100,29 +106,27 @@ async fn pubkey(
 
 #[get("/assets")]
 async fn asset_return() -> Result<HttpResponse> {
-    info!("GET /oracle/publickey");
+    info!("GET /oracle/assets");
     Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
 }
 
-type WebData = web::Data<(Arc<HashMap<AssetPair, Oracle>>, OracleSchedulerConfig)>;
-
 #[get("/asset/{asset_id}/config")]
-async fn config(oracles: WebData, path: web::Path<AssetPair>) -> Result<HttpResponse> {
+async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
-    let oracle = oracles
+    let oracle = context
         .0
         .get(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse::from((
         oracle.asset_pair_info.pricefeed,
-        oracles.1,
+        context.1,
     ))))
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
 async fn oracle_event_service(
-    oracles: WebData,
+    context: Context,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
 ) -> Result<HttpResponse> {
@@ -134,7 +138,7 @@ async fn oracle_event_service(
     let timestamp =
         OffsetDateTime::parse(&ts, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
 
-    let oracle = match oracles.0.get(&asset_pair) {
+    let oracle = match context.0.get(&asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(asset_pair).into()),
         Some(val) => val,
     };
@@ -206,14 +210,14 @@ struct ForceResponse {
 }
 
 #[post("/force")]
-async fn force(data: web::Json<ForceData>, oracles: WebData) -> Result<HttpResponse> {
+async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpResponse> {
     info!("POST /force");
     let ForceData { maturation, price } = data.0;
 
     let timestamp =
         OffsetDateTime::parse(&maturation, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
 
-    let oracle = match oracles.0.get(&AssetPair::Btcusd) {
+    let oracle = match context.0.get(&AssetPair::Btcusd) {
         None => return Err(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd).into()),
         Some(val) => val,
     };
@@ -234,16 +238,12 @@ async fn force(data: web::Json<ForceData>, oracles: WebData) -> Result<HttpRespo
 
 #[get("/ws")]
 async fn websocket(
-    oracles: web::Data<(
-        Arc<HashMap<AssetPair, Oracle>>,
-        OracleSchedulerConfig,
-        ReceiverHandle,
-    )>,
+    context: Context,
     stream: web::Payload,
     req: HttpRequest,
 ) -> Result<HttpResponse> {
     ws::start(
-        PythiaWebSocket::new(oracles.0.clone(), oracles.2.clone()),
+        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
         &req,
         stream,
     )
@@ -258,8 +258,8 @@ pub async fn run_api(
     ),
     port: u16,
 ) -> anyhow::Result<()> {
-    let (oracles, oracles_scheduler_config, rx, debug_mode) = data;
-    let oracles = Arc::new(oracles);
+    let (context, oracles_scheduler_config, rx, debug_mode) = data;
+    let context = Arc::new(context);
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
@@ -275,7 +275,7 @@ pub async fn run_api(
         App::new()
             .wrap(Cors::permissive())
             .app_data(web::Data::new((
-                oracles.clone(),
+                context.clone(),
                 oracles_scheduler_config,
                 rx.clone(),
             )))
