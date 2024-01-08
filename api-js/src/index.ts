@@ -1,6 +1,7 @@
 import { EventEmitter } from 'eventemitter3'
 import process from 'node:process'
 import { WebSocket } from 'ws'
+
 interface FetchOptions {
   method: string
   headers: Record<string, string>
@@ -17,6 +18,7 @@ interface PythiaAnnouncement {
   announcementSignature: string
   oraclePublicKey: string
   oracleEvent: {
+    eventId: string
     oracleNonces: string[]
     eventMaturityEpoch: number
     eventDescriptor: {
@@ -28,7 +30,6 @@ interface PythiaAnnouncement {
         nbDigits: number
       }
     }
-    eventId: string
   }
 }
 
@@ -42,6 +43,7 @@ interface Events {
   connected: () => void
   disconnected: () => void
   [key: `${string}/attestation`]: (attestation: PythiaAttestation) => void
+  [key: `${string}/announcement`]: (attestation: PythiaAnnouncement) => void
 }
 
 interface Constructor {
@@ -82,7 +84,7 @@ export class Pythia extends EventEmitter<Events> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const data = JSON.parse(message) as { method: string; params: any }
 
-        if (data.method === 'broadcast') {
+        if (data.method === 'subscriptions') {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
           this.emit(data.params.channel, data.params.data)
         }
@@ -140,7 +142,7 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAssets() {
-    return this.request<string[]>('GET', 'asset')
+    return this.request<string[]>('GET', 'assets')
   }
 
   getAsset({ assetPair }: { assetPair: string }) {
