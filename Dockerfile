@@ -1,7 +1,8 @@
 # See https://gist.github.com/noelbundick/6922d26667616e2ba5c3aff59f0824cd
 FROM rust:1.73-slim-bookworm AS builder
 
-RUN --mount=type=cache,target=/var/cache/apt \
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
     apt update -y && apt install -y \
     pkg-config \
     make \
@@ -32,7 +33,9 @@ ENV PYTHIA_PORT=8000
 
 COPY --from=builder /app/pythia /usr/bin/pythia
 
-RUN apt update -y && apt install -y \
+RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
+    --mount=target=/var/cache/apt,type=cache,sharing=locked \
+    apt update -y && apt install -y \
     libssl-dev \
     ca-certificates \
     netcat-traditional
