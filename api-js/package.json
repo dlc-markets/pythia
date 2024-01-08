@@ -1,6 +1,6 @@
 {
   "name": "@dlc-markets/pythia",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "A set of wrappers to easily communicate with Pythia",
   "contributors": [
     {
@@ -49,6 +49,7 @@
     "format": "prettier --write './**/*.ts'",
     "format:check": "prettier --check './**/*.ts'",
     "build": "tsc --build tsconfig.build.json",
+    "release": "pnpm build && pnpm publish",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
