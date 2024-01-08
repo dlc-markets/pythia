@@ -70,7 +70,7 @@ impl Oracle {
         self.app_state.db.is_empty().await
     }
 
-    /// Create an oracle announcement that it will sign the price at givent maturity instant
+    /// Create an oracle announcement that it will sign the price at given maturity instant
     pub async fn create_announcement(
         &self,
         maturation: OffsetDateTime,
@@ -97,7 +97,7 @@ impl Oracle {
         let digits = event.nb_digits;
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
-        // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
+        // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
         {
             let mut rng = thread_rng();
             for _ in 0..digits {
@@ -134,16 +134,15 @@ impl Oracle {
             .db
             .insert_announcement(&announcement, sk_nonces)
             .await?;
-        info!(
-            "created oracle event (announcement only) with maturation {} and announcement {:#?}",
-            maturation, &announcement
-        );
+        info!("created oracle announcement with maturation {}", maturation);
+
+        debug!("announcement {:#?}", &announcement);
 
         Ok(announcement)
     }
 
     /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
-    /// Store in DB and returm some oracle attestation if event is attested successfully.
+    /// Store in DB and return some oracle attestation if event is attested successfully.
     pub async fn try_attest_event(&self, event_id: &str) -> Result<Option<OracleAttestation>> {
         let Some(event) = self.app_state.db.get_event(event_id).await? else {
             return Ok(None);
@@ -151,7 +150,7 @@ impl Oracle {
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
             return Ok(None);
         };
-        info!("retrieving pricefeeds for attestation");
+        info!("retrieving price feed for attestation");
         let outcome = self
             .app_state
             .pricefeed
@@ -257,7 +256,7 @@ impl Oracle {
             Some(postgres_response) => match postgres_response.scalars_records {
                 ScalarsRecords::DigitsSkNonce(sk_nonces) => {
                     info!(
-                        "!!! Forced announcement !!!: {} event is already announced, will attest it immediatly with price outcome {}",
+                        "!!! Forced announcement !!!: {} event is already announced, will attest it immediately with price outcome {}",
                         event_id, price
                     );
                     let nonces = sk_nonces
@@ -285,7 +284,7 @@ impl Oracle {
             None => {
                 let mut sk_nonces = Vec::with_capacity(digits.into());
                 let mut nonces = Vec::with_capacity(digits.into());
-                info!(
+                debug!(
                     "!!! Forced announcement !!!: created oracle event and announcement with maturation {}",
                     maturation
                 );

@@ -28,7 +28,7 @@ pub struct PythiaWebSocket {
     hb: Instant,
     /// The Oracles instances the websocket allow to interact with
     oracles: Arc<HashMap<AssetPair, Oracle>>,
-    /// The stream of bradcasted event for the client
+    /// The stream of broadcasted event for the client
     event_rx: ReceiverHandle,
     /// Subscription option to channels
     subscribed_to: Vec<EventChannel>,
@@ -36,16 +36,16 @@ pub struct PythiaWebSocket {
 
 impl PythiaWebSocket {
     pub fn new(oracles: Arc<HashMap<AssetPair, Oracle>>, event_rx: ReceiverHandle) -> Self {
-        let mut subscrition_vec = Vec::with_capacity(2);
-        // A client is by defaut subscribing to the channel of btcusd attestation
-        subscrition_vec.push(EventChannel::Attestation {
+        let mut subscription_vec = Vec::with_capacity(2);
+        // A client is by default subscribing to the channel of btcusd attestation
+        subscription_vec.push(EventChannel::Attestation {
             asset_pair: AssetPair::Btcusd,
         });
         Self {
             hb: Instant::now(),
             oracles,
             event_rx,
-            subscribed_to: subscrition_vec,
+            subscribed_to: subscription_vec,
         }
     }
 
@@ -101,8 +101,6 @@ async fn future_oracle_state(oracle: Oracle, request: GetRequest) -> Option<Even
 /// Handler for `ws::Message`
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        // process websocket messages
-        println!("WS: {msg:?}");
         match msg {
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
@@ -116,7 +114,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 let request = match request {
                     Ok(serialized_request) => serialized_request,
                     Err(e) => {
-                        info!("WS: received invalid JRPC request: {}", &e);
+                        info!("WS: received invalid JSONRPC request: {}", &e);
                         ctx.text(format!("Received invalid JSON-RPC request: {}", &e));
                         return;
                     }
@@ -137,8 +135,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                             Some(oracle) => future_oracle_state(oracle.clone(), get_request),
                             None => {
                                 ctx.text(
-                                    to_string_pretty(&jrpc_error_response(&request, None))
-                                        .expect("JRPC Response can always be parsed"),
+                                    to_string_pretty(&jsonrpc_error_response(&request, None))
+                                        .expect("JSONRPC Response can always be parsed"),
                                 );
                                 return;
                             }
@@ -156,15 +154,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                             }
                             _ => {
                                 ctx.text(
-                                    to_string_pretty(&jrpc_error_response(&request, None))
-                                        .expect("JRPC Response can always be parsed"),
+                                    to_string_pretty(&jsonrpc_error_response(&request, None))
+                                        .expect("JSONRPC Response can always be parsed"),
                                 );
                                 return;
                             }
                         }
                         ctx.text(
-                            to_string_pretty(&jrpc_subscription_response(&request, channel))
-                                .expect("JRPC Response can always be parsed"),
+                            to_string_pretty(&jsonrpc_subscription_response(&request, channel))
+                                .expect("JSONRPC Response can always be parsed"),
                         );
                         return;
                     }
@@ -174,8 +172,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 let fut = wrap_future::<_, Self>(future_state);
                 let fut = fut.map(move |result, _actor, ctx| {
                     ctx.text(
-                        to_string_pretty(&jrpc_event_response(&request, result))
-                            .expect("JRPC Response can always be parsed"),
+                        to_string_pretty(&jsonrpc_event_response(&request, result))
+                            .expect("JSONRPC Response can always be parsed"),
                     );
                 });
                 ctx.spawn(fut);
@@ -198,7 +196,7 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
         item: Result<EventNotification, BroadcastStreamRecvError>,
         ctx: &mut Self::Context,
     ) {
-        let event = item.expect("attestation are rare enough it should not lag begind");
+        let event = item.expect("attestation are rare enough it should not lag behind");
 
         match &event {
             EventNotification::Announcement(asset_pair, _) => {
@@ -263,7 +261,10 @@ enum RequestContent {
 type JRpcRequest = json_rpc_types::Request<RequestContent>;
 type JRpcResponse = json_rpc_types::Response<EventData, Box<str>, &'static str>;
 
-fn jrpc_event_response(request: &JRpcRequest, event_response: Option<EventData>) -> JRpcResponse {
+fn jsonrpc_event_response(
+    request: &JRpcRequest,
+    event_response: Option<EventData>,
+) -> JRpcResponse {
     match (&request.params, event_response) {
         (Some(_), Some(event_response)) => JRpcResponse {
             jsonrpc: json_rpc_types::Version::V2,
@@ -283,7 +284,7 @@ fn jrpc_event_response(request: &JRpcRequest, event_response: Option<EventData>)
     }
 }
 
-fn jrpc_error_response(
+fn jsonrpc_error_response(
     request: &JRpcRequest,
     error: Option<serde_json::error::Error>,
 ) -> json_rpc_types::Response<Box<str>, Box<str>, Box<str>> {
@@ -301,7 +302,7 @@ fn jrpc_error_response(
     }
 }
 
-fn jrpc_subscription_response(
+fn jsonrpc_subscription_response(
     request: &JRpcRequest,
     channel: EventChannel,
 ) -> json_rpc_types::Response<String, &str> {

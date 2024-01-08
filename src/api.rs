@@ -98,8 +98,9 @@ async fn pubkey(
     Ok(HttpResponse::Ok().json(res))
 }
 
-#[get("/asset")]
+#[get("/assets")]
 async fn asset_return() -> Result<HttpResponse> {
+    info!("GET /oracle/publickey");
     Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
 }
 
@@ -143,7 +144,6 @@ async fn oracle_event_service(
         return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
-    info!("retrieving oracle event with maturation {}", ts);
     let event_id =
         ("btcusd".to_string() + &timestamp.unix_timestamp().to_string()).into_boxed_str();
     match oracle.oracle_state(&event_id).await {
@@ -207,7 +207,7 @@ struct ForceResponse {
 
 #[post("/force")]
 async fn force(data: web::Json<ForceData>, oracles: WebData) -> Result<HttpResponse> {
-    info!("!!! Forced Request !!!");
+    info!("POST /force");
     let ForceData { maturation, price } = data.0;
 
     let timestamp =
@@ -232,6 +232,23 @@ async fn force(data: web::Json<ForceData>, oracles: WebData) -> Result<HttpRespo
     }))
 }
 
+#[get("/ws")]
+async fn websocket(
+    oracles: web::Data<(
+        Arc<HashMap<AssetPair, Oracle>>,
+        OracleSchedulerConfig,
+        ReceiverHandle,
+    )>,
+    stream: web::Payload,
+    req: HttpRequest,
+) -> Result<HttpResponse> {
+    ws::start(
+        PythiaWebSocket::new(oracles.0.clone(), oracles.2.clone()),
+        &req,
+        stream,
+    )
+}
+
 pub async fn run_api(
     data: (
         HashMap<AssetPair, Oracle>,
@@ -243,7 +260,6 @@ pub async fn run_api(
 ) -> anyhow::Result<()> {
     let (oracles, oracles_scheduler_config, rx, debug_mode) = data;
     let oracles = Arc::new(oracles);
-    info!("starting server");
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
@@ -251,10 +267,11 @@ pub async fn run_api(
             .service(config)
             .service(pubkey)
             .service(asset_return)
-            .service(index);
+            .service(websocket);
         if debug_mode {
             factory = factory.service(force)
         }
+
         App::new()
             .wrap(Cors::permissive())
             .app_data(web::Data::new((
@@ -267,6 +284,8 @@ pub async fn run_api(
     .bind(("0.0.0.0", port))?
     .run()
     .await?;
+
+    info!("HTTP API is running on port {}", port);
     Ok(())
 }
 
@@ -278,22 +297,3 @@ pub async fn run_api(
 //         .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
 //         .await
 // }
-
-#[get("/ws")]
-async fn index(
-    oracles: web::Data<(
-        Arc<HashMap<AssetPair, Oracle>>,
-        OracleSchedulerConfig,
-        ReceiverHandle,
-    )>,
-    stream: web::Payload,
-    req: HttpRequest,
-) -> Result<HttpResponse> {
-    let resp = ws::start(
-        PythiaWebSocket::new(oracles.0.clone(), oracles.2.clone()),
-        &req,
-        stream,
-    );
-    println!("{:?}", resp);
-    resp
-}

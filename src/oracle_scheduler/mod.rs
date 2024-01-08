@@ -59,10 +59,8 @@ impl OracleScheduler {
         let attestation = self.oracle.try_attest_event(&event_id).await?;
         let attestation = match attestation {
             Some(attestation) => {
-                info!(
-                    "attesting with maturation {} and attestation {:#?}",
-                    self.next_attestation, attestation
-                );
+                info!("attesting with maturation {}", self.next_attestation);
+                debug!("attestation : {:#?}", attestation);
                 attestation
             }
 
