@@ -137,6 +137,15 @@ export class Pythia extends EventEmitter<Events> {
     return response.json() as Result
   }
 
+  parseEventId(eventId: string) {
+    const match = eventId.match(/([a-z]+)(\d+)/i)?.slice(1)
+    if (!match || match.length !== 2) {
+      throw new Error('Invalid event id')
+    }
+    const [assetPair, time] = match as [string, string]
+    return { assetPair, time: new Date(+time * 1000) }
+  }
+
   getOraclePublicKey() {
     return this.request<{ publicKey: string }>('GET', 'oracle/publickey')
   }
@@ -156,6 +165,11 @@ export class Pythia extends EventEmitter<Events> {
     )
   }
 
+  getAnnouncementByEventId({ eventId }: { eventId: string }) {
+    const { assetPair, time } = this.parseEventId(eventId)
+    return this.getAnnouncement({ assetPair, time })
+  }
+
   getAttestation({ assetPair, time }: { assetPair: string; time: Date }) {
     return this.request<PythiaAttestation>(
       'GET',
@@ -164,12 +178,8 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAttestationByEventId({ eventId }: { eventId: string }) {
-    const match = eventId.match(/([a-z]+)(\d+)/i)?.slice(1)
-    if (!match || match.length !== 2) {
-      throw new Error('Invalid event id')
-    }
-    const [assetPair, time] = match as [string, string]
-    return this.getAttestation({ assetPair, time: new Date(+time * 1000) })
+    const { assetPair, time } = this.parseEventId(eventId)
+    return this.getAttestation({ assetPair, time })
   }
 
   forceAttestation({ time, price }: { time: Date; price: number }) {

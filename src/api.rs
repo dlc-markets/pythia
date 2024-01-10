@@ -89,10 +89,7 @@ type Context = web::Data<(
 )>;
 
 #[get("/oracle/publickey")]
-async fn pubkey(
-    context: Context,
-    filters: web::Query<Filters>,
-) -> Result<HttpResponse> {
+async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
     let oracle = match context.0.get(&filters.asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
