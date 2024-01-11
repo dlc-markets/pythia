@@ -36,61 +36,69 @@ impl OracleScheduler {
         announcement_transmitter: Sender<EventNotification>,
     ) -> Result<()> {
         let announcement_offset = self.config.announcement_offset;
-        let announcement = self
-            .oracle
-            .create_announcement(self.next_announcement + announcement_offset)
-            .await?;
-        self.event_queue
-            .add(announcement.oracle_event.event_id.clone().into())
-            .unwrap();
-        announcement_transmitter
-            .send((self.oracle.asset_pair_info.asset_pair, announcement).into())
-            .expect("usable channel");
-        self.next_announcement += self.config.frequency;
+        let mut now = OffsetDateTime::now_utc();
+        while self.next_announcement <= now {
+            let announcement = self
+                .oracle
+                .create_announcement(self.next_announcement + announcement_offset)
+                .await?;
+            self.event_queue
+                .add(announcement.oracle_event.event_id.clone().into())
+                .unwrap();
+            announcement_transmitter
+                .send((self.oracle.asset_pair_info.asset_pair, announcement).into())
+                .expect("usable channel");
+            self.next_announcement += self.config.frequency;
+            now = OffsetDateTime::now_utc();
+        }
         Ok(())
     }
 
     async fn attest(&mut self, attestation_transmitter: Sender<EventNotification>) -> Result<()> {
-        let event_id = self
-            .event_queue
-            .remove()
-            .expect("queue should never be empty");
+        let mut now = OffsetDateTime::now_utc();
+        while self.next_attestation <= now {
+            let event_id = self
+                .event_queue
+                .remove()
+                .expect("queue should never be empty");
 
-        let attestation = self.oracle.try_attest_event(&event_id).await?;
-        let attestation = match attestation {
-            Some(attestation) => {
-                info!("attesting with maturation {}", self.next_attestation);
-                debug!("attestation : {:#?}", attestation);
-                attestation
-            }
+            let attestation = self.oracle.try_attest_event(&event_id).await?;
+            let attestation = match attestation {
+                Some(attestation) => {
+                    info!("attesting with maturation {}", self.next_attestation);
+                    debug!("attestation : {:#?}", attestation);
+                    attestation
+                }
 
-            None => {
-                info!(
-                    "maturation {} already attested (should be possible only in debug mode)",
-                    self.next_attestation
-                );
-                self.oracle
-                    .oracle_state(&event_id)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .1
-                    .expect("Already attested using debug mode")
-            }
-        };
+                None => {
+                    info!(
+                        "maturation {} already attested (should be possible only in debug mode)",
+                        self.next_attestation
+                    );
+                    self.oracle
+                        .oracle_state(&event_id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .1
+                        .expect("Already attested using debug mode")
+                }
+            };
 
-        attestation_transmitter
-            .send(
-                (
-                    self.oracle.asset_pair_info.asset_pair,
-                    attestation,
-                    event_id,
+            attestation_transmitter
+                .send(
+                    (
+                        self.oracle.asset_pair_info.asset_pair,
+                        attestation,
+                        event_id,
+                    )
+                        .into(),
                 )
-                    .into(),
-            )
-            .expect("usable channel");
+                .expect("usable channel");
 
-        self.next_attestation += self.config.frequency;
+            self.next_attestation += self.config.frequency;
+            now = OffsetDateTime::now_utc();
+        }
         Ok(())
     }
 }
