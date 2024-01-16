@@ -1,10 +1,10 @@
 use super::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
 use serde_json::Value;
-use time::OffsetDateTime;
 
 pub struct GateIo {}
 
@@ -16,9 +16,9 @@ impl PriceFeed for GateIo {
         }
     }
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
+    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
-        let start_time = instant.unix_timestamp();
+        let start_time = instant.timestamp();
         info!("sending gateio http request");
         let res: Vec<Vec<Value>> = client
             .get("https://api.gateio.ws/api/v4/spot/candlesticks")

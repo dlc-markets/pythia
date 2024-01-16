@@ -1,9 +1,10 @@
+use crate::pricefeeds::ImplementedPriceFeed;
+use chrono::Duration;
+use cron::Schedule;
 use dlc_messages::oracle_msgs::EventDescriptor;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
-use time::{serde::format_description, Duration};
-
-use crate::pricefeeds::ImplementedPriceFeed;
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,15 +26,13 @@ impl Display for AssetPair {
     }
 }
 
-format_description!(standard_time, Time, "[hour]:[minute]");
-
 mod standard_duration {
+    use chrono::Duration;
     use serde::{
         de::{self, Visitor},
         Deserializer, Serializer,
     };
     use std::fmt;
-    use time::Duration;
 
     pub fn serialize<S>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -41,7 +40,7 @@ mod standard_duration {
     {
         serializer.serialize_str(
             &humantime::format_duration(std::time::Duration::from_nanos(
-                value.whole_nanoseconds().try_into().unwrap(),
+                value.num_seconds().try_into().unwrap(),
             ))
             .to_string(),
         )
@@ -78,10 +77,11 @@ mod standard_duration {
     }
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, Serialize)]
+#[serde_as]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OracleSchedulerConfig {
-    #[serde(with = "standard_duration")]
-    pub frequency: Duration,
+    #[serde_as(as = "DisplayFromStr")]
+    pub schedule: Schedule,
     #[serde(with = "standard_duration")]
     pub announcement_offset: Duration,
 }
@@ -93,13 +93,14 @@ pub struct ConfigurationFile {
     pub oracle_scheduler_config: OracleSchedulerConfig,
 }
 
+#[serde_as]
 #[derive(Serialize)]
 pub struct ConfigResponse {
     pricefeed: ImplementedPriceFeed,
     #[serde(with = "standard_duration")]
     announcement_offset: Duration,
-    #[serde(with = "standard_duration")]
-    frequency: Duration,
+    #[serde_as(as = "DisplayFromStr")]
+    pub schedule: Schedule,
 }
 
 impl From<(ImplementedPriceFeed, OracleSchedulerConfig)> for ConfigResponse {
@@ -109,7 +110,7 @@ impl From<(ImplementedPriceFeed, OracleSchedulerConfig)> for ConfigResponse {
         ConfigResponse {
             pricefeed,
             announcement_offset: oracle_scheduler_config.announcement_offset,
-            frequency: oracle_scheduler_config.frequency,
+            schedule: oracle_scheduler_config.schedule,
         }
     }
 }

@@ -14,7 +14,6 @@ async-trait = "0.1.53"
 bitcoin = { version = "0.29.2", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.3.8", features = ["derive"] }
-clokwerk = "0.4.0-rc1"
 derive_more = "0.99.17"
 displaydoc = "0.2"
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
@@ -37,18 +36,19 @@ serde_json = "1.0.81"
 sqlx = { version = "0.7.1", features = [
     "runtime-tokio-rustls",
     "postgres",
-    "time",
+    "chrono",
     "macros",
 ] }
 thiserror = "1.0.31"
-time = { version = "0.3.9", features = ["formatting", "serde-human-readable"] }
-tokio = { version = "1.18.2", features = ["full"] }
+tokio = { version = "1.35.1", features = ["time", "macros"] }
 actix-cors = "0.6.4"
 actix = "0.13.1"
 actix-web-actors = "4.2.0"
 tokio-stream = { version = "0.1.14", features = ["sync"] }
 json-rpc-types = "1.3.4"
 bytestring = "1.3.1"
+cron = "0.12.0"
+serde_with = "3.4.0"
 
 [dev-dependencies]
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [

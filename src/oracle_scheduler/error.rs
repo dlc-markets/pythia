@@ -1,3 +1,4 @@
+use chrono::Duration;
 use displaydoc::Display;
 use thiserror::Error;
 
@@ -24,5 +25,5 @@ pub enum OracleSchedulerError {
     OracleError(#[from] crate::oracle::OracleError),
 
     /// nonpositive announcement time offset: {0}; announcement must happen before attestation
-    InvalidAnnouncementTimeError(time::Duration),
+    InvalidAnnouncementTimeError(Duration),
 }

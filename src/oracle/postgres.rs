@@ -1,15 +1,15 @@
+use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{EventDescriptor, OracleAnnouncement, OracleAttestation};
 use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
 use sqlx::{
     postgres::{PgConnectOptions, PgPool, PgPoolOptions},
     Result,
 };
-use time::OffsetDateTime;
 
 struct EventResponse {
     digits: i32,
     precision: i32,
-    maturity: OffsetDateTime,
+    maturity: DateTime<Utc>,
     announcement_signature: Vec<u8>,
     outcome: Option<f64>,
 }
@@ -33,7 +33,7 @@ pub enum ScalarsRecords {
 pub(super) struct PostgresResponse {
     pub digits: u16,
     pub precision: u16,
-    pub maturity: OffsetDateTime,
+    pub maturity: DateTime<Utc>,
     pub announcement_signature: Signature,
     pub nonce_public: Vec<XOnlyPublicKey>,
     pub scalars_records: ScalarsRecords,
@@ -95,14 +95,8 @@ impl DBconnection {
             &announcement.oracle_event.event_id,
             &(digits.nb_digits as i32),
             digits.precision,
-            OffsetDateTime::from_unix_timestamp(
-                announcement
-                    .oracle_event
-                    .event_maturity_epoch
-                    .try_into()
-                    .unwrap(),
-            )
-            .unwrap(),
+            DateTime::from_timestamp(announcement.oracle_event.event_maturity_epoch.into(), 0)
+                .unwrap(),
             announcement.announcement_signature.as_ref(),
             &vec![announcement.oracle_event.event_id.to_owned(); digits.nb_digits as usize][..],
             &(0..digits.nb_digits as i32).collect::<Vec<i32>>(),

@@ -3,10 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use actix_cors::Cors;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Result};
 use actix_web_actors::ws;
+use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use hex::ToHex;
 use secp256k1_zkp::schnorr::Signature;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
@@ -117,7 +117,7 @@ async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResp
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse::from((
         oracle.asset_pair_info.pricefeed,
-        context.1,
+        context.1.clone(),
     ))))
 }
 
@@ -132,8 +132,7 @@ async fn oracle_event_service(
         "GET /asset/{asset_pair}/{event_type:?}/{ts}: {:#?}",
         filters
     );
-    let timestamp =
-        OffsetDateTime::parse(&ts, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
+    let timestamp = DateTime::parse_from_rfc3339(&ts).map_err(PythiaError::DatetimeParseError)?;
 
     let oracle = match context.0.get(&asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(asset_pair).into()),
@@ -145,20 +144,16 @@ async fn oracle_event_service(
         return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
-    let event_id =
-        ("btcusd".to_string() + &timestamp.unix_timestamp().to_string()).into_boxed_str();
+    let event_id = ("btcusd".to_string() + &timestamp.timestamp().to_string()).into_boxed_str();
     match oracle.oracle_state(&event_id).await {
         Err(error) => Err(PythiaError::OracleError(error).into()),
         Ok(event_option) => match event_option {
-            None => Err(PythiaError::OracleEventNotFoundError(
-                timestamp.format(&Rfc3339).expect("Format is good"),
-            )
-            .into()),
+            None => Err(PythiaError::OracleEventNotFoundError(timestamp.to_rfc3339()).into()),
             Some((announcement, maybe_attestation)) => match event_type {
                 EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
                 EventType::Attestation => match maybe_attestation {
                     None => {
-                        if timestamp < OffsetDateTime::now_utc() {
+                        if timestamp < Utc::now() {
                             match oracle.try_attest_event(&event_id).await {
                                 Err(error) => Err(PythiaError::OracleError(error).into()),
                                 Ok(maybe_attestation) => {
@@ -175,7 +170,7 @@ async fn oracle_event_service(
                             Err(actix_web::error::ErrorBadRequest(
                                 "Oracle cannot sign a value not yet known, retry after "
                                     .to_string()
-                                    + &timestamp.format(&Rfc3339).expect("Format is good"),
+                                    + &timestamp.to_rfc3339(),
                             ))
                         }
                     }
@@ -212,7 +207,7 @@ async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpRespo
     let ForceData { maturation, price } = data.0;
 
     let timestamp =
-        OffsetDateTime::parse(&maturation, &Rfc3339).map_err(PythiaError::DatetimeParseError)?;
+        DateTime::parse_from_rfc3339(&maturation).map_err(PythiaError::DatetimeParseError)?;
 
     let oracle = match context.0.get(&AssetPair::Btcusd) {
         None => return Err(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd).into()),
@@ -248,7 +243,7 @@ async fn websocket(
 
 pub async fn run_api(
     data: (
-        HashMap<AssetPair, Oracle>,
+        HashMap<AssetPair, Arc<Oracle>>,
         OracleSchedulerConfig,
         ReceiverHandle,
         bool,
@@ -256,7 +251,6 @@ pub async fn run_api(
     port: u16,
 ) -> anyhow::Result<()> {
     let (context, oracles_scheduler_config, rx, debug_mode) = data;
-    let context = Arc::new(context);
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
@@ -273,7 +267,7 @@ pub async fn run_api(
             .wrap(Cors::permissive())
             .app_data(web::Data::new((
                 context.clone(),
-                oracles_scheduler_config,
+                oracles_scheduler_config.clone(),
                 rx.clone(),
             )))
             .service(factory)

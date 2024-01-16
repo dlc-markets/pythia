@@ -1,9 +1,9 @@
 use crate::pricefeeds::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
-use time::OffsetDateTime;
 
 pub struct Deribit {}
 
@@ -33,11 +33,11 @@ impl PriceFeed for Deribit {
         }
     }
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
+    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
-        let start_time = instant.unix_timestamp();
+        let start_time = instant.timestamp();
 
-        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let now = Utc::now().timestamp();
         if now - start_time > 60 {
             return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
         }

@@ -1,9 +1,9 @@
 use crate::AssetPair;
 use async_trait::async_trait;
+use chrono::DateTime;
+use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
-use time::OffsetDateTime;
-
 mod error;
 pub use error::PriceFeedError;
 pub use error::Result;
@@ -14,7 +14,7 @@ use strum::EnumIter;
 #[async_trait]
 pub trait PriceFeed {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
-    async fn retrieve_price(&self, asset_pair: AssetPair, datetime: OffsetDateTime) -> Result<f64>;
+    async fn retrieve_price(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Result<f64>;
 }
 
 mod bitstamp;
@@ -56,7 +56,7 @@ impl ImplementedPriceFeed {
 
 #[cfg(test)]
 mod test {
-    use time::OffsetDateTime;
+    use chrono::{SubsecRound, Utc};
 
     use crate::common::AssetPair;
 
@@ -70,10 +70,7 @@ mod test {
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
                 .get_pricefeed()
-                .retrieve_price(
-                    AssetPair::Btcusd,
-                    OffsetDateTime::now_utc().replace_second(0).unwrap(),
-                )
+                .retrieve_price(AssetPair::Btcusd, Utc::now().trunc_subsecs(0))
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }

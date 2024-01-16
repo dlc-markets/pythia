@@ -6,7 +6,7 @@ use hex::ToHex;
 use secp256k1_zkp::{KeyPair, Secp256k1};
 use tokio::sync::broadcast;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 mod oracle;
 use oracle::Oracle;
@@ -71,17 +71,19 @@ async fn main() -> anyhow::Result<()> {
             let oracle = Oracle::new(asset_pair_info, secp.clone(), db.clone(), keypair)?;
 
             info!("scheduling oracle events for {}", asset_pair);
-            // schedule oracle events (announcements/attestations)
-            oracle_scheduler::init(
-                oracle.clone().into(),
-                oracle_scheduler_config,
-                attestation_tx.clone(),
-            )?;
 
             Ok(oracle)
         }))
-        .map(|(asset_pair, oracle)| oracle.map(|ok| (asset_pair, ok)))
+        .map(|(asset_pair, oracle)| oracle.map(|ok| (asset_pair, Arc::new(ok))))
         .collect::<anyhow::Result<HashMap<_, _>>>()?;
+
+    // schedule oracle events (announcements/attestations)
+    oracle_scheduler::start_schedule(
+        oracles.clone().into_values().collect(),
+        &oracle_scheduler_config,
+        attestation_tx.clone(),
+    )
+    .await?;
 
     // setup and run server
     if debug_mode {

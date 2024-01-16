@@ -1,5 +1,6 @@
 use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
 
+use chrono::{DateTime, FixedOffset, Utc};
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
@@ -9,7 +10,6 @@ use secp256k1_zkp::{
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
 use std::sync::Arc;
-use time::OffsetDateTime;
 
 use crate::pricefeeds::PriceFeed;
 
@@ -73,10 +73,10 @@ impl Oracle {
     /// Create an oracle announcement that it will sign the price at given maturity instant
     pub async fn create_announcement(
         &self,
-        maturation: OffsetDateTime,
+        maturation: DateTime<Utc>,
     ) -> Result<OracleAnnouncement> {
         let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
-            + maturation.unix_timestamp().to_string().as_str();
+            + maturation.timestamp().to_string().as_str();
         if self.app_state.db.get_event(&event_id).await?.is_some() {
             info!(
                 "Event {} already announced (should be possible only in debug mode)",
@@ -114,7 +114,7 @@ impl Oracle {
 
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
-            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_maturity_epoch: maturation.timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
             event_id,
         };
@@ -141,14 +141,30 @@ impl Oracle {
         Ok(announcement)
     }
 
-    /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
+    /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
     /// Store in DB and return some oracle attestation if event is attested successfully.
     pub async fn try_attest_event(&self, event_id: &str) -> Result<Option<OracleAttestation>> {
         let Some(event) = self.app_state.db.get_event(event_id).await? else {
             return Ok(None);
         };
-        let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
-            return Ok(None);
+        let outstanding_sk_nonces = match event.scalars_records {
+            ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) => outstanding_sk_nonces,
+            ScalarsRecords::DigitsAttestations(outcome, scalars) => {
+                info!(
+                    "Event {} already attested (should be possible only in debug mode)",
+                    &event_id
+                );
+                return Ok(Some(OracleAttestation {
+                    oracle_public_key: self.keypair.public_key().into(),
+                    signatures: event
+                        .nonce_public
+                        .into_iter()
+                        .zip(scalars)
+                        .map(|(n, s)| OracleSignature(n.into(), s.into()).into())
+                        .collect::<Vec<_>>(),
+                    outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+                }));
+            }
         };
         info!("retrieving price feed for attestation");
         let outcome = self
@@ -194,7 +210,7 @@ impl Oracle {
         };
         let oracle_event = OracleEvent {
             oracle_nonces: event.nonce_public.clone(),
-            event_maturity_epoch: event.maturity.unix_timestamp() as u32,
+            event_maturity_epoch: event.maturity.timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
             event_id: event_id.to_string(),
         };
@@ -236,11 +252,11 @@ impl Oracle {
 
     pub async fn force_new_attest_with_price(
         &self,
-        maturation: OffsetDateTime,
+        maturation: DateTime<FixedOffset>,
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id =
-            ("btcusd".to_string() + &maturation.unix_timestamp().to_string()).into_boxed_str();
+            ("btcusd".to_string() + &maturation.timestamp().to_string()).into_boxed_str();
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
         else {
@@ -309,10 +325,10 @@ impl Oracle {
         };
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
-            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_maturity_epoch: maturation.timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
             event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
-                + maturation.unix_timestamp().to_string().as_str(),
+                + maturation.timestamp().to_string().as_str(),
         };
 
         let announcement = OracleAnnouncement {
@@ -378,8 +394,9 @@ impl Oracle {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
+    use std::{str::FromStr, time::Duration};
 
+    use chrono::{DateTime, SubsecRound, Utc};
     use dlc_messages::oracle_msgs::{
         DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
         OracleEvent,
@@ -387,7 +404,6 @@ mod test {
     use lightning::util::ser::Writeable;
     use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
     use sqlx::postgres::PgPool;
-    use time::{macros::datetime, Duration, OffsetDateTime};
 
     use super::{
         crypto::test::{check_signature_with_nonce, check_signature_with_tag},
@@ -450,12 +466,12 @@ mod test {
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
 
-    async fn test_announcement(oracle: &Oracle, date: OffsetDateTime) {
+    async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date).await.unwrap();
         assert_eq!(
             oracle_announcement,
             oracle
-                .oracle_state(&("btcusd".to_owned() + date.unix_timestamp().to_string().as_str()))
+                .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
                 .await
                 .unwrap()
                 .unwrap()
@@ -476,14 +492,18 @@ mod test {
     #[sqlx::test]
     async fn announcements_tests(tbd: PgPool) {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))
             .chain(
                 [
-                    datetime!(2022-01-01 0:00 +11),
-                    datetime!(2023-01-01 0:00 +11),
+                    DateTime::parse_from_rfc3339("2022-01-01 0:00 +11")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    DateTime::parse_from_rfc3339("2023-01-01 0:00 +11")
+                        .unwrap()
+                        .with_timezone(&Utc),
                 ]
                 .into_iter(),
             );
@@ -492,9 +512,9 @@ mod test {
         }
     }
 
-    async fn test_attestation(oracle: &Oracle, date: OffsetDateTime) {
+    async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date.clone()).await.unwrap();
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let oracle_attestation = match oracle
             .try_attest_event(&oracle_announcement.oracle_event.event_id)
             .await
@@ -527,7 +547,7 @@ mod test {
         );
         match oracle_attestation {
             None => assert!(
-                oracle_announcement.oracle_event.event_maturity_epoch > now.unix_timestamp() as u32
+                oracle_announcement.oracle_event.event_maturity_epoch > now.timestamp() as u32
             ),
             Some(attestation) => {
                 let EventDescriptor::DigitDecompositionEvent(event) =
@@ -573,7 +593,7 @@ mod test {
     #[sqlx::test]
     async fn attestations_test(tbd: PgPool) {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
-        let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
+        let now = Utc::now().trunc_subsecs(0);
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))

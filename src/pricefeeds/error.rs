@@ -1,7 +1,7 @@
 use crate::AssetPair;
+use chrono::{DateTime, Utc};
 use displaydoc::Display;
 use thiserror::Error;
-use time::OffsetDateTime;
 
 pub type Result<T> = std::result::Result<T, PriceFeedError>;
 
@@ -11,7 +11,7 @@ pub enum PriceFeedError {
     InternalError(String),
 
     /// price not available for {0} at {1}
-    PriceNotAvailableError(AssetPair, OffsetDateTime),
+    PriceNotAvailableError(AssetPair, DateTime<Utc>),
 
     /// http error: {0}
     HttpError(#[from] reqwest::Error),

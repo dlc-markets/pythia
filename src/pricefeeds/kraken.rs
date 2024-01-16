@@ -1,12 +1,12 @@
 use super::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 pub struct Kraken {}
 
@@ -24,10 +24,10 @@ impl PriceFeed for Kraken {
         }
     }
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
+    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
-        let start_time = instant.unix_timestamp();
+        let start_time = instant.timestamp();
         info!("sending kraken http request");
         let res: Response = client
             .get("https://api.kraken.com/0/public/OHLC")

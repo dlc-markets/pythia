@@ -13,7 +13,7 @@ pub enum PythiaError {
     UnrecordedAssetPairError(AssetPair),
 
     /// datetime RFC3339 parsing error: {0}
-    DatetimeParseError(#[from] time::error::Parse),
+    DatetimeParseError(#[from] chrono::format::ParseError),
 
     /// oracle event with maturation {0} not found
     OracleEventNotFoundError(String),

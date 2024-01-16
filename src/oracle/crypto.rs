@@ -14,7 +14,7 @@ pub(super) struct NoncePoint(XOnlyPublicKey);
 pub(super) struct SigningScalar(Scalar);
 /// Custum signature type
 #[derive(From)]
-pub(super) struct OracleSignature(NoncePoint, SigningScalar);
+pub(super) struct OracleSignature(pub(super) NoncePoint, pub(super) SigningScalar);
 
 impl From<OracleSignature> for (NoncePoint, SigningScalar) {
     /// Split signature into public nonce and scalar parts

@@ -2,9 +2,9 @@ use crate::pricefeeds::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
-use time::OffsetDateTime;
 
 pub struct Lnmarkets {}
 
@@ -24,9 +24,9 @@ impl PriceFeed for Lnmarkets {
         }
     }
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
+    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
-        let start_time = instant.unix_timestamp();
+        let start_time = instant.timestamp();
         info!("sending LNMarkets http request");
         let res: Vec<LnmarketsQuote> = client
             .get("https://api.Lnmarkets.com/v2/oracle/index")
