@@ -103,14 +103,13 @@ pub async fn start_schedule(
         unreachable!()
     };
 
-    let mut schedule_err = None;
-    tokio::select! {
-        e = announcement_thread => {schedule_err = Some(e)},
-        e = attestation_thread => {schedule_err = Some(e)},
+    let schedule_err = tokio::select! {
+        e = announcement_thread => {e},
+        e = attestation_thread => {e},
     };
 
     panic!(
         "scheduler stopped because of error {} \n The oracle is not announcing anymore",
-        schedule_err.unwrap()
+        schedule_err
     );
 }
