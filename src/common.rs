@@ -39,7 +39,7 @@ mod standard_duration {
         S: Serializer,
     {
         serializer.serialize_str(
-            &humantime::format_duration(std::time::Duration::from_nanos(
+            &humantime::format_duration(std::time::Duration::from_secs(
                 value.num_seconds().try_into().unwrap(),
             ))
             .to_string(),

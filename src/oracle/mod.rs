@@ -396,7 +396,7 @@ impl Oracle {
 mod test {
     use std::{str::FromStr, time::Duration};
 
-    use chrono::{DateTime, SubsecRound, Utc};
+    use chrono::{DateTime, DurationRound, SubsecRound, Utc};
     use dlc_messages::oracle_msgs::{
         DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
         OracleEvent,
@@ -498,10 +498,10 @@ mod test {
             .map(|t| now - Duration::new(*t, 0))
             .chain(
                 [
-                    DateTime::parse_from_rfc3339("2022-01-01 0:00 +11")
+                    DateTime::parse_from_rfc3339("2022-01-01T00:00:00+11:00")
                         .unwrap()
                         .with_timezone(&Utc),
-                    DateTime::parse_from_rfc3339("2023-01-01 0:00 +11")
+                    DateTime::parse_from_rfc3339("2023-01-01T00:00:00+11:00")
                         .unwrap()
                         .with_timezone(&Utc),
                 ]
@@ -593,7 +593,10 @@ mod test {
     #[sqlx::test]
     async fn attestations_test(tbd: PgPool) {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
-        let now = Utc::now().trunc_subsecs(0);
+        let now = Utc::now()
+            .trunc_subsecs(0)
+            .duration_trunc(chrono::Duration::minutes(1))
+            .unwrap();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))

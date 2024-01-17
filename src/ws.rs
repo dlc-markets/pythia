@@ -27,7 +27,7 @@ pub struct PythiaWebSocket {
     /// otherwise we drop connection.
     hb: Instant,
     /// The Oracles instances the websocket allow to interact with
-    oracles: Arc<HashMap<AssetPair, Oracle>>,
+    oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>,
     /// The stream of broadcasted event for the client
     event_rx: ReceiverHandle,
     /// Subscription option to channels
@@ -35,7 +35,7 @@ pub struct PythiaWebSocket {
 }
 
 impl PythiaWebSocket {
-    pub fn new(oracles: Arc<HashMap<AssetPair, Oracle>>, event_rx: ReceiverHandle) -> Self {
+    pub fn new(oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>, event_rx: ReceiverHandle) -> Self {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
         subscription_vec.push(EventChannel::Attestation {
@@ -82,7 +82,7 @@ impl Actor for PythiaWebSocket {
     }
 }
 
-async fn future_oracle_state(oracle: Oracle, request: GetRequest) -> Option<EventData> {
+async fn future_oracle_state(oracle: Arc<Oracle>, request: GetRequest) -> Option<EventData> {
     let state = oracle.oracle_state(&request.event_id).await.unwrap();
     match (request.asset_pair, state) {
         (EventChannel::Announcement { asset_pair: _ }, Some((announcement, _))) => {

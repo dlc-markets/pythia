@@ -17,13 +17,14 @@ pub async fn start_schedule(
     oracles: Box<[Arc<Oracle>]>,
     config: &OracleSchedulerConfig,
     event_tx: Sender<EventNotification>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let offset_duration = match config.announcement_offset.to_std() {
         Ok(duration) => duration,
         Err(_) => {
             return Err(OracleSchedulerError::InvalidAnnouncementTimeError(
                 config.announcement_offset,
-            ))
+            )
+            .into())
         }
     };
 
@@ -44,7 +45,10 @@ pub async fn start_schedule(
 
     let announcement_thread = async move {
         for next_time in announcement_scheduled_dates {
-            if let Ok(duration) = (next_time - Utc::now()).to_std() {
+            // We compute how much time we may have to sleep before continue
+            // Converting into std Duration type fail here if we don't have to sleep
+            let maybe_std_duration = (next_time - Utc::now()).to_std();
+            if let Ok(duration) = maybe_std_duration {
                 info!("next announcement at {} in {:?}", &next_time, &duration);
                 sleep(duration).await;
             };
@@ -56,9 +60,12 @@ pub async fn start_schedule(
 
                 match perhaps_announcement {
                     Ok(announcement) => {
-                        cloned_event_tx
-                            .send((oracle.asset_pair_info.asset_pair, announcement).into())
-                            .expect("usable channel");
+                        // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
+                        if maybe_std_duration.is_ok() {
+                            cloned_event_tx
+                                .send((oracle.asset_pair_info.asset_pair, announcement).into())
+                                .expect("usable channel");
+                        }
                     }
                     Err(e) => return e,
                 }

@@ -77,29 +77,29 @@ async fn main() -> anyhow::Result<()> {
         .map(|(asset_pair, oracle)| oracle.map(|ok| (asset_pair, Arc::new(ok))))
         .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
-    // schedule oracle events (announcements/attestations)
-    oracle_scheduler::start_schedule(
-        oracles.clone().into_values().collect(),
-        &oracle_scheduler_config,
-        attestation_tx.clone(),
-    )
-    .await?;
-
     // setup and run server
     if debug_mode {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    api::run_api(
-        (
-            oracles,
-            oracle_scheduler_config,
-            attestation_rx.into(),
-            debug_mode,
-        ),
-        port,
-    )
-    .await?;
+    // schedule oracle events (announcements/attestations) and start API
+    // In case of failure of scheduler or API, get the error and return it
 
-    Ok(())
+    Ok(tokio::try_join!(
+        oracle_scheduler::start_schedule(
+            oracles.clone().into_values().collect(),
+            &oracle_scheduler_config,
+            attestation_tx.clone(),
+        ),
+        api::run_api(
+            (
+                oracles,
+                oracle_scheduler_config.clone(),
+                attestation_rx.into(),
+                debug_mode,
+            ),
+            port,
+        )
+    )?
+    .0)
 }

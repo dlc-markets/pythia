@@ -56,7 +56,7 @@ impl ImplementedPriceFeed {
 
 #[cfg(test)]
 mod test {
-    use chrono::{SubsecRound, Utc};
+    use chrono::{DurationRound, SubsecRound, Utc};
 
     use crate::common::AssetPair;
 
@@ -70,7 +70,13 @@ mod test {
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
                 .get_pricefeed()
-                .retrieve_price(AssetPair::Btcusd, Utc::now().trunc_subsecs(0))
+                .retrieve_price(
+                    AssetPair::Btcusd,
+                    Utc::now()
+                        .trunc_subsecs(0)
+                        .duration_trunc(chrono::Duration::minutes(1))
+                        .unwrap(),
+                )
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }

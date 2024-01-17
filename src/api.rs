@@ -83,7 +83,7 @@ impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
 }
 
 type Context = web::Data<(
-    Arc<HashMap<AssetPair, Oracle>>,
+    Arc<HashMap<AssetPair, Arc<Oracle>>>,
     OracleSchedulerConfig,
     ReceiverHandle,
 )>;
@@ -251,6 +251,7 @@ pub async fn run_api(
     port: u16,
 ) -> anyhow::Result<()> {
     let (context, oracles_scheduler_config, rx, debug_mode) = data;
+    let context = Arc::new(context);
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
