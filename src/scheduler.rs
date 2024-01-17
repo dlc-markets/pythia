@@ -7,10 +7,6 @@ use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tokio::time::sleep;
 
-mod error;
-pub use error::OracleSchedulerError;
-pub use error::Result;
-
 extern crate hex;
 
 pub async fn start_schedule(
@@ -21,10 +17,10 @@ pub async fn start_schedule(
     let offset_duration = match config.announcement_offset.to_std() {
         Ok(duration) => duration,
         Err(_) => {
-            return Err(OracleSchedulerError::InvalidAnnouncementTimeError(
-                config.announcement_offset,
+            panic!(
+                "Announcement offset {} is not a valid duration !",
+                config.announcement_offset
             )
-            .into())
         }
     };
 
@@ -34,10 +30,7 @@ pub async fn start_schedule(
     let cloned_oracles = oracles.clone();
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
-    let attestation_scheduled_dates = config
-        .schedule
-        .after_owned(start_time.clone())
-        .map(|date| date);
+    let attestation_scheduled_dates = config.schedule.after_owned(start_time);
     let announcement_scheduled_dates = config
         .schedule
         .after_owned(start_time)

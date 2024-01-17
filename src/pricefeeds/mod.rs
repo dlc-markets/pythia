@@ -23,12 +23,6 @@ mod gateio;
 mod kraken;
 mod lnm;
 
-pub use bitstamp::Bitstamp;
-pub use deribit::Deribit;
-pub use gateio::GateIo;
-pub use kraken::Kraken;
-pub use lnm::Lnmarkets;
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]

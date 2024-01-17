@@ -25,7 +25,6 @@ use self::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, Sign
 use self::postgres::*;
 
 mod crypto;
-pub use crypto::*;
 struct AppState {
     db: DBconnection, // private to ensure that only the oracle's methods can interact with DB
     secp: Secp256k1<All>,

@@ -18,7 +18,7 @@ mod error;
 
 mod pricefeeds;
 
-mod oracle_scheduler;
+mod scheduler;
 
 use crate::{oracle::postgres::DBconnection, ws::EventNotification};
 
@@ -85,8 +85,8 @@ async fn main() -> anyhow::Result<()> {
     // schedule oracle events (announcements/attestations) and start API
     // In case of failure of scheduler or API, get the error and return it
 
-    Ok(tokio::try_join!(
-        oracle_scheduler::start_schedule(
+    tokio::try_join!(
+        scheduler::start_schedule(
             oracles.clone().into_values().collect(),
             &oracle_scheduler_config,
             attestation_tx.clone(),
@@ -100,6 +100,6 @@ async fn main() -> anyhow::Result<()> {
             ),
             port,
         )
-    )?
-    .0)
+    )?;
+    Ok(())
 }
