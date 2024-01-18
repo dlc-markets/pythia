@@ -1,4 +1,5 @@
-use crate::{common::OracleSchedulerConfig, oracle::Oracle, ws::EventNotification};
+use crate::api::ws::EventNotification;
+use crate::{config::OracleSchedulerConfig, oracle::Oracle};
 
 use chrono::Utc;
 use log::info;

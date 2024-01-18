@@ -1,18 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
-
-use actix_cors::Cors;
-use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Result};
-use actix_web_actors::ws;
+use actix_web::{get, post, web, HttpResponse, Result};
 use chrono::{DateTime, Utc};
-use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
-use secp256k1_zkp::schnorr::Signature;
 
 use crate::{
-    common::{AssetPair, ConfigResponse, OracleSchedulerConfig},
+    api::{AttestationResponse, Context, EventType},
+    config::{AssetPair, ConfigResponse},
     error::PythiaError,
-    oracle::Oracle,
-    ws::{PythiaWebSocket, ReceiverHandle},
 };
 
 use serde::{Deserialize, Serialize};
@@ -26,7 +20,7 @@ enum SortOrder {
 
 #[derive(Debug, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct Filters {
+pub struct Filters {
     sort_by: SortOrder,
     page: u32,
     asset_pair: AssetPair,
@@ -57,39 +51,8 @@ struct ApiOracleEvent {
     outcome: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum EventType {
-    Announcement,
-    Attestation,
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct AttestationResponse {
-    pub(crate) event_id: Box<str>,
-    pub(crate) signatures: Vec<Signature>,
-    pub(crate) values: Vec<String>,
-}
-
-impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
-    fn from(value: (Box<str>, OracleAttestation)) -> Self {
-        Self {
-            event_id: value.0,
-            signatures: value.1.signatures,
-            values: value.1.outcomes,
-        }
-    }
-}
-
-type Context = web::Data<(
-    Arc<HashMap<AssetPair, Arc<Oracle>>>,
-    OracleSchedulerConfig,
-    ReceiverHandle,
-)>;
-
 #[get("/oracle/publickey")]
-async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpResponse> {
+pub(super) async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
     let oracle = match context.0.get(&filters.asset_pair) {
         None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
@@ -102,13 +65,13 @@ async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpRe
 }
 
 #[get("/assets")]
-async fn asset_return() -> Result<HttpResponse> {
+pub(super) async fn asset_return() -> Result<HttpResponse> {
     info!("GET /oracle/assets");
     Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
 }
 
 #[get("/asset/{asset_id}/config")]
-async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResponse> {
+pub(super) async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
     let oracle = context
@@ -122,7 +85,7 @@ async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResp
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
-async fn oracle_event_service(
+pub(super) async fn oracle_event_service(
     context: Context,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
@@ -144,7 +107,9 @@ async fn oracle_event_service(
         return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
-    let event_id = ("btcusd".to_string() + &timestamp.timestamp().to_string()).into_boxed_str();
+    let event_id = (oracle.asset_pair_info.asset_pair.to_string()
+        + &timestamp.timestamp().to_string())
+        .into_boxed_str();
     match oracle.oracle_state(&event_id).await {
         Err(error) => Err(PythiaError::OracleError(error).into()),
         Ok(event_option) => match event_option {
@@ -189,7 +154,7 @@ async fn oracle_event_service(
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct ForceData {
+pub struct ForceData {
     maturation: String,
     price: f64,
 }
@@ -202,7 +167,7 @@ struct ForceResponse {
 }
 
 #[post("/force")]
-async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpResponse> {
+pub(super) async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpResponse> {
     info!("POST /force");
     let ForceData { maturation, price } = data.0;
 
@@ -227,65 +192,3 @@ async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpRespo
         },
     }))
 }
-
-#[get("/ws")]
-async fn websocket(
-    context: Context,
-    stream: web::Payload,
-    req: HttpRequest,
-) -> Result<HttpResponse> {
-    ws::start(
-        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
-        &req,
-        stream,
-    )
-}
-
-pub async fn run_api(
-    data: (
-        HashMap<AssetPair, Arc<Oracle>>,
-        OracleSchedulerConfig,
-        ReceiverHandle,
-        bool,
-    ),
-    port: u16,
-) -> anyhow::Result<()> {
-    let (context, oracles_scheduler_config, rx, debug_mode) = data;
-    let context = Arc::new(context);
-    HttpServer::new(move || {
-        let mut factory = web::scope("/v1")
-            // .service(announcements)
-            .service(oracle_event_service)
-            .service(config)
-            .service(pubkey)
-            .service(asset_return)
-            .service(websocket);
-        if debug_mode {
-            factory = factory.service(force)
-        }
-
-        App::new()
-            .wrap(Cors::permissive())
-            .app_data(web::Data::new((
-                context.clone(),
-                oracles_scheduler_config.clone(),
-                rx.clone(),
-            )))
-            .service(factory)
-    })
-    .bind(("0.0.0.0", port))?
-    .run()
-    .await?;
-
-    info!("HTTP API is running on port {}", port);
-    Ok(())
-}
-
-// async fn get_event_at_timestamp(
-//     oracle: &Oracle,
-//     ts: &OffsetDateTime,
-// ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>, OracleError> {
-//     oracle
-//         .oracle_state("btcusd".to_string() + &ts.unix_timestamp().to_string())
-//         .await
-// }

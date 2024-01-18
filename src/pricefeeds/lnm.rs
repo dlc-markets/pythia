@@ -2,7 +2,7 @@ use crate::pricefeeds::{PriceFeed, PriceFeedError, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
 use log::info;
 use reqwest::Client;
 
@@ -26,7 +26,13 @@ impl PriceFeed for Lnmarkets {
 
     async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
-        let start_time = instant.timestamp();
+
+        // LnMarket is only return price at minute o'clock
+        let start_time = instant
+            .duration_trunc(Duration::minutes(1))
+            .expect("1 minute is a reasonable duration")
+            .timestamp();
+
         info!("sending LNMarkets http request");
         let res: Vec<LnmarketsQuote> = client
             .get("https://api.Lnmarkets.com/v2/oracle/index")
@@ -46,7 +52,10 @@ impl PriceFeed for Lnmarkets {
         }
 
         if res[0].time.timestamp() != start_time {
-            return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
+            return Err(PriceFeedError::PriceNotAvailableError(
+                asset_pair,
+                Utc::from_utc_datetime(&Utc, &res[0].time),
+            ));
         }
 
         Ok(res[0].index)

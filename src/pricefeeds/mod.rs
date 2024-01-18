@@ -50,9 +50,9 @@ impl ImplementedPriceFeed {
 
 #[cfg(test)]
 mod test {
-    use chrono::{DurationRound, SubsecRound, Utc};
+    use chrono::{SubsecRound, Utc};
 
-    use crate::common::AssetPair;
+    use crate::config::AssetPair;
 
     use super::{ImplementedPriceFeed, PriceFeedError};
     use strum::IntoEnumIterator;
@@ -61,21 +61,19 @@ mod test {
     #[actix_web::test]
     async fn test_all_pricefeeders() {
         let mut deprecated: Vec<(ImplementedPriceFeed, PriceFeedError)> = vec![];
+        let now = Utc::now().trunc_subsecs(0);
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
                 .get_pricefeed()
-                .retrieve_price(
-                    AssetPair::Btcusd,
-                    Utc::now()
-                        .trunc_subsecs(0)
-                        .duration_trunc(chrono::Duration::minutes(1))
-                        .unwrap(),
-                )
+                .retrieve_price(AssetPair::Btcusd, now)
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }
         if !deprecated.is_empty() {
-            panic!("Some pricefeeder APIs seem deprecated: {:?}", deprecated)
+            panic!(
+                "Some pricefeeder APIs seem deprecated: {:?}\n No answer for date {}",
+                deprecated, now
+            )
         }
     }
 }

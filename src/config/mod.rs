@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
 
+pub(crate) mod cli;
+pub(crate) mod env;
+
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetPair {
@@ -22,7 +25,9 @@ pub struct AssetPairInfo {
 
 impl Display for AssetPair {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        Debug::fmt(self, f)
+        match self {
+            AssetPair::Btcusd => write!(f, "btcusd"),
+        }
     }
 }
 

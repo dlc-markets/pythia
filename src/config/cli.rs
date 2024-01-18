@@ -8,7 +8,7 @@ use clap::Parser;
 use secp256k1_zkp::SecretKey;
 
 use crate::{
-    common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
+    config::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
     env::{
         match_debug_mode_env, match_nb_connection, match_port_env, match_postgres_env,
         match_secret_key_env,

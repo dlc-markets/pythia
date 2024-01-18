@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use actix_web::{get, web, HttpRequest, HttpResponse, Result};
+
 use actix::{fut::wrap_future, prelude::*};
 use actix_web_actors::ws;
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
@@ -12,7 +14,13 @@ use serde_json::{from_str, to_string_pretty};
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
-use crate::{api::AttestationResponse, common::AssetPair, oracle::Oracle};
+use crate::{
+    api::{AttestationResponse, EventChannel, GetRequest},
+    config::AssetPair,
+    oracle::Oracle,
+};
+
+use super::EventType;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -38,9 +46,13 @@ impl PythiaWebSocket {
     pub fn new(oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>, event_rx: ReceiverHandle) -> Self {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
-        subscription_vec.push(EventChannel::Attestation {
-            asset_pair: AssetPair::Btcusd,
-        });
+        // if such oracle is available
+        if oracles.get(&AssetPair::Btcusd).is_some() {
+            subscription_vec.push(EventChannel {
+                asset_pair: AssetPair::Btcusd,
+                ty: EventType::Attestation,
+            });
+        }
         Self {
             hb: Instant::now(),
             oracles,
@@ -84,16 +96,14 @@ impl Actor for PythiaWebSocket {
 
 async fn future_oracle_state(oracle: Arc<Oracle>, request: GetRequest) -> Option<EventData> {
     let state = oracle.oracle_state(&request.event_id).await.unwrap();
-    match (request.asset_pair, state) {
-        (EventChannel::Announcement { asset_pair: _ }, Some((announcement, _))) => {
+    match (request.asset_pair.ty, state) {
+        (EventType::Announcement, Some((announcement, _))) => {
             Some(EventData::Announcement(announcement))
         }
-        (EventChannel::Attestation { asset_pair: _ }, Some((_, Some(attestation)))) => Some(
-            EventData::Attestation(Some((request.event_id, attestation).into())),
-        ),
-        (EventChannel::Attestation { asset_pair: _ }, Some((_, None))) => {
-            Some(EventData::Attestation(None))
-        }
+        (EventType::Attestation, Some((_, Some(attestation)))) => Some(EventData::Attestation(
+            Some((request.event_id, attestation).into()),
+        )),
+        (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
         (_, None) => None,
     }
 }
@@ -128,8 +138,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 let future_state = match params {
                     RequestContent::Get(get_request) => {
                         let asset_pair = match get_request.asset_pair {
-                            EventChannel::Announcement { asset_pair } => asset_pair,
-                            EventChannel::Attestation { asset_pair } => asset_pair,
+                            EventChannel {
+                                asset_pair,
+                                ty: EventType::Announcement,
+                            } => asset_pair,
+                            EventChannel {
+                                asset_pair,
+                                ty: EventType::Attestation,
+                            } => asset_pair,
                         };
                         match self.oracles.get(&asset_pair) {
                             Some(oracle) => future_oracle_state(oracle.clone(), get_request),
@@ -200,8 +216,9 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
 
         match &event {
             EventNotification::Announcement(asset_pair, _) => {
-                if self.subscribed_to.contains(&EventChannel::Announcement {
+                if self.subscribed_to.contains(&EventChannel {
                     asset_pair: *asset_pair,
+                    ty: EventType::Announcement,
                 }) {
                     ctx.text(
                         to_string_pretty(&EventBroadcast::from(event))
@@ -210,8 +227,9 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
                 }
             }
             EventNotification::Attestation(asset_pair, _) => {
-                if self.subscribed_to.contains(&EventChannel::Attestation {
+                if self.subscribed_to.contains(&EventChannel {
                     asset_pair: *asset_pair,
+                    ty: EventType::Attestation,
                 }) {
                     ctx.text(
                         to_string_pretty(&EventBroadcast::from(event))
@@ -234,28 +252,6 @@ impl From<EventNotification> for EventBroadcast {
             id: None,
         }
     }
-}
-
-#[derive(PartialEq, Deserialize, Clone)]
-#[serde(tag = "type")]
-#[serde(rename_all = "camelCase")]
-enum EventChannel {
-    Announcement { asset_pair: AssetPair },
-    Attestation { asset_pair: AssetPair },
-}
-#[derive(Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct GetRequest {
-    #[serde(flatten)]
-    asset_pair: EventChannel,
-    event_id: Box<str>,
-}
-
-#[derive(Deserialize, Clone)]
-#[serde(untagged, rename_all = "camelCase")]
-enum RequestContent {
-    Get(GetRequest),
-    Subscription(EventChannel),
 }
 
 type JRpcRequest = json_rpc_types::Request<RequestContent>;
@@ -307,7 +303,10 @@ fn jsonrpc_subscription_response(
     channel: EventChannel,
 ) -> json_rpc_types::Response<String, &str> {
     match channel {
-        EventChannel::Announcement { asset_pair } => json_rpc_types::Response {
+        EventChannel {
+            asset_pair,
+            ty: EventType::Announcement,
+        } => json_rpc_types::Response {
             jsonrpc: json_rpc_types::Version::V2,
             payload: Ok(format!(
                 "Successfully {} for announcement of the {} pair",
@@ -315,7 +314,10 @@ fn jsonrpc_subscription_response(
             )),
             id: request.id.clone(),
         },
-        EventChannel::Attestation { asset_pair } => json_rpc_types::Response {
+        EventChannel {
+            asset_pair,
+            ty: EventType::Attestation,
+        } => json_rpc_types::Response {
             jsonrpc: json_rpc_types::Version::V2,
             payload: Ok(format!(
                 "Successfully {} for attestation of the {} pair",
@@ -337,6 +339,13 @@ pub enum EventNotification {
 pub enum EventData {
     Announcement(OracleAnnouncement),
     Attestation(Option<AttestationResponse>),
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(untagged, rename_all = "camelCase")]
+enum RequestContent {
+    Get(GetRequest),
+    Subscription(EventChannel),
 }
 
 pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
@@ -396,4 +405,17 @@ impl From<EventNotification> for EventBroadcastContent {
             data: event_data,
         }
     }
+}
+
+#[get("/ws")]
+async fn websocket(
+    context: super::Context,
+    stream: web::Payload,
+    req: HttpRequest,
+) -> super::Result<HttpResponse> {
+    ws::start(
+        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
+        &req,
+        stream,
+    )
 }

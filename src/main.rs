@@ -11,8 +11,8 @@ use std::{collections::HashMap, sync::Arc};
 mod oracle;
 use oracle::Oracle;
 
-mod common;
-use common::{AssetPair, AssetPairInfo};
+pub(crate) mod config;
+use config::{AssetPair, AssetPairInfo};
 
 mod error;
 
@@ -20,12 +20,11 @@ mod pricefeeds;
 
 mod scheduler;
 
-use crate::{oracle::postgres::DBconnection, ws::EventNotification};
+use crate::{api::ws::EventNotification, oracle::postgres::DBconnection};
 
-mod api;
-mod cli;
-mod env;
-mod ws;
+pub mod api;
+use config::cli;
+use config::env;
 
 // const PAGE_SIZE: u32 = 100;
 
