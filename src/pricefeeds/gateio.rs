@@ -34,7 +34,7 @@ impl PriceFeed for GateIo {
         info!("received response: {:#?}", res);
 
         if res.is_empty() {
-            return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
+            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
         Ok(res[0][5].as_str().unwrap().parse().unwrap())

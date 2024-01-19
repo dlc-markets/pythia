@@ -9,7 +9,7 @@ use crate::{
 };
 use secp256k1_zkp::schnorr::Signature;
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use actix_web::{web, App, HttpServer, Result};
 
@@ -57,22 +57,21 @@ pub enum EventNotification {
 pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
 
 type Context = web::Data<(
-    Arc<HashMap<AssetPair, Arc<Oracle>>>,
-    OracleSchedulerConfig,
+    &'static HashMap<AssetPair, Oracle<'static>>,
+    &'static OracleSchedulerConfig,
     ReceiverHandle,
 )>;
 
-pub(super) async fn run_api(
+pub(super) async fn run_api<'a>(
     data: (
-        HashMap<AssetPair, Arc<Oracle>>,
-        OracleSchedulerConfig,
+        &'static HashMap<AssetPair, Oracle<'static>>,
+        &'static OracleSchedulerConfig,
         ReceiverHandle,
         bool,
     ),
     port: u16,
 ) -> Result<(), PythiaApiError> {
     let (context, oracles_scheduler_config, rx, debug_mode) = data;
-    let context = Arc::new(context);
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
@@ -88,8 +87,8 @@ pub(super) async fn run_api(
         App::new()
             .wrap(Cors::permissive())
             .app_data(web::Data::new((
-                context.clone(),
-                oracles_scheduler_config.clone(),
+                context,
+                oracles_scheduler_config,
                 rx.clone(),
             )))
             .service(factory)

@@ -4,12 +4,12 @@ extern crate log;
 use clap::Parser;
 use error::PythiaError;
 use hex::ToHex;
-use secp256k1_zkp::{KeyPair, Secp256k1};
+use secp256k1_zkp::{All, KeyPair, Secp256k1};
 use tokio::{select, sync::broadcast};
 
 use futures::future::TryFutureExt;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::OnceLock};
 
 mod oracle;
 use oracle::Oracle;
@@ -20,7 +20,11 @@ use config::{AssetPair, AssetPairInfo};
 mod pricefeeds;
 mod scheduler;
 
-use crate::{api::EventNotification, config::cli, oracle::postgres::DBconnection};
+use crate::{
+    api::EventNotification,
+    config::{cli, OracleSchedulerConfig},
+    oracle::postgres::DBconnection,
+};
 
 pub(crate) mod api;
 
@@ -47,36 +51,66 @@ async fn main() -> Result<(), PythiaError> {
         debug_mode,
     ) = args.match_args()?;
 
-    // Setup keypair and postgres DB for oracles
+    static CONFIG: OnceLock<(Box<[AssetPairInfo]>, OracleSchedulerConfig)> = OnceLock::new();
 
-    let secp = Secp256k1::new();
-    let keypair = KeyPair::from_secret_key(&secp, &secret_key);
+    CONFIG.get_or_init(|| (asset_pair_infos.into_boxed_slice(), oracle_scheduler_config));
+
+    // Setup secp context, keypair and postgres DB for oracles
+
+    static SECP: OnceLock<Secp256k1<All>> = OnceLock::new();
+
+    SECP.set(Secp256k1::new()).expect("static not set yet");
+
+    static KEYPAIR: OnceLock<KeyPair> = OnceLock::new();
+
+    KEYPAIR.get_or_init(|| KeyPair::from_secret_key(SECP.get().unwrap(), &secret_key));
+
     info!(
         "oracle pubkey is {}",
-        keypair.public_key().serialize().encode_hex::<String>()
+        KEYPAIR
+            .get()
+            .unwrap()
+            .public_key()
+            .serialize()
+            .encode_hex::<String>()
     );
 
-    let db = DBconnection::new(db_connect, max_connections_postgres).await?;
+    static DB: OnceLock<DBconnection> = OnceLock::new();
 
-    db.migrate().await?;
+    let db_connection = DBconnection::new(db_connect, max_connections_postgres).await?;
+
+    DB.get_or_init(|| db_connection);
+
+    DB.get().unwrap().migrate().await?;
 
     // Setup one oracle for each asset pair found in configuration file
-    let oracles = asset_pair_infos
-        .iter()
-        .map(|asset_pair_info| asset_pair_info.asset_pair)
-        .zip(asset_pair_infos.iter().cloned().map(|asset_pair_info| {
-            let asset_pair = asset_pair_info.asset_pair;
 
-            info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(asset_pair_info, secp.clone(), db.clone(), keypair);
+    static ORACLES: OnceLock<HashMap<AssetPair, Oracle<'static>>> = OnceLock::new();
 
-            info!("scheduling oracle events for {}", asset_pair);
+    ORACLES.get_or_init(|| {
+        CONFIG
+            .get()
+            .unwrap()
+            .0
+            .iter()
+            .map(|asset_pair_info| asset_pair_info.asset_pair)
+            .zip(CONFIG.get().unwrap().0.iter().map(|asset_pair_info| {
+                let asset_pair = asset_pair_info.asset_pair;
 
-            oracle
-        }))
-        .map(|(asset_pair, oracle)| (asset_pair, Arc::new(oracle)))
-        .collect::<HashMap<_, _>>();
+                info!("creating oracle for {}", asset_pair);
+                let oracle: Oracle<'static> = Oracle::new(
+                    asset_pair_info,
+                    SECP.get().unwrap(),
+                    DB.get().unwrap(),
+                    KEYPAIR.get().unwrap(),
+                );
 
+                info!("scheduling oracle events for {}", asset_pair);
+
+                oracle
+            }))
+            .collect::<HashMap<_, _>>()
+    });
     // Signal if we run in debug mode and launch the server
 
     if debug_mode {
@@ -84,25 +118,28 @@ async fn main() -> Result<(), PythiaError> {
     };
 
     // Initialise channel to send from scheduler to websocket new announcements/attestations
-    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(1);
+
+    // We set channel size to 2 because it may happen that an announcement and attestation are sent into the channel at the same time
+    // (if offset is a multiple of the attestation frequency schedule)
+    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(2);
 
     // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
     // In case of failure of scheduler or API, get the error and return it
-    select! {
+    select!(
         e = scheduler::start_schedule(
-            oracles.clone().into_values().collect(),
-            &oracle_scheduler_config,
+            ORACLES.get().unwrap(),
+            &CONFIG.get().unwrap().1,
             attestation_tx,
         ) => {e},
         e = api::run_api(
             (
-                oracles,
-                oracle_scheduler_config.clone(),
+                ORACLES.get().unwrap(),
+                &CONFIG.get().unwrap().1,
                 attestation_rx.into(),
                 debug_mode,
             ),
             port,
         )
         .err_into() => {e}
-    }
+    )
 }

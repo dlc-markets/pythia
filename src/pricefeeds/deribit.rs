@@ -39,7 +39,7 @@ impl PriceFeed for Deribit {
 
         let now = Utc::now().timestamp();
         if now - start_time > 60 {
-            return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
+            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
@@ -59,7 +59,7 @@ impl PriceFeed for Deribit {
         // A fallback pricefeeder can be used instead in the future
 
         if res.us_in / 1_000_000 - start_time as u64 > 60 {
-            return Err(PriceFeedError::PriceNotAvailableError(asset_pair, instant));
+            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
         Ok(res.result.index_price)

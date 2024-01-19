@@ -56,7 +56,7 @@ impl PriceFeed for Bitstamp {
         info!("received response: {:#?}", res);
 
         if let Some(errs) = res.errors {
-            return Err(PriceFeedError::InternalError(format!(
+            return Err(PriceFeedError::Server(format!(
                 "bitstamp error: code {}, {:#?}",
                 match res.code {
                     None => "unknown".to_string(),

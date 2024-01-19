@@ -1,17 +1,19 @@
+use std::collections::HashMap;
+
+use crate::config::AssetPair;
 use crate::error;
 use crate::{api::EventNotification, config::OracleSchedulerConfig, oracle::Oracle};
 
 use chrono::Utc;
 use log::info;
 
-use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
 use tokio::time::sleep;
 
 extern crate hex;
 
-pub async fn start_schedule(
-    oracles: Box<[Arc<Oracle>]>,
+pub async fn start_schedule<'a>(
+    oracles: &HashMap<AssetPair, Oracle<'a>>,
     config: &OracleSchedulerConfig,
     event_tx: Sender<EventNotification>,
 ) -> Result<(), error::PythiaError> {
@@ -28,7 +30,6 @@ pub async fn start_schedule(
     // start event creation task
     info!("creating oracle events and schedules");
 
-    let cloned_oracles = oracles.clone();
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
     let attestation_scheduled_dates = config.schedule.after_owned(start_time);
@@ -47,7 +48,7 @@ pub async fn start_schedule(
                 sleep(duration).await;
             };
 
-            for oracle in cloned_oracles.iter() {
+            for (_, oracle) in oracles.iter() {
                 let perhaps_announcement = oracle
                     .create_announcement(next_time + offset_duration)
                     .await;
@@ -76,7 +77,7 @@ pub async fn start_schedule(
                 sleep(duration).await;
             };
 
-            for oracle in oracles.iter() {
+            for (_, oracle) in oracles.iter() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 

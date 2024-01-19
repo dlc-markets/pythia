@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -49,12 +48,12 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// websocket connection is long running connection, it easier
 /// to handle with an actor
-pub struct PythiaWebSocket {
+pub struct PythiaWebSocket<'a> {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
     /// The Oracles instances the websocket is allowed to interact with
-    oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>,
+    oracles: &'a HashMap<AssetPair, Oracle<'a>>,
     /// The stream of broadcasted event for the client
     event_rx: ReceiverHandle,
     /// Subscription options to channels
@@ -68,14 +67,14 @@ async fn websocket(
     req: HttpRequest,
 ) -> super::Result<HttpResponse> {
     ws::start(
-        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
+        PythiaWebSocket::new(context.0, context.2.clone()),
         &req,
         stream,
     )
 }
 
-impl PythiaWebSocket {
-    pub fn new(oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>, event_rx: ReceiverHandle) -> Self {
+impl<'a> PythiaWebSocket<'a> {
+    pub fn new(oracles: &'a HashMap<AssetPair, Oracle<'static>>, event_rx: ReceiverHandle) -> Self {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
         // if such oracle is available
@@ -92,7 +91,8 @@ impl PythiaWebSocket {
             subscribed_to: subscription_vec,
         }
     }
-
+}
+impl PythiaWebSocket<'static> {
     /// helper method that sends ping to client every 5 seconds (HEARTBEAT_INTERVAL).
     ///
     /// also this method checks heartbeats from client
@@ -115,7 +115,7 @@ impl PythiaWebSocket {
     }
 }
 
-impl Actor for PythiaWebSocket {
+impl Actor for PythiaWebSocket<'static> {
     type Context = ws::WebsocketContext<Self>;
 
     /// Method is called on actor start. We start the heartbeat process and websocket here and attach the event stream from scheduler.
@@ -126,7 +126,7 @@ impl Actor for PythiaWebSocket {
     }
 }
 
-async fn future_oracle_state(oracle: Arc<Oracle>, request: GetRequest) -> Option<EventData> {
+async fn future_oracle_state(oracle: Oracle<'_>, request: GetRequest) -> Option<EventData> {
     let state = oracle.oracle_state(&request.event_id).await.unwrap();
     match (request.asset_pair.ty, state) {
         (EventType::Announcement, Some((announcement, _))) => {
@@ -141,7 +141,7 @@ async fn future_oracle_state(oracle: Arc<Oracle>, request: GetRequest) -> Option
 }
 
 /// Handler for `ws::Message`
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket<'static> {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(ws::Message::Ping(msg)) => {
@@ -181,7 +181,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                             } => asset_pair,
                         };
                         match self.oracles.get(&asset_pair) {
-                            Some(oracle) => future_oracle_state(oracle.clone(), get_request),
+                            Some(oracle) => future_oracle_state(*oracle, get_request),
                             None => {
                                 ctx.text(
                                     to_string_pretty(&jsonrpc_error_response(&request, None))
@@ -241,7 +241,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
 }
 
 /// Handle produced attestation and send them to clients
-impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for PythiaWebSocket {
+impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>>
+    for PythiaWebSocket<'static>
+{
     fn handle(
         &mut self,
         item: Result<EventNotification, BroadcastStreamRecvError>,

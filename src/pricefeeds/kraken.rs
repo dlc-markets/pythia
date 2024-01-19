@@ -42,7 +42,7 @@ impl PriceFeed for Kraken {
         info!("received response: {:#?}", res);
 
         if !res.error.is_empty() {
-            return Err(PriceFeedError::InternalError(format!(
+            return Err(PriceFeedError::Server(format!(
                 "kraken error: {:#?}",
                 res.error
             )));
@@ -51,7 +51,7 @@ impl PriceFeed for Kraken {
         let res = res
             .result
             .get(asset_pair_translation)
-            .ok_or(PriceFeedError::PriceNotAvailableError(asset_pair, instant))?;
+            .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
 
         Ok(res[0][1].as_str().unwrap().parse().unwrap())
     }
