@@ -4,6 +4,7 @@ use std::{
     str::FromStr,
 };
 
+use chrono::Utc;
 use clap::Parser;
 use secp256k1_zkp::SecretKey;
 
@@ -81,6 +82,17 @@ impl PythiaArgs {
             "asset pair and oracle scheduler config successfully read: {:#?}\n{}",
             &asset_pair_infos, &oracle_scheduler_config
         );
+
+        // This is to prevent an eventual UB produced in scheduler.rs by reaching "unreachable" marked code
+        // The configured cron schedule may not produce a value although it is correctly parsed
+        // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
+        oracle_scheduler_config
+            .schedule
+            .upcoming(Utc)
+            .next()
+            .ok_or(PythiaConfigError::CronScheduleProduceNoValue(
+                oracle_scheduler_config.schedule.to_string(),
+            ))?;
 
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 

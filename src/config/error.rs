@@ -7,18 +7,21 @@ use std::io;
 
 #[derive(Debug, Display, Error)]
 pub enum PythiaConfigError {
-    /// Secret key was not found
+    /// secret key was not found
     NoSecretKey,
 
-    /// Port is not a valid number: {0}
+    /// port {0} is not a valid number
     PortInvalid(#[from] ParseIntError),
 
-    /// Secret key must be a 32 bytes hex string
+    /// secret key must be a 32 bytes hex string
     InvalidSecretKey,
 
-    /// Config file not found: {0}
+    /// config file not found with path {0}
     NoConfigFile(#[from] io::Error),
 
-    /// Fail to parse config file: {0}
+    /// fail to parse config file with path {0}
     ConfigParsing(#[from] serde_json::Error),
+
+    /// the Cron schedule {0} does not produce any date value
+    CronScheduleProduceNoValue(String),
 }

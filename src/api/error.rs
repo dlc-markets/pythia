@@ -11,19 +11,19 @@ pub enum PythiaApiError {
     /// asset pair {0} not recorded
     UnrecordedAssetPair(AssetPair),
 
-    /// datetime RFC3339 parsing error: {0}
+    /// datetime RFC3339 parsing with {0}
     DatetimeParsing(#[from] chrono::format::ParseError),
 
     /// database error: {0}
     DatabaseFail(#[from] sqlx::Error),
 
-    /// Oracle Error: {0}
+    /// oracle Error: {0}
     OracleFail(#[from] OracleError),
 
-    /// This event does not exist: {0}
+    /// event {0} does not exist.
     OracleEventNotFoundError(String),
 
-    /// Could not start socket: {0}
+    /// could not start socket: {0}
     SocketUnavailable(#[from] io::Error),
 }
 

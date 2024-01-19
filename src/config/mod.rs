@@ -97,7 +97,10 @@ impl Display for OracleSchedulerConfig {
         write!(
             f,
             "OracleSchedulerConfig {{\n\tcron_schedule: {},\n\tannouncement_offset: {}\n}}",
-            self.schedule, self.announcement_offset
+            self.schedule,
+            humantime::format_duration(std::time::Duration::from_secs(
+                self.announcement_offset.num_seconds().try_into().unwrap()
+            ))
         )
     }
 }

@@ -30,17 +30,21 @@ pub(crate) mod api;
 
 mod error;
 
-// const PAGE_SIZE: u32 = 100;
+// Configuration and context maintained during Pythia execution
+
+static CONFIG: OnceLock<(Box<[AssetPairInfo]>, OracleSchedulerConfig)> = OnceLock::new();
+static SECP: OnceLock<Secp256k1<All>> = OnceLock::new();
+static KEYPAIR: OnceLock<KeyPair> = OnceLock::new();
+static DB: OnceLock<DBconnection> = OnceLock::new();
+static ORACLES: OnceLock<HashMap<AssetPair, Oracle<'static>>> = OnceLock::new();
 
 #[actix_web::main]
-// #[tokio::main]
 async fn main() -> Result<(), PythiaError> {
     env_logger::init();
 
-    // Parse command line arguments and environnement variables
+    // Parse command line arguments and environnement variables to create CONFIG
 
     let args = cli::PythiaArgs::parse();
-
     let (
         secret_key,
         asset_pair_infos,
@@ -50,21 +54,11 @@ async fn main() -> Result<(), PythiaError> {
         max_connections_postgres,
         debug_mode,
     ) = args.match_args()?;
-
-    static CONFIG: OnceLock<(Box<[AssetPairInfo]>, OracleSchedulerConfig)> = OnceLock::new();
-
     CONFIG.get_or_init(|| (asset_pair_infos.into_boxed_slice(), oracle_scheduler_config));
-
     // Setup secp context, keypair and postgres DB for oracles
 
-    static SECP: OnceLock<Secp256k1<All>> = OnceLock::new();
-
-    SECP.set(Secp256k1::new()).expect("static not set yet");
-
-    static KEYPAIR: OnceLock<KeyPair> = OnceLock::new();
-
+    SECP.get_or_init(|| Secp256k1::new());
     KEYPAIR.get_or_init(|| KeyPair::from_secret_key(SECP.get().unwrap(), &secret_key));
-
     info!(
         "oracle pubkey is {}",
         KEYPAIR
@@ -74,18 +68,11 @@ async fn main() -> Result<(), PythiaError> {
             .serialize()
             .encode_hex::<String>()
     );
-
-    static DB: OnceLock<DBconnection> = OnceLock::new();
-
     let db_connection = DBconnection::new(db_connect, max_connections_postgres).await?;
-
     DB.get_or_init(|| db_connection);
-
     DB.get().unwrap().migrate().await?;
 
     // Setup one oracle for each asset pair found in configuration file
-
-    static ORACLES: OnceLock<HashMap<AssetPair, Oracle<'static>>> = OnceLock::new();
 
     ORACLES.get_or_init(|| {
         CONFIG
@@ -111,20 +98,23 @@ async fn main() -> Result<(), PythiaError> {
             }))
             .collect::<HashMap<_, _>>()
     });
+
     // Signal if we run in debug mode and launch the server
 
     if debug_mode {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    // Initialise channel to send from scheduler to websocket new announcements/attestations
+    // Initialise a channel to send from scheduler to websocket new announcements/attestations
 
     // We set channel size to 2 because it may happen that an announcement and attestation are sent into the channel at the same time
     // (if offset is a multiple of the attestation frequency schedule)
+
     let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(2);
 
     // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
     // In case of failure of scheduler or API, get the error and return it
+
     select!(
         e = scheduler::start_schedule(
             ORACLES.get().unwrap(),
@@ -139,7 +129,6 @@ async fn main() -> Result<(), PythiaError> {
                 debug_mode,
             ),
             port,
-        )
-        .err_into() => {e}
+        ).err_into() => {e}
     )
 }

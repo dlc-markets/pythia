@@ -66,8 +66,7 @@ pub async fn start_schedule<'a>(
                 }
             }
         }
-        // never be reached
-        unreachable!()
+        unreachable!("Cron schedule can be consumed only after 2100")
     };
 
     let attestation_thread = async move {
@@ -101,8 +100,7 @@ pub async fn start_schedule<'a>(
                 }
             }
         }
-        // never be reached
-        unreachable!()
+        unreachable!("Cron schedule can be consumed only after 2100")
     };
 
     let schedule_err = tokio::select! {

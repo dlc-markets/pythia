@@ -3,9 +3,9 @@ use thiserror::Error;
 
 use crate::{api::error::PythiaApiError, config::error::PythiaConfigError, oracle::OracleError};
 
-#[derive(Debug, Display, Error)]
+#[derive(Display, Error)]
 pub enum PythiaError {
-    /// Error from Api: {0}
+    /// Error from Pythia API: {0}
     Api(#[from] PythiaApiError),
 
     /// Configuration Error: {0}
@@ -16,4 +16,14 @@ pub enum PythiaError {
 
     /// Postgres Error: {0}
     Postgres(#[from] sqlx::Error),
+}
+
+// Error in main are shown using Debug display which is kind of sad
+// because we implemented a nice display of all error produced by Pythia
+// So we use Display implementation as the Debug one
+
+impl std::fmt::Debug for PythiaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
 }
