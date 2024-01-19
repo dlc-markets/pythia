@@ -1,6 +1,7 @@
 use actix_cors::Cors;
-use dlc_messages::oracle_msgs::OracleAttestation;
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast::Receiver;
 
 use crate::{
     config::{AssetPair, OracleSchedulerConfig},
@@ -12,8 +13,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{web, App, HttpServer, Result};
 
-use self::ws::ReceiverHandle;
+use self::error::PythiaApiError;
 
+pub(crate) mod error;
 mod http;
 pub(crate) mod ws;
 
@@ -46,16 +48,13 @@ pub struct AttestationResponse {
     pub(crate) signatures: Vec<Signature>,
     pub(crate) values: Vec<String>,
 }
-
-impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
-    fn from(value: (Box<str>, OracleAttestation)) -> Self {
-        Self {
-            event_id: value.0,
-            signatures: value.1.signatures,
-            values: value.1.outcomes,
-        }
-    }
+#[derive(Clone, Debug)]
+pub enum EventNotification {
+    Announcement(AssetPair, OracleAnnouncement),
+    Attestation(AssetPair, AttestationResponse),
 }
+
+pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
 
 type Context = web::Data<(
     Arc<HashMap<AssetPair, Arc<Oracle>>>,
@@ -63,7 +62,7 @@ type Context = web::Data<(
     ReceiverHandle,
 )>;
 
-pub async fn run_api(
+pub(super) async fn run_api(
     data: (
         HashMap<AssetPair, Arc<Oracle>>,
         OracleSchedulerConfig,
@@ -71,7 +70,7 @@ pub async fn run_api(
         bool,
     ),
     port: u16,
-) -> anyhow::Result<()> {
+) -> Result<(), PythiaApiError> {
     let (context, oracles_scheduler_config, rx, debug_mode) = data;
     let context = Arc::new(context);
     HttpServer::new(move || {
@@ -95,10 +94,52 @@ pub async fn run_api(
             )))
             .service(factory)
     })
-    .bind(("0.0.0.0", port))?
+    .bind(("0.0.0.0", port))
+    .map_err(PythiaApiError::SocketUnavailable)?
     .run()
     .await?;
 
     info!("HTTP API is running on port {}", port);
     Ok(())
+}
+
+impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
+    fn from(value: (Box<str>, OracleAttestation)) -> Self {
+        Self {
+            event_id: value.0,
+            signatures: value.1.signatures,
+            values: value.1.outcomes,
+        }
+    }
+}
+
+impl From<(AssetPair, OracleAttestation, Box<str>)> for EventNotification {
+    fn from(value: (AssetPair, OracleAttestation, Box<str>)) -> Self {
+        EventNotification::Attestation(
+            value.0,
+            AttestationResponse {
+                event_id: value.2,
+                signatures: value.1.signatures,
+                values: value.1.outcomes,
+            },
+        )
+    }
+}
+
+impl From<(AssetPair, OracleAnnouncement)> for EventNotification {
+    fn from(value: (AssetPair, OracleAnnouncement)) -> Self {
+        EventNotification::Announcement(value.0, value.1)
+    }
+}
+
+impl Clone for ReceiverHandle {
+    fn clone(&self) -> Self {
+        Self(self.0.resubscribe())
+    }
+}
+
+impl From<Receiver<EventNotification>> for ReceiverHandle {
+    fn from(value: Receiver<EventNotification>) -> Self {
+        Self(value)
+    }
 }

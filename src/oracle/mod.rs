@@ -47,10 +47,10 @@ impl Oracle {
         secp: Secp256k1<All>,
         db: DBconnection,
         keypair: KeyPair,
-    ) -> Result<Oracle> {
+    ) -> Oracle {
         let pricefeed = asset_pair_info.pricefeed.get_pricefeed();
 
-        Ok(Oracle {
+        Oracle {
             asset_pair_info,
             app_state: Arc::new(AppState {
                 db,
@@ -58,7 +58,7 @@ impl Oracle {
                 pricefeed,
             }),
             keypair,
-        })
+        }
     }
     /// The oracle public key
     pub fn get_public_key(self: &Oracle) -> XOnlyPublicKey {
@@ -174,6 +174,12 @@ impl Oracle {
             signatures,
             outcomes: outcome_vec,
         };
+        info!(
+            "created oracle attestation with maturation {}",
+            event.maturity
+        );
+        debug!("attestation {:#?}", &attestation);
+
         let _ = &self
             .app_state
             .db
@@ -432,7 +438,7 @@ mod test {
         let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
         let keypair = KeyPair::from_secret_key(&secp, &secret_key);
         let db = DBconnection(tbd);
-        return Oracle::new(asset_pair_info, secp, db, keypair).unwrap();
+        return Oracle::new(asset_pair_info, secp, db, keypair);
     }
 
     #[sqlx::test]

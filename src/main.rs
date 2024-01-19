@@ -2,9 +2,12 @@
 extern crate log;
 
 use clap::Parser;
+use error::PythiaError;
 use hex::ToHex;
 use secp256k1_zkp::{KeyPair, Secp256k1};
-use tokio::sync::broadcast;
+use tokio::{select, sync::broadcast};
+
+use futures::future::TryFutureExt;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -14,28 +17,25 @@ use oracle::Oracle;
 pub(crate) mod config;
 use config::{AssetPair, AssetPairInfo};
 
-mod error;
-
 mod pricefeeds;
-
 mod scheduler;
 
-use crate::{api::ws::EventNotification, oracle::postgres::DBconnection};
+use crate::{api::EventNotification, config::cli, oracle::postgres::DBconnection};
 
-pub mod api;
-use config::cli;
-use config::env;
+pub(crate) mod api;
+
+mod error;
 
 // const PAGE_SIZE: u32 = 100;
 
 #[actix_web::main]
 // #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), PythiaError> {
     env_logger::init();
 
-    let args = cli::PythiaArgs::parse();
+    // Parse command line arguments and environnement variables
 
-    let secp = Secp256k1::new();
+    let args = cli::PythiaArgs::parse();
 
     let (
         secret_key,
@@ -46,6 +46,10 @@ async fn main() -> anyhow::Result<()> {
         max_connections_postgres,
         debug_mode,
     ) = args.match_args()?;
+
+    // Setup keypair and postgres DB for oracles
+
+    let secp = Secp256k1::new();
     let keypair = KeyPair::from_secret_key(&secp, &secret_key);
     info!(
         "oracle pubkey is {}",
@@ -56,10 +60,7 @@ async fn main() -> anyhow::Result<()> {
 
     db.migrate().await?;
 
-    // Initialise websocket event channel
-    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(1);
-
-    // setup event databases
+    // Setup one oracle for each asset pair found in configuration file
     let oracles = asset_pair_infos
         .iter()
         .map(|asset_pair_info| asset_pair_info.asset_pair)
@@ -67,30 +68,33 @@ async fn main() -> anyhow::Result<()> {
             let asset_pair = asset_pair_info.asset_pair;
 
             info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(asset_pair_info, secp.clone(), db.clone(), keypair)?;
+            let oracle = Oracle::new(asset_pair_info, secp.clone(), db.clone(), keypair);
 
             info!("scheduling oracle events for {}", asset_pair);
 
-            Ok(oracle)
+            oracle
         }))
-        .map(|(asset_pair, oracle)| oracle.map(|ok| (asset_pair, Arc::new(ok))))
-        .collect::<anyhow::Result<HashMap<_, _>>>()?;
+        .map(|(asset_pair, oracle)| (asset_pair, Arc::new(oracle)))
+        .collect::<HashMap<_, _>>();
 
-    // setup and run server
+    // Signal if we run in debug mode and launch the server
+
     if debug_mode {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    // schedule oracle events (announcements/attestations) and start API
-    // In case of failure of scheduler or API, get the error and return it
+    // Initialise channel to send from scheduler to websocket new announcements/attestations
+    let (attestation_tx, attestation_rx) = broadcast::channel::<EventNotification>(1);
 
-    tokio::try_join!(
-        scheduler::start_schedule(
+    // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
+    // In case of failure of scheduler or API, get the error and return it
+    select! {
+        e = scheduler::start_schedule(
             oracles.clone().into_values().collect(),
             &oracle_scheduler_config,
-            attestation_tx.clone(),
-        ),
-        api::run_api(
+            attestation_tx,
+        ) => {e},
+        e = api::run_api(
             (
                 oracles,
                 oracle_scheduler_config.clone(),
@@ -99,6 +103,6 @@ async fn main() -> anyhow::Result<()> {
             ),
             port,
         )
-    )?;
-    Ok(())
+        .err_into() => {e}
+    }
 }

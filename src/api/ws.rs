@@ -8,10 +8,9 @@ use actix_web::{get, web, HttpRequest, HttpResponse, Result};
 
 use actix::{fut::wrap_future, prelude::*};
 use actix_web_actors::ws;
-use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+use dlc_messages::oracle_msgs::OracleAnnouncement;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
-use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 use crate::{
@@ -20,7 +19,27 @@ use crate::{
     oracle::Oracle,
 };
 
-use super::EventType;
+use super::{EventNotification, EventType, ReceiverHandle};
+
+#[derive(Clone, Serialize, Debug)]
+#[serde(untagged)]
+pub enum EventData {
+    Announcement(OracleAnnouncement),
+    Attestation(Option<AttestationResponse>),
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(untagged, rename_all = "camelCase")]
+enum RequestContent {
+    Get(GetRequest),
+    Subscription(EventChannel),
+}
+
+#[derive(Serialize)]
+pub struct EventBroadcastContent {
+    channel: Box<str>,
+    data: EventData,
+}
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -34,12 +53,25 @@ pub struct PythiaWebSocket {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
-    /// The Oracles instances the websocket allow to interact with
+    /// The Oracles instances the websocket is allowed to interact with
     oracles: Arc<HashMap<AssetPair, Arc<Oracle>>>,
     /// The stream of broadcasted event for the client
     event_rx: ReceiverHandle,
-    /// Subscription option to channels
+    /// Subscription options to channels
     subscribed_to: Vec<EventChannel>,
+}
+
+#[get("/ws")]
+async fn websocket(
+    context: super::Context,
+    stream: web::Payload,
+    req: HttpRequest,
+) -> super::Result<HttpResponse> {
+    ws::start(
+        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
+        &req,
+        stream,
+    )
 }
 
 impl PythiaWebSocket {
@@ -86,10 +118,10 @@ impl PythiaWebSocket {
 impl Actor for PythiaWebSocket {
     type Context = ws::WebsocketContext<Self>;
 
-    /// Method is called on actor start. We start the heartbeat process and websocket here.
+    /// Method is called on actor start. We start the heartbeat process and websocket here and attach the event stream from scheduler.
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
-        // Attach the stream of attestations to the websocket
+        // Attach the stream of event produced by the schedulers to the websocket
         ctx.add_stream(BroadcastStream::from(self.event_rx.clone().0));
     }
 }
@@ -120,6 +152,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 self.hb = Instant::now();
             }
             Ok(ws::Message::Text(request)) => {
+                self.hb = Instant::now();
                 let request: Result<JRpcRequest, serde_json::Error> = from_str(request.as_ref());
                 let request = match request {
                     Ok(serialized_request) => serialized_request,
@@ -195,7 +228,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 ctx.spawn(fut);
                 // future_state.into_actor(self).spawn(ctx);
             }
-            Ok(ws::Message::Binary(_bin)) => (),
+            Ok(ws::Message::Binary(_bin)) => {
+                self.hb = Instant::now();
+            }
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
                 ctx.stop();
@@ -242,17 +277,6 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
 }
 
 type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;
-
-impl From<EventNotification> for EventBroadcast {
-    fn from(value: EventNotification) -> Self {
-        json_rpc_types::Request {
-            jsonrpc: json_rpc_types::Version::V2,
-            method: "subscriptions",
-            params: Some(value.into()),
-            id: None,
-        }
-    }
-}
 
 type JRpcRequest = json_rpc_types::Request<RequestContent>;
 type JRpcResponse = json_rpc_types::Response<EventData, Box<str>, &'static str>;
@@ -328,63 +352,15 @@ fn jsonrpc_subscription_response(
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum EventNotification {
-    Announcement(AssetPair, OracleAnnouncement),
-    Attestation(AssetPair, AttestationResponse),
-}
-
-#[derive(Clone, Serialize, Debug)]
-#[serde(untagged)]
-pub enum EventData {
-    Announcement(OracleAnnouncement),
-    Attestation(Option<AttestationResponse>),
-}
-
-#[derive(Deserialize, Clone)]
-#[serde(untagged, rename_all = "camelCase")]
-enum RequestContent {
-    Get(GetRequest),
-    Subscription(EventChannel),
-}
-
-pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
-
-impl Clone for ReceiverHandle {
-    fn clone(&self) -> Self {
-        Self(self.0.resubscribe())
+impl From<EventNotification> for EventBroadcast {
+    fn from(value: EventNotification) -> Self {
+        json_rpc_types::Request {
+            jsonrpc: json_rpc_types::Version::V2,
+            method: "subscriptions",
+            params: Some(value.into()),
+            id: None,
+        }
     }
-}
-
-impl From<Receiver<EventNotification>> for ReceiverHandle {
-    fn from(value: Receiver<EventNotification>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<(AssetPair, OracleAttestation, Box<str>)> for EventNotification {
-    fn from(value: (AssetPair, OracleAttestation, Box<str>)) -> Self {
-        EventNotification::Attestation(
-            value.0,
-            AttestationResponse {
-                event_id: value.2,
-                signatures: value.1.signatures,
-                values: value.1.outcomes,
-            },
-        )
-    }
-}
-
-impl From<(AssetPair, OracleAnnouncement)> for EventNotification {
-    fn from(value: (AssetPair, OracleAnnouncement)) -> Self {
-        EventNotification::Announcement(value.0, value.1)
-    }
-}
-
-#[derive(Serialize)]
-pub struct EventBroadcastContent {
-    channel: Box<str>,
-    data: EventData,
 }
 
 impl From<EventNotification> for EventBroadcastContent {
@@ -405,17 +381,4 @@ impl From<EventNotification> for EventBroadcastContent {
             data: event_data,
         }
     }
-}
-
-#[get("/ws")]
-async fn websocket(
-    context: super::Context,
-    stream: web::Payload,
-    req: HttpRequest,
-) -> super::Result<HttpResponse> {
-    ws::start(
-        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
-        &req,
-        stream,
-    )
 }

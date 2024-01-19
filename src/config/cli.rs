@@ -7,13 +7,8 @@ use std::{
 use clap::Parser;
 use secp256k1_zkp::SecretKey;
 
-use crate::{
-    config::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
-    env::{
-        match_debug_mode_env, match_nb_connection, match_port_env, match_postgres_env,
-        match_secret_key_env,
-    },
-    error::PythiaError,
+use crate::config::{
+    env::*, error::PythiaConfigError, AssetPairInfo, ConfigurationFile, OracleSchedulerConfig,
 };
 
 use sqlx::postgres::PgConnectOptions;
@@ -57,7 +52,7 @@ type InitParams = (
 );
 
 impl PythiaArgs {
-    pub fn match_args(self) -> Result<InitParams, PythiaError> {
+    pub fn match_args(self) -> Result<InitParams, PythiaConfigError> {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");
@@ -83,15 +78,15 @@ impl PythiaArgs {
         );
 
         info!(
-            "asset pair and oracle scheduler config successfully read: {:#?}",
-            (&asset_pair_infos, &oracle_scheduler_config)
+            "asset pair and oracle scheduler config successfully read: {:#?}\n{}",
+            &asset_pair_infos, &oracle_scheduler_config
         );
 
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 
         let secret_key = match self.secret_key_file {
             Some(s) => {
-                SecretKey::from_str(s.as_str()).map_err(|_e| PythiaError::InvalidSecretKey)?
+                SecretKey::from_str(s.as_str()).map_err(|_e| PythiaConfigError::InvalidSecretKey)?
             }
             None => match_secret_key_env()?,
         };

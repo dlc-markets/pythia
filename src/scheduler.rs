@@ -1,5 +1,5 @@
-use crate::api::ws::EventNotification;
-use crate::{config::OracleSchedulerConfig, oracle::Oracle};
+use crate::error;
+use crate::{api::EventNotification, config::OracleSchedulerConfig, oracle::Oracle};
 
 use chrono::Utc;
 use log::info;
@@ -14,7 +14,7 @@ pub async fn start_schedule(
     oracles: Box<[Arc<Oracle>]>,
     config: &OracleSchedulerConfig,
     event_tx: Sender<EventNotification>,
-) -> anyhow::Result<()> {
+) -> Result<(), error::PythiaError> {
     let offset_duration = match config.announcement_offset.to_std() {
         Ok(duration) => duration,
         Err(_) => {
@@ -109,8 +109,5 @@ pub async fn start_schedule(
         e = attestation_thread => {e},
     };
 
-    panic!(
-        "scheduler stopped because of error {} \n The oracle is not announcing anymore",
-        schedule_err
-    );
+    Err(schedule_err.into())
 }

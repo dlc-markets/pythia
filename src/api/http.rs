@@ -4,9 +4,8 @@ use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
 
 use crate::{
-    api::{AttestationResponse, Context, EventType},
+    api::{error::PythiaApiError, AttestationResponse, Context, EventType},
     config::{AssetPair, ConfigResponse},
-    error::PythiaError,
 };
 
 use serde::{Deserialize, Serialize};
@@ -55,7 +54,7 @@ struct ApiOracleEvent {
 pub(super) async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
     let oracle = match context.0.get(&filters.asset_pair) {
-        None => return Err(PythiaError::UnrecordedAssetPairError(filters.asset_pair).into()),
+        None => return Err(PythiaApiError::UnrecordedAssetPair(filters.asset_pair).into()),
         Some(val) => val,
     };
     let res = ApiOraclePubKey {
@@ -95,32 +94,32 @@ pub(super) async fn oracle_event_service(
         "GET /asset/{asset_pair}/{event_type:?}/{ts}: {:#?}",
         filters
     );
-    let timestamp = DateTime::parse_from_rfc3339(&ts).map_err(PythiaError::DatetimeParseError)?;
+    let timestamp = DateTime::parse_from_rfc3339(&ts).map_err(PythiaApiError::DatetimeParsing)?;
 
     let oracle = match context.0.get(&asset_pair) {
-        None => return Err(PythiaError::UnrecordedAssetPairError(asset_pair).into()),
+        None => return Err(PythiaApiError::UnrecordedAssetPair(asset_pair).into()),
         Some(val) => val,
     };
 
     if oracle.is_empty().await {
         info!("no oracle events found");
-        return Err(PythiaError::OracleEventNotFoundError(ts.to_string()).into());
+        return Err(PythiaApiError::OracleEventNotFoundError(ts.to_string()).into());
     }
 
     let event_id = (oracle.asset_pair_info.asset_pair.to_string()
         + &timestamp.timestamp().to_string())
         .into_boxed_str();
     match oracle.oracle_state(&event_id).await {
-        Err(error) => Err(PythiaError::OracleError(error).into()),
+        Err(error) => Err(PythiaApiError::OracleFail(error).into()),
         Ok(event_option) => match event_option {
-            None => Err(PythiaError::OracleEventNotFoundError(timestamp.to_rfc3339()).into()),
+            None => Err(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into()),
             Some((announcement, maybe_attestation)) => match event_type {
                 EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
                 EventType::Attestation => match maybe_attestation {
                     None => {
                         if timestamp < Utc::now() {
                             match oracle.try_attest_event(&event_id).await {
-                                Err(error) => Err(PythiaError::OracleError(error).into()),
+                                Err(error) => Err(PythiaApiError::OracleFail(error).into()),
                                 Ok(maybe_attestation) => {
                                     let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exists now");
                                     let attestation_response = AttestationResponse {
@@ -172,17 +171,17 @@ pub(super) async fn force(data: web::Json<ForceData>, context: Context) -> Resul
     let ForceData { maturation, price } = data.0;
 
     let timestamp =
-        DateTime::parse_from_rfc3339(&maturation).map_err(PythiaError::DatetimeParseError)?;
+        DateTime::parse_from_rfc3339(&maturation).map_err(PythiaApiError::DatetimeParsing)?;
 
     let oracle = match context.0.get(&AssetPair::Btcusd) {
-        None => return Err(PythiaError::UnrecordedAssetPairError(AssetPair::Btcusd).into()),
+        None => return Err(PythiaApiError::UnrecordedAssetPair(AssetPair::Btcusd).into()),
         Some(val) => val,
     };
 
     let (announcement, attestation) = oracle
         .force_new_attest_with_price(timestamp, price)
         .await
-        .map_err(PythiaError::OracleError)?;
+        .map_err(PythiaApiError::OracleFail)?;
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
         attestation: AttestationResponse {

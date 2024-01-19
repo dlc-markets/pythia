@@ -21,8 +21,10 @@ name: oracle
 networks:
   network:
 
+
 volumes:
   postgres:
+
 
 services:
   postgres:
@@ -32,7 +34,7 @@ services:
       - postgres:/var/lib/postgresql
     ports:
       - 5432:5432
-  
+
   pythia:
     <<: *defaults
     build:
@@ -40,7 +42,7 @@ services:
       dockerfile: Dockerfile
     environment:
       <<: *environment
-      RUST_LOG: debug
+      RUST_LOG: info
       PYTHIA_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
     ports:
       - 8000:8000

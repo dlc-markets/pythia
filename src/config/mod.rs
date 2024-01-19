@@ -8,6 +8,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 pub(crate) mod cli;
 pub(crate) mod env;
+pub(crate) mod error;
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -89,6 +90,16 @@ pub struct OracleSchedulerConfig {
     pub schedule: Schedule,
     #[serde(with = "standard_duration")]
     pub announcement_offset: Duration,
+}
+
+impl Display for OracleSchedulerConfig {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "OracleSchedulerConfig {{\n\tcron_schedule: {},\n\tannouncement_offset: {}\n}}",
+            self.schedule, self.announcement_offset
+        )
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

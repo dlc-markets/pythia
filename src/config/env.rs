@@ -3,9 +3,9 @@ use std::{env, str::FromStr};
 use secp256k1_zkp::SecretKey;
 use sqlx::postgres::PgConnectOptions;
 
-use crate::error::PythiaError;
+use super::error::PythiaConfigError;
 
-pub(super) fn match_postgres_env() -> Result<PgConnectOptions, PythiaError> {
+pub(super) fn match_postgres_env() -> Result<PgConnectOptions, PythiaConfigError> {
     let pg_password = env::var("POSTGRES_PASSWORD").unwrap_or("postgres".to_owned());
     let pg_user = env::var("POSTGRES_USER").unwrap_or("postgres".to_owned());
     let pg_db = env::var("POSTGRES_DB").unwrap_or("postgres".to_owned());
@@ -22,9 +22,9 @@ pub(super) fn match_postgres_env() -> Result<PgConnectOptions, PythiaError> {
         .password(&pg_password))
 }
 
-pub(super) fn match_secret_key_env() -> Result<SecretKey, PythiaError> {
-    let secret_key = env::var("PYTHIA_SECRET_KEY").map_err(|_e| PythiaError::NoSecretKey)?;
-    SecretKey::from_str(secret_key.as_str()).map_err(|_e| PythiaError::InvalidSecretKey)
+pub(super) fn match_secret_key_env() -> Result<SecretKey, PythiaConfigError> {
+    let secret_key = env::var("PYTHIA_SECRET_KEY").map_err(|_e| PythiaConfigError::NoSecretKey)?;
+    SecretKey::from_str(secret_key.as_str()).map_err(|_e| PythiaConfigError::InvalidSecretKey)
 }
 
 pub(super) fn match_debug_mode_env() -> bool {
