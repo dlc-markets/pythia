@@ -69,7 +69,7 @@ impl Oracle<'_> {
             + maturation.timestamp().to_string().as_str();
         if let Some(event) = self.app_state.db.get_event(&event_id).await? {
             info!(
-                "Event {} already announced (should be possible only in debug mode)",
+                "Event {} already announced (should be possible only in debug mode or when restarted)",
                 &event_id
             );
             return Ok(compute_announcement(self, event));

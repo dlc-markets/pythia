@@ -42,7 +42,12 @@ pub async fn start_schedule<'a>(
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
             if let Ok(duration) = maybe_std_duration {
-                info!("next announcement at {} in {:?}", &next_time, &duration);
+                info!(
+                    "next announcement at {} in {:?} with maturity {}",
+                    &next_time,
+                    &duration,
+                    next_time + offset_duration
+                );
                 sleep(duration).await;
             };
 
