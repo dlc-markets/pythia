@@ -13,11 +13,11 @@ use std::collections::HashMap;
 
 use actix_web::{web, App, HttpServer, Result};
 
+pub(crate) mod error;
 use self::error::PythiaApiError;
 
-pub(crate) mod error;
 mod http;
-pub(crate) mod ws;
+mod ws;
 
 #[derive(PartialEq, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

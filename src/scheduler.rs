@@ -1,22 +1,20 @@
 use std::collections::HashMap;
 
-use crate::config::AssetPair;
-use crate::error;
-use crate::{api::EventNotification, config::OracleSchedulerConfig, oracle::Oracle};
-
 use chrono::Utc;
-use log::info;
+use tokio::{sync::broadcast::Sender, time::sleep};
 
-use tokio::sync::broadcast::Sender;
-use tokio::time::sleep;
-
-extern crate hex;
+use crate::{
+    api::EventNotification,
+    config::{AssetPair, OracleSchedulerConfig},
+    error::PythiaError,
+    oracle::Oracle,
+};
 
 pub async fn start_schedule<'a>(
     oracles: &HashMap<AssetPair, Oracle<'a>>,
     config: &OracleSchedulerConfig,
     event_tx: Sender<EventNotification>,
-) -> Result<(), error::PythiaError> {
+) -> Result<(), PythiaError> {
     let offset_duration = match config.announcement_offset.to_std() {
         Ok(duration) => duration,
         Err(_) => {

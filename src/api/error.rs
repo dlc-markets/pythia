@@ -2,7 +2,7 @@ use displaydoc::Display;
 
 use thiserror::Error;
 
-use crate::{config::AssetPair, oracle::OracleError};
+use crate::{config::AssetPair, oracle::error::OracleError};
 
 use std::io;
 

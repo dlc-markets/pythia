@@ -1,6 +1,6 @@
 use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
@@ -12,11 +12,10 @@ use secp256k1_zkp::{
 
 use secp256k1_zkp::schnorr::Signature;
 
-mod error;
-pub use error::OracleError;
-pub use error::Result;
+pub(crate) mod error;
+use error::Result;
 
-pub mod postgres;
+pub(crate) mod postgres;
 
 use self::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
 use self::postgres::*;
@@ -196,7 +195,7 @@ impl Oracle<'_> {
 
     pub async fn force_new_attest_with_price(
         &self,
-        maturation: DateTime<FixedOffset>,
+        maturation: DateTime<Utc>,
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id =
@@ -395,14 +394,15 @@ mod test {
 
     use super::{
         crypto::test::{check_signature_with_nonce, check_signature_with_tag},
+        error::OracleError,
         postgres::DBconnection,
-        Oracle, OracleError,
+        Oracle,
     };
     use crate::{
         config::{AssetPair, AssetPairInfo},
         pricefeeds::{
+            error::PriceFeedError,
             ImplementedPriceFeed::{self, Lnmarkets},
-            PriceFeedError,
         },
     };
 

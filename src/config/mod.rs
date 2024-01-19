@@ -7,7 +7,7 @@ use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
 
 pub(crate) mod cli;
-pub(crate) mod env;
+mod env;
 pub(crate) mod error;
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

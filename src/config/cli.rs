@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::{read_to_string, File},
     io::Read,
     str::FromStr,
 };
@@ -57,7 +57,7 @@ impl PythiaArgs {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");
-                serde_json::from_str(&fs::read_to_string("config.json")?)?
+                serde_json::from_str(&read_to_string("config.json")?)?
             }
             Some(path) => {
                 info!(

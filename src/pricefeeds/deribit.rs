@@ -1,4 +1,4 @@
-use crate::pricefeeds::{PriceFeed, PriceFeedError, Result};
+use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

@@ -1,7 +1,9 @@
 use displaydoc::Display;
 use thiserror::Error;
 
-use crate::{api::error::PythiaApiError, config::error::PythiaConfigError, oracle::OracleError};
+use crate::{
+    api::error::PythiaApiError, config::error::PythiaConfigError, oracle::error::OracleError,
+};
 
 #[derive(Display, Error)]
 pub enum PythiaError {

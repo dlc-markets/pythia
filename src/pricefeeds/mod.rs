@@ -2,11 +2,10 @@ use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use serde::Deserialize;
-use serde::Serialize;
-mod error;
-pub use error::PriceFeedError;
-pub use error::Result;
+use serde::{Deserialize, Serialize};
+
+pub(crate) mod error;
+use error::Result;
 
 #[cfg(test)]
 use strum::EnumIter;
@@ -54,7 +53,7 @@ mod test {
 
     use crate::config::AssetPair;
 
-    use super::{ImplementedPriceFeed, PriceFeedError};
+    use super::{error::PriceFeedError, ImplementedPriceFeed};
     use strum::IntoEnumIterator;
 
     // Test all the implemented pricefeeders. Failing mean there has been breaking change in a pricefeeder API

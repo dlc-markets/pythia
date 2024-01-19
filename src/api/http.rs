@@ -179,7 +179,7 @@ pub(super) async fn force(data: web::Json<ForceData>, context: Context) -> Resul
     };
 
     let (announcement, attestation) = oracle
-        .force_new_attest_with_price(timestamp, price)
+        .force_new_attest_with_price(timestamp.with_timezone(&Utc), price)
         .await
         .map_err(PythiaApiError::OracleFail)?;
     Ok(HttpResponse::Ok().json(ForceResponse {
