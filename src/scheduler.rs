@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub async fn start_schedule<'a>(
-    oracles: &HashMap<AssetPair, Oracle<'a>>,
+    oracles: &HashMap<AssetPair, Oracle>,
     config: &OracleSchedulerConfig,
     event_tx: Sender<EventNotification>,
 ) -> Result<(), PythiaError> {

@@ -2,13 +2,13 @@ use actix_web::{get, post, web, HttpResponse, Result};
 use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
+use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, Context, EventType},
     config::{AssetPair, ConfigResponse},
 };
-
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +66,7 @@ pub(super) async fn pubkey(context: Context, filters: web::Query<Filters>) -> Re
 #[get("/assets")]
 pub(super) async fn asset_return() -> Result<HttpResponse> {
     info!("GET /oracle/assets");
-    Ok(HttpResponse::Ok().json([AssetPair::Btcusd]))
+    Ok(HttpResponse::Ok().json(AssetPair::iter().collect::<Box<[_]>>()))
 }
 
 #[get("/asset/{asset_id}/config")]

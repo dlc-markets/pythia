@@ -1,10 +1,8 @@
 use displaydoc::Display;
-
+use std::io;
 use thiserror::Error;
 
 use crate::{config::AssetPair, oracle::error::OracleError};
-
-use std::io;
 
 #[derive(Debug, Display, Error)]
 pub enum PythiaApiError {

@@ -1,23 +1,21 @@
 use actix_cors::Cors;
+use actix_web::{web, App, HttpServer, Result};
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+use secp256k1_zkp::schnorr::Signature;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::broadcast::Receiver;
+
+pub(crate) mod error;
+use error::PythiaApiError;
+
+mod http;
+mod ws;
 
 use crate::{
     config::{AssetPair, OracleSchedulerConfig},
     oracle::Oracle,
 };
-use secp256k1_zkp::schnorr::Signature;
-
-use std::collections::HashMap;
-
-use actix_web::{web, App, HttpServer, Result};
-
-pub(crate) mod error;
-use self::error::PythiaApiError;
-
-mod http;
-mod ws;
 
 #[derive(PartialEq, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -57,21 +55,16 @@ pub enum EventNotification {
 pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
 
 type Context = web::Data<(
-    &'static HashMap<AssetPair, Oracle<'static>>,
-    &'static OracleSchedulerConfig,
+    HashMap<AssetPair, Oracle>,
+    OracleSchedulerConfig,
     ReceiverHandle,
 )>;
 
 pub(super) async fn run_api<'a>(
-    data: (
-        &'static HashMap<AssetPair, Oracle<'static>>,
-        &'static OracleSchedulerConfig,
-        ReceiverHandle,
-        bool,
-    ),
+    context: Context,
     port: u16,
+    debug_mode: bool,
 ) -> Result<(), PythiaApiError> {
-    let (context, oracles_scheduler_config, rx, debug_mode) = data;
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
@@ -86,11 +79,7 @@ pub(super) async fn run_api<'a>(
 
         App::new()
             .wrap(Cors::permissive())
-            .app_data(web::Data::new((
-                context,
-                oracles_scheduler_config,
-                rx.clone(),
-            )))
+            .app_data(context.clone())
             .service(factory)
     })
     .bind(("0.0.0.0", port))

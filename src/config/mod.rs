@@ -5,12 +5,13 @@ use dlc_messages::oracle_msgs::EventDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
+use strum::EnumIter;
 
 pub(crate) mod cli;
 mod env;
 pub(crate) mod error;
 
-#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, EnumIter)]
 #[serde(rename_all = "lowercase")]
 pub enum AssetPair {
     Btcusd,
