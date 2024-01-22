@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub struct Bitstamp {}
+pub(super) struct Bitstamp {}
 
 #[derive(Debug, Deserialize)]
 struct Response {
@@ -30,7 +30,7 @@ struct Ohlc {
 impl PriceFeed for Bitstamp {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "btcusd",
+            AssetPair::BtcUsd => "btcusd",
         }
     }
 

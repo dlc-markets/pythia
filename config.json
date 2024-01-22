@@ -2,7 +2,7 @@
     "asset_pair_infos": [
         {
             "pricefeed": "lnmarkets",
-            "asset_pair": "btcusd",
+            "asset_pair": "btc_usd",
             "event_descriptor": {
                 "digitDecompositionEvent": {
                     "base": 2,

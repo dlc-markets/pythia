@@ -6,7 +6,7 @@ use crate::pricefeeds::error::PriceFeedError;
 pub type Result<T> = std::result::Result<T, OracleError>;
 
 #[derive(Debug, Display, Error)]
-pub enum OracleError {
+pub(crate) enum OracleError {
     /// database error: {0}
     DatabaseError(#[from] sqlx::Error),
 

@@ -6,13 +6,13 @@ use log::info;
 use reqwest::Client;
 use serde_json::Value;
 
-pub struct GateIo {}
+pub(super) struct GateIo {}
 
 #[async_trait]
 impl PriceFeed for GateIo {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "BTC_USDT",
+            AssetPair::BtcUsd => "BTC_USDT",
         }
     }
 

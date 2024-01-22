@@ -6,7 +6,7 @@ use thiserror::Error;
 use std::io;
 
 #[derive(Debug, Display, Error)]
-pub enum PythiaConfigError {
+pub(crate) enum PythiaConfigError {
     /// secret key was not found
     NoSecretKey,
 
@@ -21,7 +21,4 @@ pub enum PythiaConfigError {
 
     /// fail to parse config file with path {0}
     ConfigParsing(#[from] serde_json::Error),
-
-    /// the Cron schedule {0} does not produce any date value
-    CronScheduleProduceNoValue(String),
 }

@@ -3,8 +3,6 @@ use actix_web::{web, App, HttpServer, Result};
 use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use secp256k1_zkp::schnorr::Signature;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use tokio::sync::broadcast::Receiver;
 
 pub(crate) mod error;
 use error::PythiaApiError;
@@ -12,21 +10,18 @@ use error::PythiaApiError;
 mod http;
 mod ws;
 
-use crate::{
-    config::{AssetPair, OracleSchedulerConfig},
-    oracle::Oracle,
-};
+use crate::{config::AssetPair, contexts::api_context::ApiContext};
 
 #[derive(PartialEq, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct EventChannel {
+struct EventChannel {
+    #[serde(rename = "assetPair")]
     asset_pair: AssetPair,
     #[serde(rename = "type")]
     ty: EventType,
 }
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct GetRequest {
+struct GetRequest {
     #[serde(flatten)]
     asset_pair: EventChannel,
     event_id: Box<str>,
@@ -34,34 +29,28 @@ pub struct GetRequest {
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum EventType {
+enum EventType {
     Announcement,
     Attestation,
 }
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct AttestationResponse {
-    pub(crate) event_id: Box<str>,
-    pub(crate) signatures: Vec<Signature>,
-    pub(crate) values: Vec<String>,
+pub(crate) struct AttestationResponse {
+    event_id: Box<str>,
+    signatures: Vec<Signature>,
+    values: Vec<String>,
 }
 #[derive(Clone, Debug)]
-pub enum EventNotification {
+pub(crate) enum EventNotification {
     Announcement(AssetPair, OracleAnnouncement),
     Attestation(AssetPair, AttestationResponse),
 }
 
-pub struct ReceiverHandle(pub(crate) Receiver<EventNotification>);
-
-type Context = web::Data<(
-    HashMap<AssetPair, Oracle>,
-    OracleSchedulerConfig,
-    ReceiverHandle,
-)>;
-
-pub(super) async fn run_api<'a>(
-    context: Context,
+/// Build the actix-web App from the context and serve oracle events on the chosen port. It has scope "/v1".
+/// It features an http server and a websocket that allow to subscribe to new announcements or attestations of an asset-pair.
+pub async fn run_api_v1(
+    context: ApiContext,
     port: u16,
     debug_mode: bool,
 ) -> Result<(), PythiaApiError> {
@@ -117,17 +106,5 @@ impl From<(AssetPair, OracleAttestation, Box<str>)> for EventNotification {
 impl From<(AssetPair, OracleAnnouncement)> for EventNotification {
     fn from(value: (AssetPair, OracleAnnouncement)) -> Self {
         EventNotification::Announcement(value.0, value.1)
-    }
-}
-
-impl Clone for ReceiverHandle {
-    fn clone(&self) -> Self {
-        Self(self.0.resubscribe())
-    }
-}
-
-impl From<Receiver<EventNotification>> for ReceiverHandle {
-    fn from(value: Receiver<EventNotification>) -> Self {
-        Self(value)
     }
 }

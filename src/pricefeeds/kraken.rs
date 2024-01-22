@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-pub struct Kraken {}
+pub(super) struct Kraken {}
 
 #[derive(Debug, Deserialize)]
 struct Response {
@@ -20,7 +20,7 @@ struct Response {
 impl PriceFeed for Kraken {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "XXBTZUSD",
+            AssetPair::BtcUsd => "XXBTZUSD",
         }
     }
 

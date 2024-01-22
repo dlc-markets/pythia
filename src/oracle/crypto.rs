@@ -55,7 +55,7 @@ impl From<Signature> for OracleSignature {
 /// Decompose numerical outcome into base 2 and convert into vec of string
 /// digits is the vec length or number of digits used iun total
 /// precision is the number of digits dedicated to fractionnal part
-pub fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
+pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
     let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
     let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
     outcome_binary

@@ -1,4 +1,4 @@
-# pythia
+# Pythia
 
 ![alt text](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg/2560px-Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg)
 
@@ -27,10 +27,10 @@ Pythia will run an http server on port `8000` by default but you can change it w
 ### Get supported assets
 
 ```sh
-curl -X GET http://localhost:8000/v1/asset
+curl -X GET http://localhost:8000/v1/assets
 ```
 
-This endpoint return all asset pairs supported of the running oracle instance.
+This endpoint return all asset pairs supported of the running oracle instance in a array.
 
 ### Get configuration
 
@@ -38,19 +38,233 @@ This endpoint return all asset pairs supported of the running oracle instance.
 curl -X GET http://localhost:8000/v1/{asset_id}/config
 ```
 
-This endpoint returns the [oracle config](#configure) for the asset pair specified with the asset_id that is returned by previous endpoint.
+This endpoint returns the [scheduler config](#configure) and pricefeed source for the asset pair specified with the asset_id that is returned by previous endpoint.
 
 Output example:
 
 ```json
 {
     "pricefeed": "lnmarkets",
-    "announcement_offset": "1day",
-    "frequency": "1min"
+    "schedule": "0 */30 * * * * *",
+    "announcement_offset": "1d"
 }
 ```
 
-## Run
+### Get announcement
+
+```sh
+curl -X GET http://localhost:8000/v1/asset/{asset_id}/announcement/{date_in_rfc3339_format}
+```
+
+This endpoint returns the [`oracle announcement`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_announcement) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
+
+Request example: 
+
+```sh
+curl -X GET http://localhost:8000/v1/asset/btc_usd/announcement/2024-01-22T16:28:00+01:00
+```
+
+Output:
+
+```json
+{
+    "announcementSignature":"731c70e...48a6de3b840ac603c2704e11d",
+    "oraclePublicKey":"b0d191ff8...276",
+    "oracleEvent":
+    {
+        "oracleNonces":
+        ["4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898f","...", "b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a"],
+        "eventMaturityEpoch": 1705937280,
+        "eventDescriptor":
+        {
+            "digitDecompositionEvent":
+            {
+                "base":2,
+                "isSigned":false,
+                "unit":"usd/btc",
+                "precision":7,
+                "nbDigits":30
+            }
+        },
+        "eventId":"btc_usd1705937280"
+    }
+}
+```
+
+### Get attestation
+
+```sh
+curl -X GET http://localhost:8000/v1/asset/{asset_id}/attestation/{date_in_rfc3339_format}
+```
+
+This endpoint returns the [`oracle attestation`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#the-oracle_attestation-type) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
+
+Request example with the same event as announcement: 
+
+```sh
+curl -X GET http://localhost:8000/v1/asset/btc_usd/attestation/2024-01-22T16:28:00+01:00
+```
+
+Output:
+
+```json
+{
+    "eventId":"btc_usd1705937280",
+    "signatures": ["4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898fdf9504361c674a6578330840e621517492caff0abcf0984f2d0f6cd101e6b166", "...",
+"b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a1aba6de3c4b048ee922621152bb94db7967d0024bf429002a0119612104a727f"],
+"values":["0","...", "0"]
+}
+```
+
+## Websocket usage
+
+### Connection
+
+Pythia API features a websocket which can be used to receive announcement and attestation when they are created by Pythia's scheduler or to query them. The websocket is located as `/v1/ws`. Using `wscat` you can connect to it as such:
+
+```sh
+wscat --connect localhost:8000/v1/ws
+```
+
+Upon connecting, the client is by default subscribed to the channel `btc_usd/attestation`. It receives attestations from the `BtcUsd` asset-pair.
+
+Example of attestation received upon connecting to the websocket:
+
+```json
+< {
+  "jsonrpc": "2.0",
+  "method": "subscriptions",
+  "params": {
+    "channel": "btc_usd/attestation",
+    "data": {
+      "eventId": "btc_usd1705947180",
+      "signatures": [
+        "5c6041a980f...e1a3bd30",
+        "...",
+        "f614036fa15...15315183"
+      ],
+      "values": [
+        "0",
+        "...",
+        "1"
+      ]
+    }
+  }
+}
+```
+
+### Subscribe/Unsubscribe
+
+The websocket use [`JSON-RPC`](https://www.jsonrpc.org/specification). You can subscribe or unsubscribe to a channel using the corresponding JSON-RPC methods with channel asset-pair and event type as params.
+
+Exemple:
+
+Opt-out to default subscription to `btc_usd_/attestation` using the following RPC:
+
+```json
+> {
+    "jsonrpc": "2.0", 
+    "method": "unsubscribe", 
+    "params": 
+    {
+        "type": "attestation", 
+        "assetPair": "btc_usd",
+    },
+    "id": 1337
+}
+```
+
+Websocket response, no new attestations are received after it:
+
+```json
+< {
+    "jsonrpc": "2.0",
+    "result": "Successfully unsubscribe for attestation of the btc_usd pair",
+    "id": 1337
+}
+```
+
+You can subscribe to the freshly prepared announcement using the following:
+
+```json
+> {
+    "jsonrpc": "2.0", 
+    "method": "subscribe", 
+    "params": 
+    {
+        "type": "announcement", 
+        "assetPair": "btc_usd",
+    },
+    "id": 4242
+}
+```
+
+To which the websocket respond:
+
+```json
+< {
+  "jsonrpc": "2.0",
+  "result": "Successfully subscribe for announcement of the btc_usd pair",
+  "id": 4242
+}
+```
+
+and you will received the announcement as soon as they are scheduled through the websocket.
+
+In the not frequent case where Pythia is started and must catch up missing announcements to create, those are not send to the websocket. Only announcements that Pythia must wait for are sent to the subscribed clients. However, all the attestations are sent to clients.
+
+### Request specific announcement or attestation with the websocket
+
+The websocket also feature `get` JSON-RPC methods to query for specific announcement or attestation that were already scheduled before. The method value is actually ignored, the websocket recognise your request using the `eventId` you must provide in `params`.
+
+Exemple of request:
+
+```json
+> {
+    "jsonrpc": "2.0", 
+    "method": "anything_but_prefer_get", 
+    "params": 
+    {
+        "type": "announcement", 
+        "assetPair": "btc_usd", 
+        "eventId": "btc_usd1705947180",
+    },
+    "id": 21000000
+}
+```
+
+Websocket answer:
+
+```json
+< {
+  "jsonrpc": "2.0",
+  "result": {
+    "announcementSignature": "966adaa3ca3...e41",
+    "oraclePublicKey": "b0d191...f5d276",
+    "oracleEvent": {
+      "oracleNonces": [
+        "c6698e177...d89d2b88",
+        "...",
+        "8dc8da506b039...afe28f6"
+      ],
+      "eventMaturityEpoch": 1705948020,
+      "eventDescriptor": {
+        "digitDecompositionEvent": {
+          "base": 2,
+          "isSigned": false,
+          "unit": "usd/btc",
+          "precision": 7,
+          "nbDigits": 30
+        }
+      },
+      "eventId": "btc_usd1705948020"
+    }
+  },
+  "id": 21000000
+}
+```
+
+## Run Pythia
 
 To run, first clone the repository and build:
 
@@ -80,6 +294,17 @@ RUST_LOG=INFO ./target/release/pythia
 
 Currently, the only logging done is at the `INFO` and `DEBUG` levels.
 
+## Run with docker
+
+With docker engine started you can use the following commands to build the docker image and run it:
+
+```sh
+docker compose build
+docker compose up
+```
+
+The API will run on port 8000.
+
 ### Configure
 
 Asset pair configs will be discussed in [Asset Pairs](#asset-pairs).
@@ -87,12 +312,10 @@ Asset pair configs will be discussed in [Asset Pairs](#asset-pairs).
 There are three configurable parameters for the oracle:
 
 | name                  | type                                                                                                                                                                         | description                                                                                                           |
-|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `pricefeed`           | `(lnm\|bitstamp\|kraken\|gateio)`                                                                                                                                                | Source of the stream of price to attest                                                                               |
-| `frequency`           | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | frequency of attestation                                                                                              |
+|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------                                                                           |
+| `schedule`           | `0 */1 * * * * *` | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily                                                                                             |
 | `announcement_offset` | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h` |
 
-The program defaults are located in `config/oracle.json`.
 
 ## Extend
 
@@ -100,7 +323,7 @@ This oracle implementation is extensible to using other pricefeeds, asset pairs,
 
 ### Pricefeeds
 
-Pricefeeds can be easily added as needed. To add a new pricefeed, say, Binance, you must implement the `oracle::pricefeeds::PriceFeed` trait. Note that you will have to implement `translate_asset_pair` for all possible variants of `AssetPair`, regardless of whether you use all of their announcements/attestations. Create `binance.rs` in the `src/oracle/pricefeeds` directory, implement it, and add the module `binance` in `src/oracle/mod.rs` and re-export it:
+Pricefeeds can be easily added as needed. To add a new pricefeed, say, Binance, you must implement the `pricefeeds::PriceFeed` trait. Note that you will have to implement `translate_asset_pair` for all possible variants of `AssetPair`, regardless of whether you use all of their announcements/attestations. Create `binance.rs` in the `src/pricefeeds` directory, implement it, and add the module `binance` in `src/pricefeeds/mod.rs` and re-export it:
 
 ```rust
 // snip
@@ -112,20 +335,21 @@ pub use kraken::Kraken;
 pub use binance::Binance; // <<
 ```
 
-Available `PriceFeedError` variants are in `src/oracle/pricefeeds/error.rs`. Then, add them in `ImplemetedPriceFeed` enum in `src/common.rs` and in `config/asset_ pair.json`.
+Available `PriceFeedError` variants are in `src/pricefeeds/error.rs`. Then, add the variant in `ImplemetedPriceFeed` enum in `src/pridefeed/mod.rs`, return the boxed trait-object when matching the variant in `get_pricefeed`. You can then use it in `config.json`.
 
 After this, you are good to go!
 
 ### Asset Pairs
 
-Asset pairs may also be added, although it is a bit more involved. To add a new asset pair, say, ETHUSD, you must first add an entry in `config/asset_pair.json`, or whatever file you are using for asset pair config. There, you will add an `AssetPairInfo` object to the outermost array. `AssetPairInfo`s contain the following fields:
+Asset pairs may also be added, although it is a bit more involved. To add a new asset pair, say, ETHBTC, you must first add an entry in `"asset_pair_infos"` ssection of `config.json`, or whatever file you are using for asset pair config. There, you will add an `AssetPairInfo` object to the array. `AssetPairInfo`s contain the following fields:
 
 | name               | type                                                                                                                      | description      |
 |--------------------|---------------------------------------------------------------------------------------------------------------------------|------------------|
+| `pricefeed`           | `(lnmarkets\|bitstamp\|kraken\|gateio)`                                                                                                                                                | Source of the stream of price to attest    
 | `asset_pair`       | `AssetPair` enum                                                                                                          | asset pair       |
 | `event_descriptor` | [`event_descriptor`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) | event descriptor |
 
-For now, the only `event_descriptor` supported is `digit_decomposition_event_descriptor` because that is the most immediate use case (for bitcoin). However, `enum_event_descriptor` will be added in the future. Furthermore, note that because of a quirk in the encodings of attestations due to inconsistencies between encoding libraries and [DLC spec](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md), currently `event_descriptor.base` must be 2 (binary) or else decoding will be incorrect. This will be changed in the future.
+For now, the only `event_descriptor` supported is `digit_decomposition_event_descriptor` because that is the most immediate use case (for bitcoin).
 
 An example of a valid addition in `config/asset_pair.json` is the following:
 
@@ -133,11 +357,11 @@ An example of a valid addition in `config/asset_pair.json` is the following:
 [
     {
         "pricefeed": "bitstamp",
-        "asset_pair": "ETHUSD",
+        "asset_pair": "eth_btc",
         "event_descriptor": {
             "base": 2,
             "is_signed": false,
-            "unit": "ETHUSD",
+            "unit": "eth/btc",
             "precision": 0,
             "num_digits": 14
         }
@@ -145,14 +369,14 @@ An example of a valid addition in `config/asset_pair.json` is the following:
 ]
 ```
 
-Then, you must add a variant to `AssetPair` in `src/oracle/common.rs`:
+Then, you must add a variant to `AssetPair` in `src/config/mod.rs`:
 
 ```rust
 // snip
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum AssetPair {
-    BTCUSD,
-    ETHUSD, // <<
+    BtcUsd,
+    EthBtc, // <<
 }
 // snip
 ```
@@ -164,8 +388,8 @@ and finally add match arms to **every** pricefeed in their implementation of the
 impl PriceFeed for Kraken {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::BTCUSD => "XXBTZUSD",
-            AssetPair::ETHUSD => "XETHZUSD", // <<
+            AssetPair::BtcUsd => "XXBTZUSD",
+            AssetPair::EthBtc => "XETHZBTC", // <<
         }
     }
 

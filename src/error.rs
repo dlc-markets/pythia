@@ -2,7 +2,8 @@ use displaydoc::Display;
 use thiserror::Error;
 
 use crate::{
-    api::error::PythiaApiError, config::error::PythiaConfigError, oracle::error::OracleError,
+    api::error::PythiaApiError, config::error::PythiaConfigError,
+    contexts::error::PythiaContextError, oracle::error::OracleError,
 };
 
 #[derive(Display, Error)]
@@ -18,9 +19,12 @@ pub enum PythiaError {
 
     /// Postgres Error: {0}
     Postgres(#[from] sqlx::Error),
+
+    /// Context Error: {0}
+    ContextSetup(#[from] PythiaContextError),
 }
 
-// Error in main are shown using Debug display which is kind of sad
+// Error in main are shown using Debug display which is sad
 // because we implemented a nice display of all error produced by Pythia
 // So we use Display implementation as the Debug one
 

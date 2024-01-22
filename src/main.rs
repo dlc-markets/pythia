@@ -1,24 +1,21 @@
 #[macro_use]
 extern crate log;
 
-use actix_web::web;
 use clap::Parser;
 use futures::future::TryFutureExt;
 use hex::ToHex;
 use secp256k1_zkp::{KeyPair, Secp256k1};
 use std::collections::HashMap;
-use tokio::{select, sync::broadcast};
+use tokio::select;
 
-pub(crate) mod api;
-pub(crate) mod config;
-
+mod api;
+mod config;
+mod contexts;
 mod error;
 mod oracle;
 mod pricefeeds;
-mod scheduler;
 
-use api::EventNotification;
-use config::cli;
+use config::cli::PythiaArgs;
 use config::{AssetPair, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};
@@ -29,7 +26,7 @@ async fn main() -> Result<(), PythiaError> {
 
     // Parse command line arguments and environnement variables to create CONFIG
 
-    let args = cli::PythiaArgs::parse();
+    let args = PythiaArgs::parse();
     let (
         secret_key,
         asset_pair_infos,
@@ -60,14 +57,12 @@ async fn main() -> Result<(), PythiaError> {
             let asset_pair = asset_pair_info.asset_pair;
 
             info!("creating oracle for {}", asset_pair);
-            let oracle = Oracle::new(
+            Oracle::new(
                 asset_pair_info,
                 secp.clone(),
                 db_connection.clone(),
                 keypair,
-            );
-
-            oracle
+            )
         }))
         .collect::<HashMap<_, _>>();
 
@@ -77,26 +72,18 @@ async fn main() -> Result<(), PythiaError> {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    // Initialise a channel to send from scheduler to websocket new announcements/attestations
-
-    // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
-    // at the same time (if offset is a multiple of the attestation frequency schedule)
-
-    let (attestation_tx, attestation_rx) =
-        broadcast::channel::<EventNotification>(2 * config.len());
-    let context = web::Data::new((oracles, oracle_scheduler_config, attestation_rx.into()));
+    let (scheduler_context, api_context) =
+        contexts::create_contexts(oracles, oracle_scheduler_config)?;
 
     // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
     // In case of failure of scheduler or API, get the error and return it
 
     select!(
-        e = scheduler::start_schedule(
-            &context.0,
-            &context.1,
-            attestation_tx,
+        e = contexts::scheduler::start_schedule(
+            scheduler_context,
         ) => {e},
-        e = api::run_api(
-            context.clone(),
+        e = api::run_api_v1(
+            api_context,
             port,
             debug_mode,
         ).err_into() => {e}

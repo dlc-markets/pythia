@@ -1,22 +1,19 @@
+use clap::Parser;
+use secp256k1_zkp::SecretKey;
+use sqlx::postgres::PgConnectOptions;
 use std::{
     fs::{read_to_string, File},
     io::Read,
     str::FromStr,
 };
 
-use chrono::Utc;
-use clap::Parser;
-use secp256k1_zkp::SecretKey;
-
-use crate::config::{
+use super::{
     env::*, error::PythiaConfigError, AssetPairInfo, ConfigurationFile, OracleSchedulerConfig,
 };
 
-use sqlx::postgres::PgConnectOptions;
-
 #[derive(Parser)]
 /// Simple DLC oracle implementation
-pub struct PythiaArgs {
+pub(crate) struct PythiaArgs {
     /// Private key, MUST be set if ORACLE_SECRET_KEY is not
     #[clap(short, long, value_name = "hex")]
     pub secret_key_file: Option<String>,
@@ -53,7 +50,7 @@ type InitParams = (
 );
 
 impl PythiaArgs {
-    pub fn match_args(self) -> Result<InitParams, PythiaConfigError> {
+    pub(crate) fn match_args(self) -> Result<InitParams, PythiaConfigError> {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");
@@ -82,17 +79,6 @@ impl PythiaArgs {
             "asset pair and oracle scheduler config successfully read: {:#?}\n{}",
             &asset_pair_infos, &oracle_scheduler_config
         );
-
-        // This is to prevent an eventual UB produced in scheduler.rs by reaching "unreachable" marked code
-        // The configured cron schedule may not produce a value although it is correctly parsed
-        // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
-        oracle_scheduler_config
-            .schedule
-            .upcoming(Utc)
-            .next()
-            .ok_or(PythiaConfigError::CronScheduleProduceNoValue(
-                oracle_scheduler_config.schedule.to_string(),
-            ))?;
 
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 

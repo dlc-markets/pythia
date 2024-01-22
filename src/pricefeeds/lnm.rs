@@ -6,11 +6,11 @@ use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
 use log::info;
 use reqwest::Client;
 
-pub struct Lnmarkets {}
+pub(super) struct Lnmarkets {}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 //#[serde(rename_all = "camelCase")]
-pub struct LnmarketsQuote {
+struct LnmarketsQuote {
     #[serde(with = "ts_milliseconds")]
     pub time: NaiveDateTime,
     pub index: f64,
@@ -20,7 +20,7 @@ pub struct LnmarketsQuote {
 impl PriceFeed for Lnmarkets {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "",
+            AssetPair::BtcUsd => "",
         }
     }
 

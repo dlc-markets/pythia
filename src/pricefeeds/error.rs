@@ -3,10 +3,10 @@ use chrono::{DateTime, Utc};
 use displaydoc::Display;
 use thiserror::Error;
 
-pub type Result<T> = std::result::Result<T, PriceFeedError>;
+pub(super) type Result<T> = std::result::Result<T, PriceFeedError>;
 
 #[derive(Debug, Display, Error)]
-pub enum PriceFeedError {
+pub(crate) enum PriceFeedError {
     /// server internal error: {0}
     Server(String),
 

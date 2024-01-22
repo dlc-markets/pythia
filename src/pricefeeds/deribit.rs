@@ -5,31 +5,31 @@ use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
 
-pub struct Deribit {}
+pub(super) struct Deribit {}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 
-pub struct DeribitQuote {
-    pub index_price: f64,
-    pub estimated_delivery_price: f64,
+struct DeribitQuote {
+    index_price: f64,
+    estimated_delivery_price: f64,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeribitResponse {
-    pub jsonrpc: String,
-    pub result: DeribitQuote,
-    pub us_in: u64,
-    pub us_out: u64,
-    pub us_diff: u64,
-    pub testnet: bool,
+struct DeribitResponse {
+    jsonrpc: String,
+    result: DeribitQuote,
+    us_in: u64,
+    us_out: u64,
+    us_diff: u64,
+    testnet: bool,
 }
 
 #[async_trait]
 impl PriceFeed for Deribit {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "btc_usd",
+            AssetPair::BtcUsd => "btc_usd",
         }
     }
 

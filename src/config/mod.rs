@@ -7,28 +7,28 @@ use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
 use strum::EnumIter;
 
-pub(crate) mod cli;
+pub(super) mod cli;
 mod env;
-pub(crate) mod error;
+pub(super) mod error;
 
 #[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, EnumIter)]
-#[serde(rename_all = "lowercase")]
-pub enum AssetPair {
-    Btcusd,
+#[serde(rename_all = "snake_case")]
+pub(super) enum AssetPair {
+    BtcUsd,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub struct AssetPairInfo {
-    pub pricefeed: ImplementedPriceFeed,
-    pub asset_pair: AssetPair,
-    pub event_descriptor: EventDescriptor,
+pub(super) struct AssetPairInfo {
+    pub(super) pricefeed: ImplementedPriceFeed,
+    pub(super) asset_pair: AssetPair,
+    pub(super) event_descriptor: EventDescriptor,
 }
 
 impl Display for AssetPair {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            AssetPair::Btcusd => write!(f, "btcusd"),
+            AssetPair::BtcUsd => write!(f, "btc_usd"),
         }
     }
 }
@@ -86,11 +86,11 @@ mod standard_duration {
 
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct OracleSchedulerConfig {
+pub(super) struct OracleSchedulerConfig {
     #[serde_as(as = "DisplayFromStr")]
-    pub schedule: Schedule,
+    pub(super) schedule: Schedule,
     #[serde(with = "standard_duration")]
-    pub announcement_offset: Duration,
+    pub(super) announcement_offset: Duration,
 }
 
 impl Display for OracleSchedulerConfig {
@@ -108,29 +108,17 @@ impl Display for OracleSchedulerConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub struct ConfigurationFile {
-    pub asset_pair_infos: Vec<AssetPairInfo>,
-    pub oracle_scheduler_config: OracleSchedulerConfig,
+struct ConfigurationFile {
+    asset_pair_infos: Vec<AssetPairInfo>,
+    oracle_scheduler_config: OracleSchedulerConfig,
 }
 
 #[serde_as]
 #[derive(Serialize)]
-pub struct ConfigResponse {
-    pricefeed: ImplementedPriceFeed,
+pub(super) struct ConfigResponse {
+    pub(super) pricefeed: ImplementedPriceFeed,
     #[serde(with = "standard_duration")]
-    announcement_offset: Duration,
+    pub(super) announcement_offset: Duration,
     #[serde_as(as = "DisplayFromStr")]
-    pub schedule: Schedule,
-}
-
-impl From<(ImplementedPriceFeed, OracleSchedulerConfig)> for ConfigResponse {
-    fn from(
-        (pricefeed, oracle_scheduler_config): (ImplementedPriceFeed, OracleSchedulerConfig),
-    ) -> Self {
-        ConfigResponse {
-            pricefeed,
-            announcement_offset: oracle_scheduler_config.announcement_offset,
-            schedule: oracle_scheduler_config.schedule,
-        }
-    }
+    pub(super) schedule: Schedule,
 }

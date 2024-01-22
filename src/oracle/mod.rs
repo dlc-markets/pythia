@@ -11,13 +11,12 @@ use secp256k1_zkp::{
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
 
+mod crypto;
 pub(crate) mod error;
 pub(crate) mod postgres;
-use error::Result;
-
-mod crypto;
 
 use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
+use error::Result;
 use postgres::*;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
@@ -383,7 +382,7 @@ mod test {
         nb_digits: u16,
         pricefeed: ImplementedPriceFeed,
     ) -> Oracle {
-        let asset_pair = AssetPair::Btcusd;
+        let asset_pair = AssetPair::BtcUsd;
         let event_descriptor =
             EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
                 base: 2,
@@ -518,7 +517,7 @@ mod test {
                         .asset_pair_info
                         .pricefeed
                         .get_pricefeed()
-                        .retrieve_price(AssetPair::Btcusd, date)
+                        .retrieve_price(AssetPair::BtcUsd, date)
                         .await
                         .unwrap()
                         - attestation

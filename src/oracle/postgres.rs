@@ -24,7 +24,7 @@ struct DigitAttestationResponse {
 }
 
 #[derive(Clone)]
-pub enum ScalarsRecords {
+pub(super) enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),
     DigitsAttestations(f64, Vec<Scalar>),
 }
@@ -39,11 +39,11 @@ pub(super) struct PostgresResponse {
     pub scalars_records: ScalarsRecords,
 }
 #[derive(Clone)]
-pub struct DBconnection(pub PgPool);
+pub(crate) struct DBconnection(pub PgPool);
 
 impl DBconnection {
     /// Create a new Db connection with postgres
-    pub async fn new(db_connect: PgConnectOptions, max_connection: u32) -> Result<Self> {
+    pub(crate) async fn new(db_connect: PgConnectOptions, max_connection: u32) -> Result<Self> {
         Ok(DBconnection(
             PgPoolOptions::new()
                 .max_connections(max_connection)
@@ -52,12 +52,12 @@ impl DBconnection {
         ))
     }
 
-    pub async fn migrate(&self) -> Result<()> {
+    pub(crate) async fn migrate(&self) -> Result<()> {
         sqlx::migrate!("./migrations").run(&self.0).await?;
         Ok(())
     }
 
-    pub async fn is_empty(&self) -> bool {
+    pub(super) async fn is_empty(&self) -> bool {
         sqlx::query_as!(EventResponse, "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1")
             .fetch_optional(&self.0)
             .await

@@ -6,33 +6,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
-use super::{EventNotification, EventType, ReceiverHandle};
+use super::{EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
     config::AssetPair,
+    contexts::api_context::ApiContext,
     oracle::Oracle,
 };
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(untagged)]
-pub enum EventData {
+enum EventData {
     Announcement(OracleAnnouncement),
     Attestation(Option<AttestationResponse>),
 }
 
 #[derive(Deserialize, Clone)]
-#[serde(untagged, rename_all = "camelCase")]
+#[serde(untagged)]
 enum RequestContent {
     Get(GetRequest),
     Subscription(EventChannel),
 }
 
 #[derive(Serialize)]
-pub struct EventBroadcastContent {
+struct EventBroadcastContent {
     channel: Box<str>,
     data: EventData,
 }
@@ -45,39 +48,42 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// websocket connection is long running connection, it easier
 /// to handle with an actor
-pub struct PythiaWebSocket {
+struct PythiaWebSocket {
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     hb: Instant,
     /// The Oracles instances the websocket is allowed to interact with
-    oracles: HashMap<AssetPair, Oracle>,
+    oracles: Arc<HashMap<AssetPair, Oracle>>,
     /// The stream of broadcasted event for the client
-    event_rx: ReceiverHandle,
+    event_rx: Receiver<EventNotification>,
     /// Subscription options to channels
     subscribed_to: Vec<EventChannel>,
 }
 
 #[get("/ws")]
 async fn websocket(
-    context: super::Context,
+    context: ApiContext,
     stream: web::Payload,
     req: HttpRequest,
 ) -> super::Result<HttpResponse> {
     ws::start(
-        PythiaWebSocket::new(context.0.clone(), context.2.clone()),
+        PythiaWebSocket::new(context.oracles.clone(), context.channel_receiver),
         &req,
         stream,
     )
 }
 
-impl<'a> PythiaWebSocket {
-    pub fn new(oracles: HashMap<AssetPair, Oracle>, event_rx: ReceiverHandle) -> Self {
+impl PythiaWebSocket {
+    fn new(
+        oracles: Arc<HashMap<AssetPair, Oracle>>,
+        event_rx: Receiver<EventNotification>,
+    ) -> Self {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
         // if such oracle is available
-        if oracles.get(&AssetPair::Btcusd).is_some() {
+        if oracles.get(&AssetPair::BtcUsd).is_some() {
             subscription_vec.push(EventChannel {
-                asset_pair: AssetPair::Btcusd,
+                asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Attestation,
             });
         }
@@ -119,7 +125,7 @@ impl Actor for PythiaWebSocket {
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
         // Attach the stream of event produced by the schedulers to the websocket
-        ctx.add_stream(BroadcastStream::from(self.event_rx.clone().0));
+        ctx.add_stream(BroadcastStream::from(self.event_rx.resubscribe()));
     }
 }
 
@@ -274,7 +280,6 @@ impl StreamHandler<Result<EventNotification, BroadcastStreamRecvError>> for Pyth
 }
 
 type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;
-
 type JRpcRequest = json_rpc_types::Request<RequestContent>;
 type JRpcResponse = json_rpc_types::Response<EventData, Box<str>, &'static str>;
 

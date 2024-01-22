@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
 use crate::{
-    api::{error::PythiaApiError, AttestationResponse, Context, EventType},
+    api::{error::PythiaApiError, AttestationResponse, EventType},
     config::{AssetPair, ConfigResponse},
+    contexts::api_context::ApiContext,
 };
 
 #[derive(Debug, Deserialize)]
@@ -19,7 +20,7 @@ enum SortOrder {
 
 #[derive(Debug, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct Filters {
+struct Filters {
     sort_by: SortOrder,
     page: u32,
     asset_pair: AssetPair,
@@ -30,7 +31,7 @@ impl Default for Filters {
         Filters {
             sort_by: SortOrder::ReverseInsertion,
             page: 0,
-            asset_pair: AssetPair::Btcusd,
+            asset_pair: AssetPair::BtcUsd,
         }
     }
 }
@@ -51,9 +52,12 @@ struct ApiOracleEvent {
 }
 
 #[get("/oracle/publickey")]
-pub(super) async fn pubkey(context: Context, filters: web::Query<Filters>) -> Result<HttpResponse> {
+pub(super) async fn pubkey(
+    context: ApiContext,
+    filters: web::Query<Filters>,
+) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
-    let oracle = match context.0.get(&filters.asset_pair) {
+    let oracle = match context.oracles.get(&filters.asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(filters.asset_pair).into()),
         Some(val) => val,
     };
@@ -70,22 +74,26 @@ pub(super) async fn asset_return() -> Result<HttpResponse> {
 }
 
 #[get("/asset/{asset_id}/config")]
-pub(super) async fn config(context: Context, path: web::Path<AssetPair>) -> Result<HttpResponse> {
+pub(super) async fn config(
+    context: ApiContext,
+    path: web::Path<AssetPair>,
+) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
     let oracle = context
-        .0
+        .oracles
         .get(&asset_pair)
         .expect("We have this asset pair in our data");
-    Ok(HttpResponse::Ok().json(ConfigResponse::from((
-        oracle.asset_pair_info.pricefeed,
-        context.1.clone(),
-    ))))
+    Ok(HttpResponse::Ok().json(ConfigResponse {
+        pricefeed: oracle.asset_pair_info.pricefeed,
+        announcement_offset: context.offset_duration,
+        schedule: context.schedule.as_ref().clone(),
+    }))
 }
 
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
 pub(super) async fn oracle_event_service(
-    context: Context,
+    context: ApiContext,
     filters: web::Query<Filters>,
     path: web::Path<(AssetPair, EventType, String)>,
 ) -> Result<HttpResponse> {
@@ -96,7 +104,7 @@ pub(super) async fn oracle_event_service(
     );
     let timestamp = DateTime::parse_from_rfc3339(&ts).map_err(PythiaApiError::DatetimeParsing)?;
 
-    let oracle = match context.0.get(&asset_pair) {
+    let oracle = match context.oracles.get(&asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(asset_pair).into()),
         Some(val) => val,
     };
@@ -153,7 +161,7 @@ pub(super) async fn oracle_event_service(
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ForceData {
+struct ForceData {
     maturation: String,
     price: f64,
 }
@@ -166,15 +174,15 @@ struct ForceResponse {
 }
 
 #[post("/force")]
-pub(super) async fn force(data: web::Json<ForceData>, context: Context) -> Result<HttpResponse> {
+pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Result<HttpResponse> {
     info!("POST /force");
     let ForceData { maturation, price } = data.0;
 
     let timestamp =
         DateTime::parse_from_rfc3339(&maturation).map_err(PythiaApiError::DatetimeParsing)?;
 
-    let oracle = match context.0.get(&AssetPair::Btcusd) {
-        None => return Err(PythiaApiError::UnrecordedAssetPair(AssetPair::Btcusd).into()),
+    let oracle = match context.oracles.get(&AssetPair::BtcUsd) {
+        None => return Err(PythiaApiError::UnrecordedAssetPair(AssetPair::BtcUsd).into()),
         Some(val) => val,
     };
 

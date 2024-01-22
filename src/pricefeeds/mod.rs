@@ -11,7 +11,7 @@ use error::Result;
 use strum::EnumIter;
 
 #[async_trait]
-pub trait PriceFeed {
+pub(crate) trait PriceFeed {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
     async fn retrieve_price(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Result<f64>;
 }
@@ -25,7 +25,7 @@ mod lnm;
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]
-pub enum ImplementedPriceFeed {
+pub(crate) enum ImplementedPriceFeed {
     Lnmarkets,
     Deribit,
     Kraken,
@@ -64,7 +64,7 @@ mod test {
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
                 .get_pricefeed()
-                .retrieve_price(AssetPair::Btcusd, now)
+                .retrieve_price(AssetPair::BtcUsd, now)
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }
