@@ -1,44 +1,32 @@
 use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
 
+use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     rand::{thread_rng, RngCore},
+    schnorr::Signature,
     All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
 };
-use std::sync::Arc;
-use time::OffsetDateTime;
-
-use crate::pricefeeds::PriceFeed;
-
-use secp256k1_zkp::schnorr::Signature;
-
-mod error;
-pub use error::OracleError;
-pub use error::Result;
-
-pub mod postgres;
-
-use self::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
-use self::postgres::*;
 
 mod crypto;
-pub use crypto::*;
-struct AppState {
-    db: DBconnection, // private to ensure that only the oracle's methods can interact with DB
-    secp: Secp256k1<All>,
-    pricefeed: Box<dyn PriceFeed + Send + Sync>, // private to ensure the oracle uses a unique consistent pricefeeder
-}
+pub(crate) mod error;
+pub(crate) mod postgres;
+
+use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
+use error::Result;
+use postgres::*;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
 pub struct Oracle {
     /// Oracle attestation event format summary
     pub asset_pair_info: AssetPairInfo,
-    app_state: Arc<AppState>, // private to ensure that only the oracle's methods can interact with DB
-    keypair: KeyPair,         // MUST be private since it contains the oracle private key
+    db: DBconnection,
+    secp: Secp256k1<All>,
+    keypair: KeyPair,
 }
 
 impl Oracle {
@@ -48,46 +36,36 @@ impl Oracle {
         secp: Secp256k1<All>,
         db: DBconnection,
         keypair: KeyPair,
-    ) -> Result<Oracle> {
-        let pricefeed = asset_pair_info.pricefeed.get_pricefeed();
-
-        Ok(Oracle {
+    ) -> Oracle {
+        Oracle {
             asset_pair_info,
-            app_state: Arc::new(AppState {
-                db,
-                secp,
-                pricefeed,
-            }),
+            db,
+            secp,
             keypair,
-        })
+        }
     }
     /// The oracle public key
-    pub fn get_public_key(self: &Oracle) -> XOnlyPublicKey {
+    pub fn get_public_key(&self) -> XOnlyPublicKey {
         self.keypair.public_key().into()
     }
     /// Check if the oracle announced at least one event
     pub async fn is_empty(&self) -> bool {
-        self.app_state.db.is_empty().await
+        self.db.is_empty().await
     }
 
     /// Create an oracle announcement that it will sign the price at given maturity instant
     pub async fn create_announcement(
         &self,
-        maturation: OffsetDateTime,
+        maturation: DateTime<Utc>,
     ) -> Result<OracleAnnouncement> {
         let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
-            + maturation.unix_timestamp().to_string().as_str();
-        if self.app_state.db.get_event(&event_id).await?.is_some() {
+            + maturation.timestamp().to_string().as_str();
+        if let Some(event) = self.db.get_event(&event_id).await? {
             info!(
-                "Event {} already announced (should be possible only in debug mode)",
+                "Event {} already announced (should be possible only in debug mode or when restarted)",
                 &event_id
             );
-            let announcement = self
-                .oracle_state(&event_id)
-                .await?
-                .expect("announcement exist if event in DB")
-                .0;
-            return Ok(announcement);
+            return Ok(compute_announcement(self, event));
         }
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
@@ -98,14 +76,13 @@ impl Oracle {
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
         // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
-        {
+        '_rng_scope: {
             let mut rng = thread_rng();
             for _ in 0..digits {
                 let mut sk_nonce = [0u8; 32];
                 rng.fill_bytes(&mut sk_nonce);
                 let oracle_r_kp =
-                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, &sk_nonce)
-                        .unwrap();
+                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, &sk_nonce).unwrap();
                 let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                 sk_nonces.push(sk_nonce);
                 nonces.push(nonce);
@@ -114,13 +91,13 @@ impl Oracle {
 
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
-            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_maturity_epoch: maturation.timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
             event_id,
         };
 
         let announcement = OracleAnnouncement {
-            announcement_signature: self.app_state.secp.sign_schnorr(
+            announcement_signature: self.secp.sign_schnorr(
                 &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
                     &oracle_event.encode(),
                 ),
@@ -129,9 +106,7 @@ impl Oracle {
             oracle_public_key: self.keypair.public_key().into(),
             oracle_event,
         };
-        let _ = &self
-            .app_state
-            .db
+        self.db
             .insert_announcement(&announcement, sk_nonces)
             .await?;
         info!("created oracle announcement with maturation {}", maturation);
@@ -141,19 +116,24 @@ impl Oracle {
         Ok(announcement)
     }
 
-    /// Attest event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
+    /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
     /// Store in DB and return some oracle attestation if event is attested successfully.
     pub async fn try_attest_event(&self, event_id: &str) -> Result<Option<OracleAttestation>> {
-        let Some(event) = self.app_state.db.get_event(event_id).await? else {
+        let Some(event) = self.db.get_event(event_id).await? else {
             return Ok(None);
         };
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
-            return Ok(None);
+            info!(
+                "Event {} already attested (should be possible only in debug mode)",
+                &event_id
+            );
+            return Ok(compute_attestation(self, event));
         };
         info!("retrieving price feed for attestation");
         let outcome = self
-            .app_state
+            .asset_pair_info
             .pricefeed
+            .get_pricefeed()
             .retrieve_price(self.asset_pair_info.asset_pair, event.maturity)
             .await?;
 
@@ -162,12 +142,7 @@ impl Oracle {
             .iter()
             .zip(outstanding_sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                sign_outcome(
-                    &self.app_state.secp,
-                    &self.keypair,
-                    outcome,
-                    outstanding_sk_nonce,
-                )
+                sign_outcome(&self.secp, &self.keypair, outcome, outstanding_sk_nonce)
             })
             .unzip();
 
@@ -176,8 +151,13 @@ impl Oracle {
             signatures,
             outcomes: outcome_vec,
         };
+        info!(
+            "created oracle attestation with maturation {}",
+            event.maturity
+        );
+        debug!("attestation {:#?}", &attestation);
+
         let _ = &self
-            .app_state
             .db
             .update_to_attestation(event_id, &attestation, outcome)
             .await?;
@@ -189,70 +169,28 @@ impl Oracle {
         &self,
         event_id: &str,
     ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
-        let Some(event) = self.app_state.db.get_event(event_id).await? else {
+        let Some(event) = self.db.get_event(event_id).await? else {
             return Ok(None);
         };
-        let oracle_event = OracleEvent {
-            oracle_nonces: event.nonce_public.clone(),
-            event_maturity_epoch: event.maturity.unix_timestamp() as u32,
-            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
-            event_id: event_id.to_string(),
-        };
 
-        let announcement = OracleAnnouncement {
-            announcement_signature: event.announcement_signature,
-            oracle_public_key: self.keypair.public_key().into(),
-            oracle_event,
-        };
-        match event.scalars_records {
-            ScalarsRecords::DigitsSkNonce(_) => Ok(Some((announcement, None))),
-            ScalarsRecords::DigitsAttestations(outcome, sigs) => {
-                let full_signatures = sigs
-                    .into_iter()
-                    .zip(event.nonce_public)
-                    .map(|(s, n)| {
-                        <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
-                            n.into(),
-                            s.into(),
-                        ))
-                        .into()
-                    })
-                    .collect();
-                Ok(Some((
-                    announcement,
-                    Some(OracleAttestation {
-                        oracle_public_key: self.keypair.public_key().into(),
-                        signatures: full_signatures,
-                        outcomes: to_digit_decomposition_vec(
-                            outcome,
-                            event.digits,
-                            event.precision,
-                        ),
-                    }),
-                )))
-            }
-        }
+        let announcement = compute_announcement(self, event.clone());
+        Ok(Some((announcement, compute_attestation(self, event))))
     }
 
     pub async fn force_new_attest_with_price(
         &self,
-        maturation: OffsetDateTime,
+        maturation: DateTime<Utc>,
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id =
-            ("btcusd".to_string() + &maturation.unix_timestamp().to_string()).into_boxed_str();
+            ("btcusd".to_string() + &maturation.timestamp().to_string()).into_boxed_str();
         let EventDescriptor::DigitDecompositionEvent(event) =
             &self.asset_pair_info.event_descriptor
         else {
             panic!("Error in db")
         };
         let digits = event.nb_digits;
-        let (sk_nonces, nonces, was_not_announced) = match self
-            .app_state
-            .db
-            .get_event(&event_id)
-            .await?
-        {
+        let (sk_nonces, nonces, was_not_announced) = match self.db.get_event(&event_id).await? {
             Some(postgres_response) => match postgres_response.scalars_records {
                 ScalarsRecords::DigitsSkNonce(sk_nonces) => {
                     info!(
@@ -263,7 +201,7 @@ impl Oracle {
                         .iter()
                         .map(|sk| {
                             let oracle_r_kp =
-                                secp256k1_zkp::KeyPair::from_seckey_slice(&self.app_state.secp, sk)
+                                secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, sk)
                                     .expect("too low probability of secret to be invalid");
                             XOnlyPublicKey::from_keypair(&oracle_r_kp).0
                         })
@@ -294,11 +232,9 @@ impl Oracle {
                     for _ in 0..digits {
                         let mut sk_nonce = [0u8; 32];
                         rng.fill_bytes(&mut sk_nonce);
-                        let oracle_r_kp = secp256k1_zkp::KeyPair::from_seckey_slice(
-                            &self.app_state.secp,
-                            &sk_nonce,
-                        )
-                        .unwrap();
+                        let oracle_r_kp =
+                            secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, &sk_nonce)
+                                .unwrap();
                         let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                         sk_nonces.push(sk_nonce);
                         nonces.push(nonce);
@@ -309,14 +245,14 @@ impl Oracle {
         };
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
-            event_maturity_epoch: maturation.unix_timestamp() as u32,
+            event_maturity_epoch: maturation.timestamp() as u32,
             event_descriptor: self.asset_pair_info.event_descriptor.clone(),
             event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
-                + maturation.unix_timestamp().to_string().as_str(),
+                + maturation.timestamp().to_string().as_str(),
         };
 
         let announcement = OracleAnnouncement {
-            announcement_signature: self.app_state.secp.sign_schnorr(
+            announcement_signature: self.secp.sign_schnorr(
                 &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
                     &oracle_event.encode(),
                 ),
@@ -328,7 +264,6 @@ impl Oracle {
 
         if was_not_announced {
             let _ = &self
-                .app_state
                 .db
                 .insert_announcement(&announcement, sk_nonces.clone())
                 .await?;
@@ -347,12 +282,7 @@ impl Oracle {
             .iter()
             .zip(sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                sign_outcome(
-                    &self.app_state.secp,
-                    &self.keypair,
-                    outcome,
-                    outstanding_sk_nonce,
-                )
+                sign_outcome(&self.secp, &self.keypair, outcome, outstanding_sk_nonce)
             })
             .unzip();
 
@@ -367,7 +297,6 @@ impl Oracle {
             &announcement, price, attestation
         );
         let _ = &self
-            .app_state
             .db
             .update_to_attestation(event_id.as_ref(), &attestation, price)
             .await?;
@@ -376,10 +305,53 @@ impl Oracle {
     }
 }
 
+fn compute_attestation(oracle: &Oracle, event: PostgresResponse) -> Option<OracleAttestation> {
+    match event.scalars_records {
+        ScalarsRecords::DigitsSkNonce(_) => None,
+        ScalarsRecords::DigitsAttestations(outcome, sigs) => {
+            let full_signatures = sigs
+                .into_iter()
+                .zip(event.nonce_public)
+                .map(|(s, n)| {
+                    <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
+                        n.into(),
+                        s.into(),
+                    ))
+                    .into()
+                })
+                .collect();
+            Some(OracleAttestation {
+                oracle_public_key: oracle.keypair.public_key().into(),
+                signatures: full_signatures,
+                outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+            })
+        }
+    }
+}
+
+fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnouncement {
+    let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+        + event.maturity.timestamp().to_string().as_str();
+
+    let oracle_event = OracleEvent {
+        oracle_nonces: event.nonce_public.clone(),
+        event_maturity_epoch: event.maturity.timestamp() as u32,
+        event_descriptor: oracle.asset_pair_info.event_descriptor.clone(),
+        event_id,
+    };
+
+    OracleAnnouncement {
+        announcement_signature: event.announcement_signature,
+        oracle_public_key: oracle.keypair.public_key().into(),
+        oracle_event,
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
+    use std::{str::FromStr, time::Duration};
 
+    use chrono::{DateTime, DurationRound, SubsecRound, Utc};
     use dlc_messages::oracle_msgs::{
         DigitDecompositionEventDescriptor, EventDescriptor, OracleAnnouncement, OracleAttestation,
         OracleEvent,
@@ -387,18 +359,18 @@ mod test {
     use lightning::util::ser::Writeable;
     use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
     use sqlx::postgres::PgPool;
-    use time::{macros::datetime, Duration, OffsetDateTime};
 
     use super::{
         crypto::test::{check_signature_with_nonce, check_signature_with_tag},
+        error::OracleError,
         postgres::DBconnection,
-        Oracle, OracleError,
+        Oracle,
     };
     use crate::{
-        common::{AssetPair, AssetPairInfo},
+        config::{AssetPair, AssetPairInfo},
         pricefeeds::{
+            error::PriceFeedError,
             ImplementedPriceFeed::{self, Lnmarkets},
-            PriceFeedError,
         },
     };
 
@@ -410,7 +382,7 @@ mod test {
         nb_digits: u16,
         pricefeed: ImplementedPriceFeed,
     ) -> Oracle {
-        let asset_pair = AssetPair::Btcusd;
+        let asset_pair = AssetPair::BtcUsd;
         let event_descriptor =
             EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
                 base: 2,
@@ -429,7 +401,7 @@ mod test {
         let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
         let keypair = KeyPair::from_secret_key(&secp, &secret_key);
         let db = DBconnection(tbd);
-        return Oracle::new(asset_pair_info, secp, db, keypair).unwrap();
+        return Oracle::new(asset_pair_info, secp, db, keypair);
     }
 
     #[sqlx::test]
@@ -450,19 +422,19 @@ mod test {
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
 
-    async fn test_announcement(oracle: &Oracle, date: OffsetDateTime) {
+    async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date).await.unwrap();
         assert_eq!(
             oracle_announcement,
             oracle
-                .oracle_state(&("btcusd".to_owned() + date.unix_timestamp().to_string().as_str()))
+                .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
                 .await
                 .unwrap()
                 .unwrap()
                 .0
         );
 
-        let secp = &oracle.app_state.secp;
+        let secp = &oracle.secp;
         secp.verify_schnorr(
             &oracle_announcement.announcement_signature,
             &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
@@ -476,14 +448,18 @@ mod test {
     #[sqlx::test]
     async fn announcements_tests(tbd: PgPool) {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))
             .chain(
                 [
-                    datetime!(2022-01-01 0:00 +11),
-                    datetime!(2023-01-01 0:00 +11),
+                    DateTime::parse_from_rfc3339("2022-01-01T00:00:00+11:00")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    DateTime::parse_from_rfc3339("2023-01-01T00:00:00+11:00")
+                        .unwrap()
+                        .with_timezone(&Utc),
                 ]
                 .into_iter(),
             );
@@ -492,16 +468,16 @@ mod test {
         }
     }
 
-    async fn test_attestation(oracle: &Oracle, date: OffsetDateTime) {
+    async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date.clone()).await.unwrap();
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let oracle_attestation = match oracle
             .try_attest_event(&oracle_announcement.oracle_event.event_id)
             .await
         {
             Ok(attestation) => attestation,
             Err(OracleError::PriceFeedError(error)) => {
-                let PriceFeedError::PriceNotAvailableError(_, asked_date) = error else {
+                let PriceFeedError::PriceNotAvailable(_, asked_date) = error else {
                     panic!(
                         "Pricefeeder {:?} did not respond for this date {}",
                         oracle.asset_pair_info.pricefeed,
@@ -527,7 +503,7 @@ mod test {
         );
         match oracle_attestation {
             None => assert!(
-                oracle_announcement.oracle_event.event_maturity_epoch > now.unix_timestamp() as u32
+                oracle_announcement.oracle_event.event_maturity_epoch > now.timestamp() as u32
             ),
             Some(attestation) => {
                 let EventDescriptor::DigitDecompositionEvent(event) =
@@ -538,9 +514,10 @@ mod test {
                 let precision = event.precision;
                 assert!(
                     (oracle
-                        .app_state
+                        .asset_pair_info
                         .pricefeed
-                        .retrieve_price(AssetPair::Btcusd, date)
+                        .get_pricefeed()
+                        .retrieve_price(AssetPair::BtcUsd, date)
                         .await
                         .unwrap()
                         - attestation
@@ -554,7 +531,7 @@ mod test {
                     .abs()
                         < 0.01
                 );
-                let secp = &oracle.app_state.secp;
+                let secp = &oracle.secp;
                 for (outcome, signature) in attestation.outcomes.iter().zip(attestation.signatures)
                 {
                     secp.verify_schnorr(
@@ -573,7 +550,10 @@ mod test {
     #[sqlx::test]
     async fn attestations_test(tbd: PgPool) {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
-        let now = OffsetDateTime::now_utc().replace_second(0).unwrap();
+        let now = Utc::now()
+            .trunc_subsecs(0)
+            .duration_trunc(chrono::Duration::minutes(1))
+            .unwrap();
         let dates = [60, 3600, 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600]
             .iter()
             .map(|t| now - Duration::new(*t, 0))

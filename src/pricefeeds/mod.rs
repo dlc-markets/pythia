@@ -1,20 +1,19 @@
 use crate::AssetPair;
 use async_trait::async_trait;
-use serde::Deserialize;
-use serde::Serialize;
-use time::OffsetDateTime;
+use chrono::DateTime;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
-mod error;
-pub use error::PriceFeedError;
-pub use error::Result;
+pub(crate) mod error;
+use error::Result;
 
 #[cfg(test)]
 use strum::EnumIter;
 
 #[async_trait]
-pub trait PriceFeed {
+pub(crate) trait PriceFeed {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
-    async fn retrieve_price(&self, asset_pair: AssetPair, datetime: OffsetDateTime) -> Result<f64>;
+    async fn retrieve_price(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Result<f64>;
 }
 
 mod bitstamp;
@@ -23,16 +22,10 @@ mod gateio;
 mod kraken;
 mod lnm;
 
-pub use bitstamp::Bitstamp;
-pub use deribit::Deribit;
-pub use gateio::GateIo;
-pub use kraken::Kraken;
-pub use lnm::Lnmarkets;
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]
-pub enum ImplementedPriceFeed {
+pub(crate) enum ImplementedPriceFeed {
     Lnmarkets,
     Deribit,
     Kraken,
@@ -56,29 +49,30 @@ impl ImplementedPriceFeed {
 
 #[cfg(test)]
 mod test {
-    use time::OffsetDateTime;
+    use chrono::{SubsecRound, Utc};
 
-    use crate::common::AssetPair;
+    use crate::config::AssetPair;
 
-    use super::{ImplementedPriceFeed, PriceFeedError};
+    use super::{error::PriceFeedError, ImplementedPriceFeed};
     use strum::IntoEnumIterator;
 
     // Test all the implemented pricefeeders. Failing mean there has been breaking change in a pricefeeder API
     #[actix_web::test]
     async fn test_all_pricefeeders() {
         let mut deprecated: Vec<(ImplementedPriceFeed, PriceFeedError)> = vec![];
+        let now = Utc::now().trunc_subsecs(0);
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
                 .get_pricefeed()
-                .retrieve_price(
-                    AssetPair::Btcusd,
-                    OffsetDateTime::now_utc().replace_second(0).unwrap(),
-                )
+                .retrieve_price(AssetPair::BtcUsd, now)
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }
         if !deprecated.is_empty() {
-            panic!("Some pricefeeder APIs seem deprecated: {:?}", deprecated)
+            panic!(
+                "Some pricefeeder APIs seem deprecated: {:?}\n No answer for date {}",
+                deprecated, now
+            )
         }
     }
 }

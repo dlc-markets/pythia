@@ -1,5 +1,5 @@
 # See https://gist.github.com/noelbundick/6922d26667616e2ba5c3aff59f0824cd
-FROM rust:1.73-slim-bookworm AS builder
+FROM rust:1.75-slim-bookworm AS builder
 
 RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
     --mount=target=/var/cache/apt,type=cache,sharing=locked \

@@ -1,56 +1,35 @@
-use std::num::ParseIntError;
-
-use crate::{oracle::OracleError, AssetPair};
 use displaydoc::Display;
 use thiserror::Error;
 
-use std::io;
+use crate::{
+    api::error::PythiaApiError, config::error::PythiaConfigError,
+    contexts::error::PythiaContextError, oracle::error::OracleError,
+};
 
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Display, Error)]
+#[derive(Display, Error)]
 pub enum PythiaError {
-    /// asset pair {0} not recorded
-    UnrecordedAssetPairError(AssetPair),
+    /// Error from Pythia API: {0}
+    Api(#[from] PythiaApiError),
 
-    /// datetime RFC3339 parsing error: {0}
-    DatetimeParseError(#[from] time::error::Parse),
+    /// Configuration Error: {0}
+    Config(#[from] PythiaConfigError),
 
-    /// oracle event with maturation {0} not found
-    OracleEventNotFoundError(String),
+    /// Oracle failed: {0}
+    Oracle(#[from] OracleError),
 
-    /// database error: {0}
-    DatabaseError(#[from] sqlx::Error),
+    /// Postgres Error: {0}
+    Postgres(#[from] sqlx::Error),
 
-    /// Oracle Error: {0}
-    OracleError(#[from] OracleError),
-
-    /// Port is not a valid number: {0}
-    ConfigError(#[from] ParseIntError),
-
-    /// Secret key was not found
-    NoSecretKey,
-
-    /// Secret key must be a 32 bytes hex string
-    InvalidSecretKey,
-
-    /// Config file not found: {0}
-    NoConfigFileError(#[from] io::Error),
-
-    /// Fail to parse config file: {0}
-    ParseConfigError(#[from] serde_json::Error),
+    /// Context Error: {0}
+    ContextSetup(#[from] PythiaContextError),
 }
 
-impl actix_web::error::ResponseError for PythiaError {
-    fn status_code(&self) -> actix_web::http::StatusCode {
-        if let PythiaError::DatetimeParseError(_) = self {
-            return actix_web::http::StatusCode::BAD_REQUEST;
-        }
-        if let PythiaError::OracleEventNotFoundError(_) = self {
-            return actix_web::http::StatusCode::NOT_FOUND;
-        }
-        if let PythiaError::UnrecordedAssetPairError(_) = self {
-            return actix_web::http::StatusCode::NOT_FOUND;
-        }
-        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+// Error in main are shown using Debug display which is sad
+// because we implemented a nice display of all error produced by Pythia
+// So we use Display implementation as the Debug one
+
+impl std::fmt::Debug for PythiaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
     }
 }

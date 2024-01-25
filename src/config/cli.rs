@@ -1,26 +1,19 @@
+use clap::Parser;
+use secp256k1_zkp::SecretKey;
+use sqlx::postgres::PgConnectOptions;
 use std::{
-    fs::{self, File},
+    fs::{read_to_string, File},
     io::Read,
     str::FromStr,
 };
 
-use clap::Parser;
-use secp256k1_zkp::SecretKey;
-
-use crate::{
-    common::{AssetPairInfo, ConfigurationFile, OracleSchedulerConfig},
-    env::{
-        match_debug_mode_env, match_nb_connection, match_port_env, match_postgres_env,
-        match_secret_key_env,
-    },
-    error::PythiaError,
+use super::{
+    env::*, error::PythiaConfigError, AssetPairInfo, ConfigurationFile, OracleSchedulerConfig,
 };
-
-use sqlx::postgres::PgConnectOptions;
 
 #[derive(Parser)]
 /// Simple DLC oracle implementation
-pub struct PythiaArgs {
+pub(crate) struct PythiaArgs {
     /// Private key, MUST be set if ORACLE_SECRET_KEY is not
     #[clap(short, long, value_name = "hex")]
     pub secret_key_file: Option<String>,
@@ -57,11 +50,11 @@ type InitParams = (
 );
 
 impl PythiaArgs {
-    pub fn match_args(self) -> Result<InitParams, PythiaError> {
+    pub(crate) fn match_args(self) -> Result<InitParams, PythiaConfigError> {
         let config_file: ConfigurationFile = match self.config_file {
             None => {
                 info!("reading asset pair and oracle scheduler config from config.json");
-                serde_json::from_str(&fs::read_to_string("config.json")?)?
+                serde_json::from_str(&read_to_string("config.json")?)?
             }
             Some(path) => {
                 info!(
@@ -83,15 +76,15 @@ impl PythiaArgs {
         );
 
         info!(
-            "asset pair and oracle scheduler config successfully read: {:#?}",
-            (&asset_pair_infos, &oracle_scheduler_config)
+            "asset pair and oracle scheduler config successfully read: {:#?}\n{}",
+            &asset_pair_infos, &oracle_scheduler_config
         );
 
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 
         let secret_key = match self.secret_key_file {
             Some(s) => {
-                SecretKey::from_str(s.as_str()).map_err(|_e| PythiaError::InvalidSecretKey)?
+                SecretKey::from_str(s.as_str()).map_err(|_e| PythiaConfigError::InvalidSecretKey)?
             }
             None => match_secret_key_env()?,
         };

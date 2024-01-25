@@ -1,13 +1,13 @@
-use super::{PriceFeed, PriceFeedError, Result};
+use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::info;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
-use time::OffsetDateTime;
 
-pub struct Bitstamp {}
+pub(super) struct Bitstamp {}
 
 #[derive(Debug, Deserialize)]
 struct Response {
@@ -30,14 +30,14 @@ struct Ohlc {
 impl PriceFeed for Bitstamp {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
-            AssetPair::Btcusd => "btcusd",
+            AssetPair::BtcUsd => "btcusd",
         }
     }
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: OffsetDateTime) -> Result<f64> {
+    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
-        let start_time = instant.unix_timestamp();
+        let start_time = instant.timestamp();
         info!("sending bitstamp http request");
         let res: Response = client
             .get(format!(
@@ -56,7 +56,7 @@ impl PriceFeed for Bitstamp {
         info!("received response: {:#?}", res);
 
         if let Some(errs) = res.errors {
-            return Err(PriceFeedError::InternalError(format!(
+            return Err(PriceFeedError::Server(format!(
                 "bitstamp error: code {}, {:#?}",
                 match res.code {
                     None => "unknown".to_string(),
