@@ -51,6 +51,15 @@ interface Constructor {
   url?: string
 }
 
+export const parseEventId = (eventId: string) => {
+  const match = eventId.match(/([a-z_]+)(\d+)/i)?.slice(1)
+  if (!match || match.length !== 2) {
+    throw new Error('Invalid event id')
+  }
+  const [assetPair, time] = match as [string, string]
+  return { assetPair, time: new Date(+time * 1000) }
+}
+
 export class Pythia extends EventEmitter<Events> {
   version: string
   url: string
@@ -138,7 +147,7 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   parseEventId(eventId: string) {
-    const match = eventId.match(/([a-z]+)(\d+)/i)?.slice(1)
+    const match = eventId.match(/([a-z_]+)(\d+)/i)?.slice(1)
     if (!match || match.length !== 2) {
       throw new Error('Invalid event id')
     }
