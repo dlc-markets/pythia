@@ -51,6 +51,15 @@ interface Constructor {
   url?: string
 }
 
+export const parseEventId = (eventId: string) => {
+  const match = eventId.match(/([a-z_]+)(\d+)/i)?.slice(1)
+  if (!match || match.length !== 2) {
+    throw new Error('Invalid event id')
+  }
+  const [assetPair, time] = match as [string, string]
+  return { assetPair, time: new Date(+time * 1000) }
+}
+
 export class Pythia extends EventEmitter<Events> {
   version: string
   url: string
@@ -137,15 +146,6 @@ export class Pythia extends EventEmitter<Events> {
     return response.json() as Result
   }
 
-  parseEventId(eventId: string) {
-    const match = eventId.match(/([a-z]+)(\d+)/i)?.slice(1)
-    if (!match || match.length !== 2) {
-      throw new Error('Invalid event id')
-    }
-    const [assetPair, time] = match as [string, string]
-    return { assetPair, time: new Date(+time * 1000) }
-  }
-
   getOraclePublicKey() {
     return this.request<{ publicKey: string }>('GET', 'oracle/publickey')
   }
@@ -166,7 +166,7 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAnnouncementByEventId({ eventId }: { eventId: string }) {
-    const { assetPair, time } = this.parseEventId(eventId)
+    const { assetPair, time } = parseEventId(eventId)
     return this.getAnnouncement({ assetPair, time })
   }
 
@@ -178,7 +178,7 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAttestationByEventId({ eventId }: { eventId: string }) {
-    const { assetPair, time } = this.parseEventId(eventId)
+    const { assetPair, time } = parseEventId(eventId)
     return this.getAttestation({ assetPair, time })
   }
 

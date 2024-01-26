@@ -37,3 +37,6 @@ jobs:
 
       - run: pnpm type-check
         working-directory: ./api-js
+
+      - run: pnpm test
+        working-directory: ./api-js

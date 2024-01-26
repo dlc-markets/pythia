@@ -9,6 +9,17 @@ on:
   push:
     branches:
       - master
+    paths:
+      - src/**
+      - .sqlx/**
+      - migrations/**
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - src/**
+      - .sqlx/**
+      - migrations/**
+      - .github/workflows/docker.yml
 
 jobs:
   docker:

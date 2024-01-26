@@ -1,6 +1,6 @@
 {
   "name": "@dlc-markets/pythia",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "A set of wrappers to easily communicate with Pythia",
   "contributors": [
     {
@@ -50,7 +50,8 @@
     "format:check": "prettier --check './**/*.ts'",
     "build": "tsc --build tsconfig.build.json",
     "release": "pnpm build && pnpm publish",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest --run"
   },
   "dependencies": {
     "eventemitter3": "5.0.1",
@@ -61,13 +62,15 @@
     "@types/ws": "8.5.10",
     "@typescript-eslint/eslint-plugin": "6.18.0",
     "@typescript-eslint/parser": "6.18.0",
+    "@vitest/coverage-v8": "^1.2.1",
     "eslint": "8.56.0",
     "eslint-config-prettier": "9.1.0",
     "eslint-import-resolver-typescript": "3.6.1",
     "eslint-plugin-import": "2.29.1",
     "eslint-plugin-promise": "6.1.1",
     "prettier": "3.1.1",
-    "typescript": "5.3.3"
+    "typescript": "5.3.3",
+    "vitest": "1.2.1"
   },
   "prettier": {
     "printWidth": 80,
