@@ -2,7 +2,7 @@ use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::info;
+use log::debug;
 use reqwest::Client;
 use serde_json::Value;
 

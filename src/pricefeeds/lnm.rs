@@ -3,7 +3,7 @@ use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
-use log::info;
+use log::debug;
 use reqwest::Client;
 
 pub(super) struct Lnmarkets {}
