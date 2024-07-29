@@ -124,7 +124,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                             .expect("usable channel");
                     }
                     Ok(None) => debug!("Already attested: {}", event_id),
-                    Err(e) => return e,
+                    Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
                 }
             }
         }
