@@ -130,7 +130,7 @@ impl DBconnection {
         // SECURITY: secret nonce MUST be dropped from DB by setting all of them to null.
         // This ensures that a DB leakage would not immediatly allow secret key extraction
         // Notice: secret key is still leaked if we sign events which secret nonce was in leaked DB
-        sqlx::query!(
+        let query_result = sqlx::query!(
             "WITH events AS (
                 UPDATE oracle.events SET outcome = $1::FLOAT8 WHERE id = $2::TEXT
             )
@@ -141,7 +141,7 @@ impl DBconnection {
             FROM UNNEST($3::BYTEA[], $4::VARCHAR[], $5::INT[]) 
             AS t(sig, id, digit)
             ) AS bulk 
-        WHERE event_id = bulk.id AND digit_index = bulk.digit
+        WHERE event_id = bulk.id AND digit_index = bulk.digit AND nonce_secret IS NOT NULL
         ",
             outcome,
             event_id,

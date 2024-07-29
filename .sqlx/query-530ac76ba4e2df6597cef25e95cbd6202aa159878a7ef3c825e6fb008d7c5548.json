@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH events AS (\n                UPDATE oracle.events SET outcome = $1::FLOAT8 WHERE id = $2::TEXT\n            )\n            UPDATE oracle.digits\n        SET signature = bulk.sig, signing_ts = NOW(), nonce_secret = NULL\n        FROM ( \n            SELECT *\n            FROM UNNEST($3::BYTEA[], $4::VARCHAR[], $5::INT[]) \n            AS t(sig, id, digit)\n            ) AS bulk \n        WHERE event_id = bulk.id AND digit_index = bulk.digit AND nonce_secret IS NOT NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Text",
+        "ByteaArray",
+        "VarcharArray",
+        "Int4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "530ac76ba4e2df6597cef25e95cbd6202aa159878a7ef3c825e6fb008d7c5548"
+}
