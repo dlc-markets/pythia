@@ -67,7 +67,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
             if let Ok(duration) = maybe_std_duration {
-                info!(
+                debug!(
                     "next announcement at {} in {:?} with maturity {}",
                     &next_time,
                     &duration,
@@ -100,7 +100,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
     let attestation_thread = async move {
         for next_time in attestation_scheduled_dates {
             if let Ok(duration) = (next_time - Utc::now()).to_std() {
-                info!("next attestation at {} in {:?}", &next_time, &duration);
+                debug!("next attestation at {} in {:?}", &next_time, &duration);
                 sleep(duration).await;
             };
 

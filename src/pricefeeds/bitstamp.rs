@@ -38,7 +38,7 @@ impl PriceFeed for Bitstamp {
         let client = Client::new();
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
         let start_time = instant.timestamp();
-        info!("sending bitstamp http request");
+        debug!("sending bitstamp http request");
         let res: Response = client
             .get(format!(
                 "https://www.bitstamp.net/api/v2/ohlc/{}",
@@ -53,7 +53,7 @@ impl PriceFeed for Bitstamp {
             .await?
             .json()
             .await?;
-        info!("received response: {:#?}", res);
+        debug!("received response: {:#?}", res);
 
         if let Some(errs) = res.errors {
             return Err(PriceFeedError::Server(format!(

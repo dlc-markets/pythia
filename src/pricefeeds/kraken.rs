@@ -28,7 +28,7 @@ impl PriceFeed for Kraken {
         let client = Client::new();
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
         let start_time = instant.timestamp();
-        info!("sending kraken http request");
+        debug!("sending kraken http request");
         let res: Response = client
             .get("https://api.kraken.com/0/public/OHLC")
             .query(&[
@@ -39,7 +39,7 @@ impl PriceFeed for Kraken {
             .await?
             .json()
             .await?;
-        info!("received response: {:#?}", res);
+        debug!("received response: {:#?}", res);
 
         if !res.error.is_empty() {
             return Err(PriceFeedError::Server(format!(

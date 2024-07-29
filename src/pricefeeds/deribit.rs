@@ -43,7 +43,7 @@ impl PriceFeed for Deribit {
         }
 
         let asset_pair_translation = self.translate_asset_pair(asset_pair);
-        info!("sending Deribit http request");
+        debug!("sending Deribit http request");
         let res: DeribitResponse = client
             .get("https://www.deribit.com/api/v2/public/get_index_price")
             .query(&[("index_name", asset_pair_translation)])
@@ -51,7 +51,7 @@ impl PriceFeed for Deribit {
             .await?
             .json()
             .await?;
-        info!("received response: {:#?}", res);
+        debug!("received response: {:#?}", res);
 
         // Deribit does not allow to retrieve past index price
         // So we check that we are not asking for price more than a minute ago

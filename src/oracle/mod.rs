@@ -109,9 +109,9 @@ impl Oracle {
         self.db
             .insert_announcement(&announcement, sk_nonces)
             .await?;
-        info!("created oracle announcement with maturation {}", maturation);
+        debug!("created oracle announcement with maturation {}", maturation);
 
-        debug!("announcement {:#?}", &announcement);
+        trace!("announcement {:#?}", &announcement);
 
         Ok(announcement)
     }
@@ -129,7 +129,7 @@ impl Oracle {
             );
             return Ok(compute_attestation(self, event));
         };
-        info!("retrieving price feed for attestation");
+        trace!("retrieving price feed for attestation");
         let outcome = self
             .asset_pair_info
             .pricefeed
@@ -151,11 +151,11 @@ impl Oracle {
             signatures,
             outcomes: outcome_vec,
         };
-        info!(
+        debug!(
             "created oracle attestation with maturation {}",
             event.maturity
         );
-        debug!("attestation {:#?}", &attestation);
+        trace!("attestation {:#?}", &attestation);
 
         let _ = &self
             .db
