@@ -14,7 +14,7 @@ struct EventResponse {
     outcome: Option<f64>,
 }
 
-struct DigitAnnoncementResponse {
+struct DigitAnnouncementResponse {
     nonce_public: Vec<u8>,
     nonce_secret: Option<Vec<u8>>,
 }
@@ -84,13 +84,13 @@ impl DBconnection {
             .map(|x| x.into())
             .collect::<Vec<_>>();
 
-        sqlx::query!(
+        let query_result = sqlx::query!(
             "WITH events AS (
-                INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING
             )
             INSERT INTO oracle.digits (event_id, digit_index, nonce_public, nonce_secret) (
                 SELECT * FROM UNNEST($6::VARCHAR[], $7::INT[], $8::BYTEA[], $9::BYTEA[])
-            )
+            ) ON CONFLICT DO NOTHING
             ",
             &announcement.oracle_event.event_id,
             &(digits.nb_digits as i32),
@@ -110,6 +110,21 @@ impl DBconnection {
         )
         .execute(&self.0)
         .await?;
+
+        let affected_raws_counts = query_result.rows_affected();
+
+        trace!(
+            "Rows affected count when inserting announcement: {}",
+            affected_raws_counts
+        );
+
+        if affected_raws_counts != digits.nb_digits as u64 {
+            match affected_raws_counts {
+                0 => warn!("We tried to insert an announcement while it was already in postgres database. This is normal only if another pythia instance is running using the same database with the same private key."),
+                x @ 1.. => error!("Updating to attestation did not affect the expected number of rows: {} instead of {}", x, digits.nb_digits),
+            }
+        }
+
         Ok(())
     }
 
@@ -152,6 +167,20 @@ impl DBconnection {
         .execute(&self.0)
         .await?;
 
+        let affected_raws_counts = query_result.rows_affected();
+
+        trace!(
+            "Rows affected count when updating to attestation: {}",
+            affected_raws_counts
+        );
+
+        if affected_raws_counts as usize != sigs.len() {
+            match affected_raws_counts {
+                0 => warn!("We tried to update an announcement into an attestation while it was already an attestation in postgres database. This is normal only if another pythia instance is running using the same database with the same private key."),
+                x @ 1.. => error!("Updating to attestation did not affect the expected number of rows: {} instead of {}", x, sigs.len()),
+            }
+        }
+
         Ok(())
     }
 
@@ -168,7 +197,7 @@ impl DBconnection {
         match event.outcome {
             None => {
                 let digits = sqlx::query_as!(
-                DigitAnnoncementResponse,
+                DigitAnnouncementResponse,
                 "SELECT nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
                 event_id
             )
