@@ -3,7 +3,7 @@ use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
-use log::info;
+use log::debug;
 use reqwest::Client;
 
 pub(super) struct Lnmarkets {}
@@ -33,7 +33,7 @@ impl PriceFeed for Lnmarkets {
             .expect("1 minute is a reasonable duration")
             .timestamp();
 
-        info!("sending LNMarkets http request");
+        debug!("sending LNMarkets http request");
         let res: Vec<LnmarketsQuote> = client
             .get("https://api.Lnmarkets.com/v2/oracle/index")
             .query(&[
@@ -45,7 +45,7 @@ impl PriceFeed for Lnmarkets {
             .await?
             .json()
             .await?;
-        info!("received response: {:#?}", res);
+        debug!("received response: {:#?}", res);
 
         if res.is_empty() {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));

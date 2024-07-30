@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH events AS (\n                INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING\n            )\n            INSERT INTO oracle.digits (event_id, digit_index, nonce_public, nonce_secret) (\n                SELECT * FROM UNNEST($6::VARCHAR[], $7::INT[], $8::BYTEA[], $9::BYTEA[])\n            ) ON CONFLICT DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int4",
+        "Int4",
+        "Timestamptz",
+        "Bytea",
+        "VarcharArray",
+        "Int4Array",
+        "ByteaArray",
+        "ByteaArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9dc4a2beded5f4e05f4d35d44929769172ba2a8fdbdfc77220354e4e3fe76f9c"
+}
