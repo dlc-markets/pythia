@@ -3,7 +3,7 @@ FROM rust:1.75-slim-bookworm AS builder
 
 RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
     --mount=target=/var/cache/apt,type=cache,sharing=locked \
-    apt update -y && apt install -y \
+    apt-get update -y && apt-get install -y \
     pkg-config \
     make \
     g++ \
@@ -29,13 +29,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
 
 FROM debian:bookworm-slim
 
-ENV PYTHIA_PORT=8000
-
 COPY --from=builder /app/pythia /usr/bin/pythia
 
 RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
     --mount=target=/var/cache/apt,type=cache,sharing=locked \
-    apt update -y && apt install -y \
+    apt-get update -y && apt-get install -y \
     libssl-dev \
     ca-certificates \
     netcat-traditional
@@ -51,11 +49,9 @@ COPY config.json /home/pythia/config.json
 
 COPY migrations ./migrations
 
-COPY scripts/healthcheck.sh ./healthcheck.sh
-
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5s --retries=3 \
-    CMD [ "/home/pythia/healthcheck.sh" ]
+    CMD [ "nc", "-zv", "localhost", "8000" ]
 
 CMD [ "pythia", "-c", "/home/pythia/config.json" ]
