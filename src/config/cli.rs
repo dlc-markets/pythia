@@ -1,11 +1,9 @@
+use chrono::Duration;
 use clap::Parser;
+use cron::Schedule;
 use secp256k1_zkp::SecretKey;
 use sqlx::postgres::PgConnectOptions;
-use std::{
-    fs::{read_to_string, File},
-    io::Read,
-    str::FromStr,
-};
+use std::{fs::File, io::Read, str::FromStr};
 
 use super::{
     env::*, error::PythiaConfigError, AssetPairInfo, ConfigurationFile, OracleSchedulerConfig,
@@ -16,7 +14,7 @@ use super::{
 pub(crate) struct PythiaArgs {
     /// Private key, MUST be set if ORACLE_SECRET_KEY is not
     #[clap(short, long, value_name = "hex")]
-    pub secret_key_file: Option<String>,
+    pub secret_key: Option<String>,
 
     /// Optional config file; if not provided, it is assumed to exist at "config.json"
     #[clap(short, long, value_name = "file", value_hint = clap::ValueHint::FilePath)]
@@ -35,8 +33,30 @@ pub(crate) struct PythiaArgs {
     max_connections: Option<u32>,
 
     /// Debug mode: allow using /force API path DO NOT SET TO TRUE IN PRODUCTION
-    #[clap(short, long, value_name = "enabled")]
+    #[clap(short, long)]
     debug_mode: Option<bool>,
+
+    /// Oracle attestation schedule in Cron notation, requires offset argument
+    #[clap(long, requires("offset"), value_name = "cron schedule")]
+    schedule: Option<Schedule>,
+
+    /// Oracle announcement offset, require schedule argument
+    #[clap(
+        long,
+        requires("schedule"),
+        value_name = "duration",
+        value_parser(parse_duration)
+    )]
+    offset: Option<Duration>,
+
+    /// Pairs supported
+    #[clap(
+        long,
+        help = "a JSON asset pair infos, multiple pairs can be configured",
+        value_name = "AssetPairInfos",
+        value_parser(parse_asset_pair_array)
+    )]
+    pair: Option<Vec<AssetPairInfo>>,
 }
 
 type InitParams = (
@@ -51,28 +71,40 @@ type InitParams = (
 
 impl PythiaArgs {
     pub(crate) fn match_args(self) -> Result<InitParams, PythiaConfigError> {
-        let config_file: ConfigurationFile = match self.config_file {
-            None => {
-                info!("reading asset pair and oracle scheduler config from config.json");
-                serde_json::from_str(&read_to_string("config.json")?)?
-            }
-            Some(path) => {
+        let cli_schedule =
+            self.schedule
+                .zip(self.offset)
+                .map(|(schedule, offset)| OracleSchedulerConfig {
+                    schedule,
+                    announcement_offset: offset,
+                });
+        let cli_pairs = self.pair;
+
+        let (file_schedule, file_pairs) = (cli_schedule.is_none() || cli_pairs.is_none())
+            .then(|| {
+                let path = self.config_file.unwrap_or("config.json".into());
                 info!(
                     "reading asset pair and oracle scheduler config from {}",
                     path.as_os_str().to_string_lossy()
                 );
-                let mut config_file = String::new();
-                File::open(path)?.read_to_string(&mut config_file)?;
-                serde_json::from_str(&config_file)?
-            }
-        };
+                let mut buffer_read = String::new();
+                File::open(path)?.read_to_string(&mut buffer_read)?;
+                let ConfigurationFile {
+                    pairs,
+                    oracle_scheduler_config,
+                } = serde_json::from_str(&buffer_read)?;
+                Ok::<_, PythiaConfigError>((oracle_scheduler_config, pairs))
+            })
+            .transpose()?
+            .unzip();
 
-        let (asset_pair_infos, oracle_scheduler_config): (
-            Vec<AssetPairInfo>,
-            OracleSchedulerConfig,
-        ) = (
-            config_file.asset_pair_infos,
-            config_file.oracle_scheduler_config,
+        let (asset_pair_infos, oracle_scheduler_config) = (
+            cli_pairs
+                .or(file_pairs)
+                .expect("file loaded if cli missing"),
+            cli_schedule
+                .or(file_schedule)
+                .expect("file loaded if cli missing"),
         );
 
         info!(
@@ -82,7 +114,7 @@ impl PythiaArgs {
 
         let db_connect = self.url_postgres.unwrap_or(match_postgres_env()?);
 
-        let secret_key = match self.secret_key_file {
+        let secret_key = match self.secret_key {
             Some(s) => {
                 SecretKey::from_str(s.as_str()).map_err(|_e| PythiaConfigError::InvalidSecretKey)?
             }
@@ -114,4 +146,19 @@ impl PythiaArgs {
             debug_mode,
         ))
     }
+}
+
+fn parse_asset_pair_array(val: &str) -> Result<AssetPairInfo, String> {
+    let rules = serde_json::from_str(val).map_err(|e| e.to_string())?;
+    Ok(rules)
+}
+
+fn parse_duration(v: &str) -> Result<chrono::Duration, String> {
+    Ok(Duration::nanoseconds(
+        humantime::parse_duration(v)
+            .map_err(|ref e| e.to_string())?
+            .as_nanos()
+            .try_into()
+            .map_err(|e: <u128 as TryFrom<i64>>::Error| e.to_string())?,
+    ))
 }

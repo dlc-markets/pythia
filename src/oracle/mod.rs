@@ -67,11 +67,7 @@ impl Oracle {
             );
             return Ok(compute_announcement(self, event));
         }
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            &self.asset_pair_info.event_descriptor
-        else {
-            panic!("Error in db")
-        };
+        let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
@@ -92,7 +88,9 @@ impl Oracle {
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_descriptor: EventDescriptor::DigitDecompositionEvent(
+                self.asset_pair_info.event_descriptor.clone(),
+            ),
             event_id,
         };
 
@@ -184,11 +182,7 @@ impl Oracle {
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id =
             ("btcusd".to_string() + &maturation.timestamp().to_string()).into_boxed_str();
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            &self.asset_pair_info.event_descriptor
-        else {
-            panic!("Error in db")
-        };
+        let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let (sk_nonces, nonces, was_not_announced) = match self.db.get_event(&event_id).await? {
             Some(postgres_response) => match postgres_response.scalars_records {
@@ -246,7 +240,9 @@ impl Oracle {
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_descriptor: EventDescriptor::DigitDecompositionEvent(
+                self.asset_pair_info.event_descriptor.clone(),
+            ),
             event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
                 + maturation.timestamp().to_string().as_str(),
         };
@@ -336,7 +332,9 @@ fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnou
     let oracle_event = OracleEvent {
         oracle_nonces: event.nonce_public.clone(),
         event_maturity_epoch: event.maturity.timestamp() as u32,
-        event_descriptor: oracle.asset_pair_info.event_descriptor.clone(),
+        event_descriptor: EventDescriptor::DigitDecompositionEvent(
+            oracle.asset_pair_info.event_descriptor.clone(),
+        ),
         event_id,
     };
 
@@ -383,14 +381,13 @@ mod test {
         pricefeed: ImplementedPriceFeed,
     ) -> Oracle {
         let asset_pair = AssetPair::BtcUsd;
-        let event_descriptor =
-            EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
-                base: 2,
-                is_signed: false,
-                unit: "btc/usd".into(),
-                precision,
-                nb_digits,
-            });
+        let event_descriptor = DigitDecompositionEventDescriptor {
+            base: 2,
+            is_signed: false,
+            unit: "btc/usd".into(),
+            precision,
+            nb_digits,
+        };
         let asset_pair_info = AssetPairInfo {
             pricefeed,
             asset_pair,
@@ -407,32 +404,23 @@ mod test {
     #[sqlx::test]
     async fn test_oracle_setup(tbd: PgPool) {
         let oracle = setup_oracle(tbd.clone(), 0, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            oracle.asset_pair_info.clone().event_descriptor
-        else {
-            panic!("Invalid event type")
-        };
+        let event = oracle.asset_pair_info.clone().event_descriptor;
         assert_eq!((0, 20), (event.precision, event.nb_digits));
         let oracle = setup_oracle(tbd, 10, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            oracle.asset_pair_info.clone().event_descriptor
-        else {
-            panic!("Invalid event type")
-        };
+        let event = oracle.asset_pair_info.clone().event_descriptor;
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
 
     async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date).await.unwrap();
-        assert_eq!(
-            oracle_announcement,
-            oracle
-                .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
-                .await
-                .unwrap()
-                .unwrap()
-                .0
-        );
+
+        let db_oracle_announcement = oracle
+            .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
+            .await
+            .inspect_err(|e| println!("{}", e))
+            .unwrap()
+            .unwrap_or_else(|| panic!("No oracle announcement in DB !"));
+        assert_eq!(oracle_announcement, db_oracle_announcement.0);
 
         let secp = &oracle.secp;
         secp.verify_schnorr(
@@ -506,11 +494,7 @@ mod test {
                 oracle_announcement.oracle_event.event_maturity_epoch > now.timestamp() as u32
             ),
             Some(attestation) => {
-                let EventDescriptor::DigitDecompositionEvent(event) =
-                    &oracle.asset_pair_info.event_descriptor
-                else {
-                    panic!("Invalid event type")
-                };
+                let event = &oracle.asset_pair_info.event_descriptor;
                 let precision = event.precision;
                 assert!(
                     (oracle

@@ -1,21 +1,17 @@
 {
-    "asset_pair_infos": [
+    "pairs": [
         {
             "pricefeed": "lnmarkets",
-            "asset_pair": "btc_usd",
-            "event_descriptor": {
-                "digitDecompositionEvent": {
-                    "base": 2,
-                    "isSigned": false,
-                    "unit": "usd/btc",
-                    "precision": 7,
-                    "nbDigits": 30
-                }
+            "assetPair": "btc_usd",
+            "eventDescriptor": {
+                "base": 2,
+                "isSigned": false,
+                "unit": "usd/btc",
+                "precision": 7,
+                "nbDigits": 30
             }
         }
     ],
-    "oracle_scheduler_config": {
-        "schedule": "0 */1 * * * * *",
-        "announcement_offset": "2min"
-    }
+    "schedule": "0 */1 * * * * *",
+    "announcement_offset": "2min"
 }
