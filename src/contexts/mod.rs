@@ -15,7 +15,7 @@ pub(super) mod scheduler;
 use api_context::ApiContext;
 use error::PythiaContextError;
 
-/// Initialise contexts for the API and scheduler binded internally together through a channel sending scheduled event to websocket context
+/// Initialize contexts for the API and scheduler bind internally together through a channel sending scheduled event to websocket context
 pub(super) fn create_contexts(
     oracles: HashMap<AssetPair, Oracle>,
     scheduler_config: OracleSchedulerConfig,

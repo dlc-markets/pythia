@@ -45,7 +45,7 @@ impl ImplementedPriceFeed {
     }
 }
 
-// Pricefeeders can be obtain by coding a pricefeed which simply aggregate other pricefeeders response
+// Pricefeeds can be obtain by coding a pricefeed which simply aggregate other pricefeeds response
 
 #[cfg(test)]
 mod test {
@@ -56,9 +56,9 @@ mod test {
     use super::{error::PriceFeedError, ImplementedPriceFeed};
     use strum::IntoEnumIterator;
 
-    // Test all the implemented pricefeeders. Failing mean there has been breaking change in a pricefeeder API
+    // Test all the implemented pricefeeds. Failing mean there has been breaking change in a pricefeed API
     #[actix_web::test]
-    async fn test_all_pricefeeders() {
+    async fn test_all_pricefeeds() {
         let mut deprecated: Vec<(ImplementedPriceFeed, PriceFeedError)> = vec![];
         let now = Utc::now().trunc_subsecs(0);
         for pricefeed in ImplementedPriceFeed::iter() {
@@ -70,7 +70,7 @@ mod test {
         }
         if !deprecated.is_empty() {
             panic!(
-                "Some pricefeeder APIs seem deprecated: {:?}\n No answer for date {}",
+                "Some pricefeed APIs seem deprecated: {:?}\n No answer for date {}",
                 deprecated, now
             )
         }

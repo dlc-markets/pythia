@@ -51,7 +51,7 @@ impl PriceFeed for Deribit {
         // Deribit does not allow to retrieve past index price
         // So we check that we are not asking for price more than a minute ago
         // if we do then we return that price is not available to not attest anything
-        // A fallback pricefeeder can be used instead in the future
+        // A fallback pricefeed can be used instead in the future
 
         if res.us_in / 1_000_000 - start_time as u64 > 60 {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));

@@ -52,7 +52,7 @@ struct ApiOracleEvent {
 }
 
 #[get("/oracle/publickey")]
-pub(super) async fn pubkey(
+pub(super) async fn pub_key(
     context: ApiContext,
     filters: web::Query<Filters>,
 ) -> Result<HttpResponse> {

@@ -30,7 +30,7 @@ pub struct Oracle {
 }
 
 impl Oracle {
-    /// Create a new instance of oracle for a numerical outcome given an libsecp256k1 context, a postgres DB connection and a keypair.
+    /// Create a new instance of oracle for a numerical outcome given an lib secp256k1 context, a postgres DB connection and a keypair.
     pub fn new(
         asset_pair_info: AssetPairInfo,
         secp: Secp256k1<All>,
@@ -207,10 +207,13 @@ impl Oracle {
                         "!!! Forced attestation !!!: {} event is already attested with price {}, ignore forcing",
                         event_id, outcome
                     );
-                    let (oracle_annoncement, oracle_attestation) =
+                    let (oracle_announcement, oracle_attestation) =
                         self.oracle_state(&event_id).await?.expect("is announced");
 
-                    return Ok((oracle_annoncement, oracle_attestation.expect("is attested")));
+                    return Ok((
+                        oracle_announcement,
+                        oracle_attestation.expect("is attested"),
+                    ));
                 }
             },
             None => {
@@ -220,7 +223,7 @@ impl Oracle {
                     "!!! Forced announcement !!!: created oracle event and announcement with maturation {}",
                     maturation
                 );
-                // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
+                // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
                 {
                     let mut rng = thread_rng();
                     for _ in 0..digits {
@@ -302,26 +305,22 @@ impl Oracle {
 }
 
 fn compute_attestation(oracle: &Oracle, event: PostgresResponse) -> Option<OracleAttestation> {
-    match event.scalars_records {
-        ScalarsRecords::DigitsSkNonce(_) => None,
-        ScalarsRecords::DigitsAttestations(outcome, sigs) => {
-            let full_signatures = sigs
-                .into_iter()
-                .zip(event.nonce_public)
-                .map(|(s, n)| {
-                    <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
-                        n.into(),
-                        s.into(),
-                    ))
+    if let ScalarsRecords::DigitsAttestations(outcome, sigs) = event.scalars_records {
+        let full_signatures = sigs
+            .into_iter()
+            .zip(event.nonce_public)
+            .map(|(s, n)| {
+                <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((n.into(), s.into()))
                     .into()
-                })
-                .collect();
-            Some(OracleAttestation {
-                oracle_public_key: oracle.keypair.public_key().into(),
-                signatures: full_signatures,
-                outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
             })
-        }
+            .collect();
+        Some(OracleAttestation {
+            oracle_public_key: oracle.keypair.public_key().into(),
+            signatures: full_signatures,
+            outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+        })
+    } else {
+        None
     }
 }
 
@@ -467,14 +466,14 @@ mod test {
             Err(OracleError::PriceFeedError(error)) => {
                 let PriceFeedError::PriceNotAvailable(_, asked_date) = error else {
                     panic!(
-                        "Pricefeeder {:?} did not respond for this date {}",
+                        "Pricefeed {:?} did not respond for this date {}",
                         oracle.asset_pair_info.pricefeed,
                         date.clone()
                     )
                 };
-                // Pricefeeder can only respond that price is not available if our query was asking in the future
+                // Pricefeed can only respond that price is not available if our query was asking in the future
                 if asked_date < now {
-                    panic!("Pricefeeder {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
+                    panic!("Pricefeed {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
                 };
                 return;
             }
@@ -783,7 +782,7 @@ mod test {
         check_test_vec(attestation_test_vec);
     }
 
-    fn check_test_vec_dlcspecs(attestation_test_vec: OracleAttestation) {
+    fn check_test_vec_dlc_specs(attestation_test_vec: OracleAttestation) {
         let secp = Secp256k1::new();
         attestation_test_vec
             .signatures
@@ -810,10 +809,10 @@ mod test {
     }
 
     #[test]
-    #[should_panic] // Surprising because we should have follow suredbit spec
-    fn test_vector_announcement_suredbit() {
-        // DOES NOT PASS ? HASH TAG OR TLV SERIALISATION IS INCORRECT ?
-        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
+    #[should_panic] // Surprising because we should have follow suredbits spec
+    fn test_vector_announcement_suredbits() {
+        // DOES NOT PASS ? HASH TAG OR TLV SERIALIZATION IS INCORRECT ?
+        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUST DLC
 
         // https://oracle.suredbits.com/announcement/3ef91d749960d85f1190e86bd89d7d65a6303ca9bd4f16111c569d46d81f8f04
         let digit_decomposition = DigitDecompositionEventDescriptor {
@@ -865,9 +864,9 @@ mod test {
         //     announcement.announcement_signature,
         // )
         // .unwrap();
-        let taghash =
+        let tag_hash =
             <secp256k1_zkp::hashes::sha256::Hash>::hash("DLC/oracle/announcement/v0".as_bytes());
-        let tag = taghash.as_ref();
+        let tag = tag_hash.as_ref();
         let payload = [tag, tag, announcement.oracle_event.encode().as_slice()].concat();
         secp.verify_schnorr(
             &announcement.announcement_signature,
@@ -878,8 +877,8 @@ mod test {
     }
 
     #[test]
-    fn tests_vector_attestation_suredbit() {
-        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
+    fn tests_vector_attestation_suredbits() {
+        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUST DLC
         // USE TAGGED HASHES INSTEAD
 
         // https://oracle.suredbits.com/announcement/3ef91d749960d85f1190e86bd89d7d65a6303ca9bd4f16111c569d46d81f8f04
@@ -927,6 +926,6 @@ mod test {
                 ].into_iter().map(|d| d.to_string()).collect(),
             };
 
-        check_test_vec_dlcspecs(attestation_test_vec);
+        check_test_vec_dlc_specs(attestation_test_vec);
     }
 }
