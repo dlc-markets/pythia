@@ -414,7 +414,7 @@ mod test {
         let oracle_announcement = oracle.create_announcement(date).await.unwrap();
 
         let db_oracle_announcement = oracle
-            .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
+            .oracle_state(&("btc_usd".to_owned() + date.timestamp().to_string().as_str()))
             .await
             .inspect_err(|e| println!("{}", e))
             .unwrap()
