@@ -11,18 +11,13 @@ pub(super) struct Deribit {}
 
 struct DeribitQuote {
     index_price: f64,
-    estimated_delivery_price: f64,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct DeribitResponse {
-    jsonrpc: String,
     result: DeribitQuote,
     us_in: u64,
-    us_out: u64,
-    us_diff: u64,
-    testnet: bool,
 }
 
 #[async_trait]
