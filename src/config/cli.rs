@@ -10,21 +10,49 @@ use super::{
 };
 
 #[derive(Parser)]
-/// Simple DLC oracle implementation
+/// Simple numerical DLC oracle implementation
 pub(crate) struct PythiaArgs {
-    /// Private key, MUST be set if ORACLE_SECRET_KEY is not
-    #[clap(short, long, value_name = "hex")]
+    /// Private key, MUST be set if ORACLE_SECRET_KEY is not set in environment
+    #[clap(short, long, value_name = "32 bits hex")]
     pub secret_key: Option<String>,
 
-    /// Optional config file; if not provided, it is assumed to exist at "config.json"
+    /// Attestation schedule in Cron notation, requires offset argument, use the config file if not provided
+    #[clap(
+        long,
+        requires("offset"),
+        value_name = "cron schedule",
+        group = "oracle config"
+    )]
+    schedule: Option<Schedule>,
+
+    /// Announcement publication offset before attestation, requires schedule argument, use the config file if not provided
+    #[clap(
+        long,
+        requires("schedule"),
+        value_name = "duration",
+        value_parser(parse_duration),
+        group = "oracle config"
+    )]
+    offset: Option<Duration>,
+
+    /// Event Description of a supported price pair in JSON string format, multiple pairs can be configured, use the config file if none
+    #[clap(
+        long,
+        value_name = "AssetPairInfosJSON",
+        value_parser(parse_asset_pair_array),
+        group = "oracle config"
+    )]
+    pair: Option<Vec<AssetPairInfo>>,
+
+    /// Optional config file; if none provided but is required for missing oracle configuration, it is assumed to exist at "config.json"
     #[clap(short, long, value_name = "file", value_hint = clap::ValueHint::FilePath)]
     config_file: Option<std::path::PathBuf>,
 
-    /// Optional port for API; if not provided, use 8000
+    /// Optional port for the API; if not provided, use PYTHIA_PORT environment value or default to 8000
     #[clap(short, long, value_name = "port")]
     port: Option<u16>,
 
-    /// Optional postgres URL for oracle DB, if not provided use "postgres://postgres:postgres@127.0.0.1:5432/postgres"
+    /// Optional postgres URL for DB, use environment variable if none or default to "postgres://postgres:postgres@127.0.0.1:5432/postgres"
     #[clap(short, long, value_name = "url", value_hint = clap::ValueHint::Url)]
     url_postgres: Option<PgConnectOptions>,
 
@@ -32,31 +60,9 @@ pub(crate) struct PythiaArgs {
     #[clap(short, long, value_name = "connections")]
     max_connections: Option<u32>,
 
-    /// Debug mode: allow using /force API path DO NOT SET TO TRUE IN PRODUCTION
+    /// Debug mode: allows using /force API path DO NOT SET TO TRUE IN PRODUCTION
     #[clap(short, long)]
     debug_mode: Option<bool>,
-
-    /// Oracle attestation schedule in Cron notation, requires offset argument
-    #[clap(long, requires("offset"), value_name = "cron schedule")]
-    schedule: Option<Schedule>,
-
-    /// Oracle announcement offset, require schedule argument
-    #[clap(
-        long,
-        requires("schedule"),
-        value_name = "duration",
-        value_parser(parse_duration)
-    )]
-    offset: Option<Duration>,
-
-    /// Pairs supported
-    #[clap(
-        long,
-        help = "a JSON asset pair infos, multiple pairs can be configured",
-        value_name = "AssetPairInfos",
-        value_parser(parse_asset_pair_array)
-    )]
-    pair: Option<Vec<AssetPairInfo>>,
 }
 
 type InitParams = (
