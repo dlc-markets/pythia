@@ -59,7 +59,7 @@ pub async fn run_api_v1(
             // .service(announcements)
             .service(http::oracle_event_service)
             .service(http::config)
-            .service(http::pubkey)
+            .service(http::pub_key)
             .service(http::asset_return)
             .service(ws::websocket);
         if debug_mode {
@@ -75,8 +75,6 @@ pub async fn run_api_v1(
     .map_err(PythiaApiError::SocketUnavailable)?
     .run()
     .await?;
-
-    info!("HTTP API is running on port {}", port);
     Ok(())
 }
 

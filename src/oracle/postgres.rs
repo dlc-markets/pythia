@@ -143,7 +143,7 @@ impl DBconnection {
             .unzip();
 
         // SECURITY: secret nonce MUST be dropped from DB by setting all of them to null.
-        // This ensures that a DB leakage would not immediatly allow secret key extraction
+        // This ensures that a DB leakage would not immediately allow secret key extraction
         // Notice: secret key is still leaked if we sign events which secret nonce was in leaked DB
         let query_result = sqlx::query!(
             "WITH events AS (

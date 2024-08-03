@@ -30,7 +30,7 @@ pub struct Oracle {
 }
 
 impl Oracle {
-    /// Create a new instance of oracle for a numerical outcome given an libsecp256k1 context, a postgres DB connection and a keypair.
+    /// Create a new instance of oracle for a numerical outcome given an lib secp256k1 context, a postgres DB connection and a keypair.
     pub fn new(
         asset_pair_info: AssetPairInfo,
         secp: Secp256k1<All>,
@@ -67,11 +67,7 @@ impl Oracle {
             );
             return Ok(compute_announcement(self, event));
         }
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            &self.asset_pair_info.event_descriptor
-        else {
-            panic!("Error in db")
-        };
+        let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
@@ -92,7 +88,9 @@ impl Oracle {
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_descriptor: EventDescriptor::DigitDecompositionEvent(
+                self.asset_pair_info.event_descriptor.clone(),
+            ),
             event_id,
         };
 
@@ -184,11 +182,7 @@ impl Oracle {
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
         let event_id =
             ("btcusd".to_string() + &maturation.timestamp().to_string()).into_boxed_str();
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            &self.asset_pair_info.event_descriptor
-        else {
-            panic!("Error in db")
-        };
+        let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let (sk_nonces, nonces, was_not_announced) = match self.db.get_event(&event_id).await? {
             Some(postgres_response) => match postgres_response.scalars_records {
@@ -213,10 +207,13 @@ impl Oracle {
                         "!!! Forced attestation !!!: {} event is already attested with price {}, ignore forcing",
                         event_id, outcome
                     );
-                    let (oracle_annoncement, oracle_attestation) =
+                    let (oracle_announcement, oracle_attestation) =
                         self.oracle_state(&event_id).await?.expect("is announced");
 
-                    return Ok((oracle_annoncement, oracle_attestation.expect("is attested")));
+                    return Ok((
+                        oracle_announcement,
+                        oracle_attestation.expect("is attested"),
+                    ));
                 }
             },
             None => {
@@ -226,7 +223,7 @@ impl Oracle {
                     "!!! Forced announcement !!!: created oracle event and announcement with maturation {}",
                     maturation
                 );
-                // Begin scope to emsure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
+                // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
                 {
                     let mut rng = thread_rng();
                     for _ in 0..digits {
@@ -246,7 +243,9 @@ impl Oracle {
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: self.asset_pair_info.event_descriptor.clone(),
+            event_descriptor: EventDescriptor::DigitDecompositionEvent(
+                self.asset_pair_info.event_descriptor.clone(),
+            ),
             event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
                 + maturation.timestamp().to_string().as_str(),
         };
@@ -306,26 +305,22 @@ impl Oracle {
 }
 
 fn compute_attestation(oracle: &Oracle, event: PostgresResponse) -> Option<OracleAttestation> {
-    match event.scalars_records {
-        ScalarsRecords::DigitsSkNonce(_) => None,
-        ScalarsRecords::DigitsAttestations(outcome, sigs) => {
-            let full_signatures = sigs
-                .into_iter()
-                .zip(event.nonce_public)
-                .map(|(s, n)| {
-                    <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((
-                        n.into(),
-                        s.into(),
-                    ))
+    if let ScalarsRecords::DigitsAttestations(outcome, sigs) = event.scalars_records {
+        let full_signatures = sigs
+            .into_iter()
+            .zip(event.nonce_public)
+            .map(|(s, n)| {
+                <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((n.into(), s.into()))
                     .into()
-                })
-                .collect();
-            Some(OracleAttestation {
-                oracle_public_key: oracle.keypair.public_key().into(),
-                signatures: full_signatures,
-                outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
             })
-        }
+            .collect();
+        Some(OracleAttestation {
+            oracle_public_key: oracle.keypair.public_key().into(),
+            signatures: full_signatures,
+            outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+        })
+    } else {
+        None
     }
 }
 
@@ -336,7 +331,9 @@ fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnou
     let oracle_event = OracleEvent {
         oracle_nonces: event.nonce_public.clone(),
         event_maturity_epoch: event.maturity.timestamp() as u32,
-        event_descriptor: oracle.asset_pair_info.event_descriptor.clone(),
+        event_descriptor: EventDescriptor::DigitDecompositionEvent(
+            oracle.asset_pair_info.event_descriptor.clone(),
+        ),
         event_id,
     };
 
@@ -383,14 +380,13 @@ mod test {
         pricefeed: ImplementedPriceFeed,
     ) -> Oracle {
         let asset_pair = AssetPair::BtcUsd;
-        let event_descriptor =
-            EventDescriptor::DigitDecompositionEvent(DigitDecompositionEventDescriptor {
-                base: 2,
-                is_signed: false,
-                unit: "btc/usd".into(),
-                precision,
-                nb_digits,
-            });
+        let event_descriptor = DigitDecompositionEventDescriptor {
+            base: 2,
+            is_signed: false,
+            unit: "btc/usd".into(),
+            precision,
+            nb_digits,
+        };
         let asset_pair_info = AssetPairInfo {
             pricefeed,
             asset_pair,
@@ -407,32 +403,23 @@ mod test {
     #[sqlx::test]
     async fn test_oracle_setup(tbd: PgPool) {
         let oracle = setup_oracle(tbd.clone(), 0, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            oracle.asset_pair_info.clone().event_descriptor
-        else {
-            panic!("Invalid event type")
-        };
+        let event = oracle.asset_pair_info.clone().event_descriptor;
         assert_eq!((0, 20), (event.precision, event.nb_digits));
         let oracle = setup_oracle(tbd, 10, 20, Lnmarkets).await;
-        let EventDescriptor::DigitDecompositionEvent(event) =
-            oracle.asset_pair_info.clone().event_descriptor
-        else {
-            panic!("Invalid event type")
-        };
+        let event = oracle.asset_pair_info.clone().event_descriptor;
         assert_eq!((10, 20), (event.precision, event.nb_digits))
     }
 
     async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
         let oracle_announcement = oracle.create_announcement(date).await.unwrap();
-        assert_eq!(
-            oracle_announcement,
-            oracle
-                .oracle_state(&("btcusd".to_owned() + date.timestamp().to_string().as_str()))
-                .await
-                .unwrap()
-                .unwrap()
-                .0
-        );
+
+        let db_oracle_announcement = oracle
+            .oracle_state(&("btc_usd".to_owned() + date.timestamp().to_string().as_str()))
+            .await
+            .inspect_err(|e| println!("{}", e))
+            .unwrap()
+            .unwrap_or_else(|| panic!("No oracle announcement in DB !"));
+        assert_eq!(oracle_announcement, db_oracle_announcement.0);
 
         let secp = &oracle.secp;
         secp.verify_schnorr(
@@ -479,14 +466,14 @@ mod test {
             Err(OracleError::PriceFeedError(error)) => {
                 let PriceFeedError::PriceNotAvailable(_, asked_date) = error else {
                     panic!(
-                        "Pricefeeder {:?} did not respond for this date {}",
+                        "Pricefeed {:?} did not respond for this date {}",
                         oracle.asset_pair_info.pricefeed,
                         date.clone()
                     )
                 };
-                // Pricefeeder can only respond that price is not available if our query was asking in the future
+                // Pricefeed can only respond that price is not available if our query was asking in the future
                 if asked_date < now {
-                    panic!("Pricefeeder {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
+                    panic!("Pricefeed {:?} say price is not available for {}, which is not in the future (now it is: {}). Maybe only recent index are available.", oracle.asset_pair_info.pricefeed, asked_date, now)
                 };
                 return;
             }
@@ -506,11 +493,7 @@ mod test {
                 oracle_announcement.oracle_event.event_maturity_epoch > now.timestamp() as u32
             ),
             Some(attestation) => {
-                let EventDescriptor::DigitDecompositionEvent(event) =
-                    &oracle.asset_pair_info.event_descriptor
-                else {
-                    panic!("Invalid event type")
-                };
+                let event = &oracle.asset_pair_info.event_descriptor;
                 let precision = event.precision;
                 assert!(
                     (oracle
@@ -799,7 +782,7 @@ mod test {
         check_test_vec(attestation_test_vec);
     }
 
-    fn check_test_vec_dlcspecs(attestation_test_vec: OracleAttestation) {
+    fn check_test_vec_dlc_specs(attestation_test_vec: OracleAttestation) {
         let secp = Secp256k1::new();
         attestation_test_vec
             .signatures
@@ -826,10 +809,10 @@ mod test {
     }
 
     #[test]
-    #[should_panic] // Surprising because we should have follow suredbit spec
-    fn test_vector_announcement_suredbit() {
-        // DOES NOT PASS ? HASH TAG OR TLV SERIALISATION IS INCORRECT ?
-        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
+    #[should_panic] // Surprising because we should have follow suredbits spec
+    fn test_vector_announcement_suredbits() {
+        // DOES NOT PASS ? HASH TAG OR TLV SERIALIZATION IS INCORRECT ?
+        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUST DLC
 
         // https://oracle.suredbits.com/announcement/3ef91d749960d85f1190e86bd89d7d65a6303ca9bd4f16111c569d46d81f8f04
         let digit_decomposition = DigitDecompositionEventDescriptor {
@@ -881,9 +864,9 @@ mod test {
         //     announcement.announcement_signature,
         // )
         // .unwrap();
-        let taghash =
+        let tag_hash =
             <secp256k1_zkp::hashes::sha256::Hash>::hash("DLC/oracle/announcement/v0".as_bytes());
-        let tag = taghash.as_ref();
+        let tag = tag_hash.as_ref();
         let payload = [tag, tag, announcement.oracle_event.encode().as_slice()].concat();
         secp.verify_schnorr(
             &announcement.announcement_signature,
@@ -894,8 +877,8 @@ mod test {
     }
 
     #[test]
-    fn tests_vector_attestation_suredbit() {
-        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUSTDLC
+    fn tests_vector_attestation_suredbits() {
+        // SUREDBITS AND 10101 DO NOT FOLLOW THE SAME SPECIFICATION WE FOLLOW 10101 SPEC FROM RUST DLC
         // USE TAGGED HASHES INSTEAD
 
         // https://oracle.suredbits.com/announcement/3ef91d749960d85f1190e86bd89d7d65a6303ca9bd4f16111c569d46d81f8f04
@@ -943,6 +926,6 @@ mod test {
                 ].into_iter().map(|d| d.to_string()).collect(),
             };
 
-        check_test_vec_dlcspecs(attestation_test_vec);
+        check_test_vec_dlc_specs(attestation_test_vec);
     }
 }

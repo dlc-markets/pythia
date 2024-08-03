@@ -42,7 +42,7 @@ async fn main() -> Result<(), PythiaError> {
     let secp = Secp256k1::new();
     let keypair = KeyPair::from_secret_key(&secp, &secret_key);
     info!(
-        "oracle pubkey is {}",
+        "oracle public key is {}",
         keypair.public_key().serialize().encode_hex::<String>()
     );
     let db_connection = DBconnection::new(db_connect, max_connections_postgres).await?;

@@ -1,5 +1,38 @@
 {
     "rust-analyzer.server.extraEnv": {
         "SQLX_OFFLINE": "true"
-    }
+    },
+    "cSpell.words": [
+        "actix",
+        "Bitstamp",
+        "btcusd",
+        "BYTEA",
+        "chrono",
+        "datetime",
+        "Deribit",
+        "displaydoc",
+        "gateio",
+        "humantime",
+        "keypair",
+        "lnmarkets",
+        "nanos",
+        "Ohlc",
+        "powf",
+        "pricefeed",
+        "pricefeeds",
+        "publickey",
+        "reqwest",
+        "schnorr",
+        "schnorrsig",
+        "seckey",
+        "secp",
+        "sqlx",
+        "Subsec",
+        "subsecs",
+        "SUREDBITS",
+        "thiserror",
+        "trunc",
+        "UNNEST",
+        "XXBTZUSD"
+    ]
 }

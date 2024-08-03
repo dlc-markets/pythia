@@ -19,7 +19,7 @@ impl PriceFeed for GateIo {
     async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
         let client = Client::new();
         let start_time = instant.timestamp();
-        debug!("sending gateio http request");
+        debug!("sending gate.io http request");
         let res: Vec<Vec<Value>> = client
             .get("https://api.gateio.ws/api/v4/spot/candlesticks")
             .query(&[

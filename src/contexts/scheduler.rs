@@ -44,7 +44,7 @@ impl SchedulerContext {
 
 /// Start the scheduler of announcements and attestations using the context made with the api one.
 /// It computes a date iterator from cron-like config and spawns a thread for each type of event.
-/// At each iteration it sleeps if necesary without blocking until the next date produced by the iterator.
+/// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), PythiaError> {
     let oracles = context.oracles;
     let cloned_oracles = Arc::clone(&oracles);
@@ -81,16 +81,11 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     .create_announcement(next_time + context.offset_duration)
                     .await;
 
-                match perhaps_announcement {
-                    Ok(announcement) => {
-                        // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
-                        if maybe_std_duration.is_ok() {
-                            cloned_event_tx
-                                .send((oracle.asset_pair_info.asset_pair, announcement).into())
-                                .expect("usable channel");
-                        }
-                    }
-                    Err(e) => return e,
+                // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
+                if maybe_std_duration.is_ok() {
+                    cloned_event_tx
+                        .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
+                        .expect("usable channel");
                 }
             }
         }
@@ -131,10 +126,8 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         unreachable!("Cron schedule can be consumed only after 2100")
     };
 
-    let schedule_err = tokio::select! {
+    tokio::select! {
         e = announcement_thread => {e},
         e = attestation_thread => {e},
-    };
-
-    Err(schedule_err.into())
+    }
 }

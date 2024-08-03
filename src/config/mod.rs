@@ -1,7 +1,7 @@
 use crate::pricefeeds::ImplementedPriceFeed;
 use chrono::Duration;
 use cron::Schedule;
-use dlc_messages::oracle_msgs::EventDescriptor;
+use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
@@ -18,11 +18,22 @@ pub(super) enum AssetPair {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub(super) struct AssetPairInfo {
     pub(super) pricefeed: ImplementedPriceFeed,
     pub(super) asset_pair: AssetPair,
-    pub(super) event_descriptor: EventDescriptor,
+    #[serde(default = "default_digit_event")]
+    pub(super) event_descriptor: DigitDecompositionEventDescriptor,
+}
+
+fn default_digit_event() -> DigitDecompositionEventDescriptor {
+    DigitDecompositionEventDescriptor {
+        base: 2,
+        is_signed: false,
+        unit: "usd".to_owned(),
+        precision: 0,
+        nb_digits: 20,
+    }
 }
 
 impl Display for AssetPair {
@@ -107,9 +118,10 @@ impl Display for OracleSchedulerConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 struct ConfigurationFile {
-    asset_pair_infos: Vec<AssetPairInfo>,
+    pairs: Vec<AssetPairInfo>,
+    #[serde(flatten)]
     oracle_scheduler_config: OracleSchedulerConfig,
 }
 
