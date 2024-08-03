@@ -17,11 +17,7 @@ pub(crate) struct PythiaArgs {
     pub secret_key: Option<String>,
 
     /// Attestation schedule in Cron notation, requires offset argument, use the config file if not provided
-    #[clap(
-        long,
-        requires("offset"),
-        value_name = "cron schedule",
-    )]
+    #[clap(long, requires("offset"), value_name = "cron schedule")]
     schedule: Option<Schedule>,
 
     /// Announcement publication offset before attestation, requires schedule argument, use the config file if not provided
@@ -29,7 +25,7 @@ pub(crate) struct PythiaArgs {
         long,
         requires("schedule"),
         value_name = "duration",
-        value_parser(parse_duration),
+        value_parser(parse_duration)
     )]
     offset: Option<Duration>,
 
@@ -37,7 +33,7 @@ pub(crate) struct PythiaArgs {
     #[clap(
         long,
         value_name = "AssetPairInfosJSON",
-        value_parser(parse_asset_pair_array),
+        value_parser(parse_asset_pair_array)
     )]
     pair: Option<Vec<AssetPairInfo>>,
 
