@@ -1,39 +1,26 @@
-# See https://gist.github.com/noelbundick/6922d26667616e2ba5c3aff59f0824cd
-FROM rust:1.75-slim-bookworm AS builder
-
-RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
-    --mount=target=/var/cache/apt,type=cache,sharing=locked \
-    apt-get update -y && apt-get install -y \
-    pkg-config \
-    make \
-    g++ \
-    libssl-dev
+FROM lukemathwalker/cargo-chef:latest-rust-latest AS chef
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock ./
-
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
-    --mount=type=cache,target=/app/target,id=pythia \
-    mkdir src && \
-    touch src/lib.rs && \
-    cargo build --release
+FROM chef AS planner
 
 COPY . .
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=pythia-registry \
-    --mount=type=cache,target=/app/target,id=pythia \
-    touch /app/src/main.rs && \
-    cargo build --release && \
-    mv /app/target/release/pythia /app/pythia
+RUN cargo chef prepare --recipe-path recipe.json
 
-FROM debian:bookworm-slim
+FROM chef AS builder
 
-COPY --from=builder /app/pythia /usr/bin/pythia
+COPY --from=planner /app/recipe.json recipe.json
 
-RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
-    --mount=target=/var/cache/apt,type=cache,sharing=locked \
-    apt-get update -y && apt-get install -y \
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY . .
+
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update -y && apt-get install -y \
     libssl-dev \
     ca-certificates \
     netcat-traditional
@@ -49,9 +36,12 @@ COPY config.json /home/pythia/config.json
 
 COPY migrations ./migrations
 
+COPY --from=builder /app/target/release/pythia /usr/local/bin/pythia
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5s --retries=3 \
     CMD [ "nc", "-zv", "localhost", "8000" ]
 
 CMD [ "pythia", "-c", "/home/pythia/config.json" ]
+
