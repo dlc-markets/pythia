@@ -44,6 +44,11 @@ services:
       <<: *environment
       RUST_LOG: info
       PYTHIA_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
+    command: >
+      pythia
+      --pair '{"pricefeed":"lnmarkets","assetPair":"btc_usd","eventDescriptor":{"base":2,"isSigned":false,"unit":"usd/btc","precision":0,"nbDigits":20}}'
+      --schedule '0 */1 * * * * *'
+      --offset '2min'
     ports:
       - 8000:8000
     depends_on:

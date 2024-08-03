@@ -32,8 +32,6 @@ WORKDIR /home/pythia
 
 USER pythia
 
-COPY config.json /home/pythia/config.json
-
 COPY migrations ./migrations
 
 COPY --from=builder /app/target/release/pythia /usr/local/bin/pythia
@@ -43,5 +41,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=15s --start-period=5s --retries=3 \
     CMD [ "nc", "-zv", "localhost", "8000" ]
 
-CMD [ "pythia", "-c", "/home/pythia/config.json" ]
+CMD [ "pythia" ]
 
