@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 
-docker buildx bake -f docker-bake.hcl $@
+set -e
 
+export LOCAL=true
+
+docker buildx bake -f docker-bake.hcl
