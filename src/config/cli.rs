@@ -21,7 +21,6 @@ pub(crate) struct PythiaArgs {
         long,
         requires("offset"),
         value_name = "cron schedule",
-        group = "oracle config"
     )]
     schedule: Option<Schedule>,
 
@@ -31,7 +30,6 @@ pub(crate) struct PythiaArgs {
         requires("schedule"),
         value_name = "duration",
         value_parser(parse_duration),
-        group = "oracle config"
     )]
     offset: Option<Duration>,
 
@@ -40,7 +38,6 @@ pub(crate) struct PythiaArgs {
         long,
         value_name = "AssetPairInfosJSON",
         value_parser(parse_asset_pair_array),
-        group = "oracle config"
     )]
     pair: Option<Vec<AssetPairInfo>>,
 
