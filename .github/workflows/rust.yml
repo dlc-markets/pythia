@@ -1,23 +1,41 @@
-name: Build
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+name: Check and create pythia container
 
 on:
-  workflow_call:
   pull_request:
-    types: [opened, synchronize]
-    
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
   packages: write
   actions: write
 
+env:
+  SQLX_OFFLINE: 'true'
+  PROJECT: dlc-markets
+  NAME: pythia
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all -- --check
+
+      - run: cargo clippy
+  
   prepare:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
+    needs: check
     steps:
       - uses: actions/checkout@v4
       
@@ -49,12 +67,6 @@ jobs:
           path: /tmp/bake-meta.json
           if-no-files-found: error
           retention-days: 1
-
-      - uses: geekyeggo/delete-artifact@v5
-        with:
-          name: digests-*
-      
-      - run: sleep 30
 
   bake:
     runs-on: 
@@ -129,7 +141,7 @@ jobs:
 
   merge:
     runs-on: ubuntu-latest
-    needs: [bake]
+    needs: bake
     steps:
       - uses: actions/checkout@v4
 
@@ -167,11 +179,7 @@ jobs:
       - run: ./scripts/merge-images.sh
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          PROJECT: dlc-markets
-          NAME: pythia
 
       - run: ./scripts/merge-images.sh
         env:
           REGISTRY: ghcr.io
-          PROJECT: dlc-markets
-          NAME: pythia
