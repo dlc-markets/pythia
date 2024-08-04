@@ -36,13 +36,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": [
-    "dist",
-    "src",
-    "LICENSE",
-    "README.md",
-    "package.json"
-  ],
+  "files": ["dist", "src", "LICENSE", "README.md", "package.json"],
   "scripts": {
     "lint": "eslint --color './**/*.ts'",
     "format": "prettier --write './**/*.ts'",
