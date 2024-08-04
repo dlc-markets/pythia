@@ -1,5 +1,4 @@
-name: Check and create pythia container
-
+name: Rust
 on:
   pull_request:
     types: [opened, synchronize, reopened]

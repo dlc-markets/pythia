@@ -5,7 +5,8 @@ variable NAME {
 target "docker-metadata-action" {}
 
 target "default" {
-  context = "./packages/${NAME}"
+  context = "."
+  dockerfile = "./packages/${NAME}/Dockerfile"
 }
 
 target "ci" {
