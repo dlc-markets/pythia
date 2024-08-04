@@ -1,9 +1,13 @@
+.env
 .github
+.gitignore
+.vscode
+
 target
+node_modules
+scripts
+
 compose.yml
 docker-bake.hcl
 LICENSE
 README.md
-gitignore
-.env
-api-js
