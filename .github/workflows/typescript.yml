@@ -1,0 +1,43 @@
+name: Typescript
+
+concurrency:
+  group: ${{ github.workflow }}.${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+  packages: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node
+
+      - run: pnpm cspell --gitignore --config cspell.json --show-suggestions --show-context ./**/*
+
+      - run: pnpm biome ci .
+
+      - run: pnpm turbo type-check
+
+  tests:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node
+
+      - run: pnpm turbo test
+
+   

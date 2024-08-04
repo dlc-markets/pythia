@@ -34,12 +34,18 @@ services:
       - postgres:/var/lib/postgresql
     ports:
       - 5432:5432
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   pythia:
     <<: *defaults
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: packages/pythia/Dockerfile
     environment:
       <<: *environment
       RUST_LOG: info

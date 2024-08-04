@@ -16,6 +16,8 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
 
+ENV SQLX_OFFLINE=true
+
 RUN cargo build --release
 
 FROM debian:bookworm-slim AS runtime
@@ -32,7 +34,7 @@ WORKDIR /home/pythia
 
 USER pythia
 
-COPY migrations ./migrations
+COPY packages/pythia/migrations ./migrations
 
 COPY --from=builder /app/target/release/pythia /usr/local/bin/pythia
 

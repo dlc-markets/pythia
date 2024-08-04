@@ -1,24 +1,12 @@
-variable "ECR_REGISTRY" {
-  default = ""
-}
-
-variable PROJECT {
-  default = "dlc-markets"
-}
-
 variable NAME {
   default = "pythia"
-}
-
-variable ARCH {
-  default = ""
 }
 
 target "docker-metadata-action" {}
 
 target "default" {
-  context = "./"
-  dockerfile = "Dockerfile"
+  context = "."
+  dockerfile = "./packages/${NAME}/Dockerfile"
 }
 
 target "ci" {

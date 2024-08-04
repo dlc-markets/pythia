@@ -1,5 +1,5 @@
-import { EventEmitter } from 'eventemitter3'
 import process from 'node:process'
+import { EventEmitter } from 'eventemitter3'
 import { WebSocket } from 'ws'
 
 interface FetchOptions {
@@ -78,12 +78,16 @@ export class Pythia extends EventEmitter<Events> {
     this.websocket = new WebSocket(wsUrl)
 
     await new Promise<void>((resolve, reject) => {
-      this.websocket!.on('open', () => {
+      if (!this.websocket) {
+        throw new Error('WebSocket is not created')
+      }
+
+      this.websocket.on('open', () => {
         this.emit('connected')
         resolve()
       })
 
-      this.websocket!.onerror = (error) => {
+      this.websocket.onerror = (error) => {
         reject(error)
       }
     })
