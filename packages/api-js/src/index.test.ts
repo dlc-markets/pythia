@@ -1,6 +1,6 @@
 import { parseEventId } from './index.js'
 
-import { describe, test, expect } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 describe('parseEventId', () => {
   test('should return the event id and time as date', () => {

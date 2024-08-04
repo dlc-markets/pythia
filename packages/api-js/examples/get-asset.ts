@@ -1,5 +1,5 @@
-import { Pythia } from '../src/index.js'
 import { createInterface } from 'node:readline/promises'
+import { Pythia } from '../src/index.js'
 
 const pythia = new Pythia()
 

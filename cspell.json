@@ -1,0 +1,45 @@
+{
+  "dictionaries": [
+    "bash",
+    "docker",
+    "node",
+    "npm",
+    "sql",
+    "en-gb",
+    "rust"
+  ],
+  "language": "en",
+  "enableFiletypes": [
+    "*"
+  ],
+  "ignorePaths": [
+    "pnpm-lock.yaml",
+    "Cargo.lock"
+  ],
+  "words": [
+    "actix",
+    "ahash",
+    "biomejs",
+    "brotli",
+    "BTCUSD",
+    "bytestring",
+    "chrono",
+    "displaydoc",
+    "flate",
+    "httparse",
+    "httpdate",
+    "humantime",
+    "itoa",
+    "lnmarkets",
+    "memchr",
+    "netcat",
+    "pricefeed",
+    "reqwest",
+    "rustls",
+    "secp",
+    "smallvec",
+    "sqlx",
+    "thiserror",
+    "typecheck"
+  ]
+}
