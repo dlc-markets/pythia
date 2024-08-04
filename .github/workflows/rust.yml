@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Someties there is still files here on self-hosted runners
+      # Sometimes there is still files here on self-hosted runners
       - run: rm -rf /tmp/digests/*
 
       - uses: actions/download-artifact@v4
