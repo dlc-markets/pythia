@@ -1,4 +1,5 @@
 {
+  "name": "pythia",
   "private": true,
   "packageManager": "pnpm@8.9.6",
   "engines": {

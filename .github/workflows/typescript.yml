@@ -1,0 +1,42 @@
+name: TypeScript
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+  packages: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/cache@v4
+        with:
+          path: /root/setup-pnpm
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-cache-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-cache-
+
+      - run: pnpm fetch
+
+      - run: pnpm install --frozen-lockfile --offline --ignore-scripts
+
+      - run: pnpm cspell --gitignore --config cspell.json --show-suggestions --show-context ./**/*
+
+      - run: pnpm biome ci .
+
+      - run: pnpm turbo type-check

@@ -1,5 +1,7 @@
-target
 .DS_Store
+
+.turbo
+target
 node_modules
 dist
 coverage

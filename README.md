@@ -157,7 +157,7 @@ Example of attestation received upon connecting to the websocket:
 
 The websocket use [`JSON-RPC`](https://www.jsonrpc.org/specification). You can subscribe or unsubscribe to a channel using the corresponding JSON-RPC methods with channel asset-pair and event type as params.
 
-Exemple:
+Example:
 
 Opt-out to default subscription to `btc_usd_/attestation` using the following RPC:
 
@@ -217,7 +217,7 @@ In the not frequent case where Pythia is started and must catch up missing annou
 
 The websocket also feature `get` JSON-RPC methods to query for specific announcement or attestation that were already scheduled before. The method value is actually ignored, the websocket recognise your request using the `eventId` you must provide in `params`.
 
-Exemple of request:
+Example of request:
 
 ```json
 > {
@@ -335,13 +335,13 @@ pub use kraken::Kraken;
 pub use binance::Binance; // <<
 ```
 
-Available `PriceFeedError` variants are in `src/pricefeeds/error.rs`. Then, add the variant in `ImplemetedPriceFeed` enum in `src/pridefeed/mod.rs`, return the boxed trait-object when matching the variant in `get_pricefeed`. You can then use it in `config.json`.
+Available `PriceFeedError` variants are in `src/pricefeeds/error.rs`. Then, add the variant in `ImplementedPriceFeed` enum in `src/pricefeed/mod.rs`, return the boxed trait-object when matching the variant in `get_pricefeed`. You can then use it in `config.json`.
 
 After this, you are good to go!
 
 ### Asset Pairs
 
-Asset pairs may also be added, although it is a bit more involved. To add a new asset pair, say, ETHBTC, you must first add an entry in `"asset_pair_infos"` ssection of `config.json`, or whatever file you are using for asset pair config. There, you will add an `AssetPairInfo` object to the array. `AssetPairInfo`s contain the following fields:
+Asset pairs may also be added, although it is a bit more involved. To add a new asset pair, say, ETHBTC, you must first add an entry in `"asset_pair_infos"` section of `config.json`, or whatever file you are using for asset pair config. There, you will add an `AssetPairInfo` object to the array. `AssetPairInfo`s contain the following fields:
 
 | name               | type                                                                                                                      | description      |
 |--------------------|---------------------------------------------------------------------------------------------------------------------------|------------------|
