@@ -37,6 +37,8 @@ jobs:
 
       - run: cargo clippy
   
+  # https://docs.docker.com/build/ci/github-actions/multi-platform/
+  # https://github.com/crazy-max/docker-osxcross/blob/main/.github/workflows/build.yml
   prepare:
     runs-on: ubuntu-latest
     needs: check
