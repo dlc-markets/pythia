@@ -38,11 +38,7 @@
   "types": "dist/index.d.ts",
   "files": ["dist", "src", "LICENSE", "README.md", "package.json"],
   "scripts": {
-    "lint": "eslint --color './**/*.ts'",
-    "format": "prettier --write './**/*.ts'",
-    "format:check": "prettier --check './**/*.ts'",
     "build": "tsc --build tsconfig.build.json",
-    "prepublish": "rm -rf dist && pnpm build",
     "type-check": "tsc --noEmit",
     "test": "vitest --run"
   },
