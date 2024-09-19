@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse, Result};
+use actix_web::{get, post, web, Error, HttpResponse, Result};
 use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
@@ -24,6 +24,7 @@ struct Filters {
     sort_by: SortOrder,
     page: u32,
     asset_pair: AssetPair,
+    times: Vec<Box<str>>,
 }
 
 impl Default for Filters {
@@ -32,6 +33,7 @@ impl Default for Filters {
             sort_by: SortOrder::ReverseInsertion,
             page: 0,
             asset_pair: AssetPair::BtcUsd,
+            times: [].into(),
         }
     }
 }
@@ -109,55 +111,98 @@ pub(super) async fn oracle_event_service(
         Some(val) => val,
     };
 
-    if oracle.is_empty().await {
-        info!("no oracle events found");
-        return Err(PythiaApiError::OracleEventNotFoundError(ts.to_string()).into());
-    }
+    oracle
+        .is_empty()
+        .await
+        .then_some(())
+        .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(ts.to_string()).into())?;
 
     let event_id = (oracle.asset_pair_info.asset_pair.to_string()
         + &timestamp.timestamp().to_string())
         .into_boxed_str();
-    match oracle.oracle_state(&event_id).await {
-        Err(error) => Err(PythiaApiError::OracleFail(error).into()),
-        Ok(event_option) => match event_option {
-            None => Err(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into()),
-            Some((announcement, maybe_attestation)) => match event_type {
-                EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
-                EventType::Attestation => match maybe_attestation {
-                    None => {
-                        if timestamp < Utc::now() {
-                            match oracle.try_attest_event(&event_id).await {
-                                Err(error) => Err(PythiaApiError::OracleFail(error).into()),
-                                Ok(maybe_attestation) => {
-                                    let attestation = maybe_attestation.expect("We checked Announcement exists and the oracle attested successfully so attestation exists now");
-                                    let attestation_response = AttestationResponse {
-                                        event_id: event_id.clone(),
-                                        signatures: attestation.signatures,
-                                        values: attestation.outcomes,
-                                    };
-                                    Ok(HttpResponse::Ok().json(attestation_response))
-                                }
-                            }
-                        } else {
-                            Err(actix_web::error::ErrorBadRequest(
-                                "Oracle cannot sign a value not yet known, retry after "
-                                    .to_string()
-                                    + &timestamp.to_rfc3339(),
-                            ))
-                        }
+    let (announcement, maybe_attestation) = oracle
+        .oracle_state(&event_id)
+        .await
+        .map_err(|e| PythiaApiError::OracleFail(e))?
+        .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
+
+    match event_type {
+        EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
+        EventType::Attestation => {
+            let attestation = match maybe_attestation {
+                Some(attestation) => Ok(attestation),
+                None => {
+                    if timestamp < Utc::now() {
+                        Ok(oracle
+                            .try_attest_event(&event_id)
+                            .await
+                            .map_err(|e| PythiaApiError::OracleFail(e))?
+                            .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
+                        )
+                    } else {
+                        Err(actix_web::error::ErrorBadRequest(
+                            "Oracle cannot sign a value not yet known, retry after ".to_string()
+                                + &timestamp.to_rfc3339(),
+                        ))
                     }
-                    Some(attestation) => {
-                        let attestation_response = AttestationResponse {
-                            event_id,
-                            signatures: attestation.signatures,
-                            values: attestation.outcomes,
-                        };
-                        Ok(HttpResponse::Ok().json(attestation_response))
-                    }
-                },
-            },
-        },
+                }
+            }?;
+
+            let attestation_response = AttestationResponse {
+                event_id,
+                signatures: attestation.signatures,
+                values: attestation.outcomes,
+            };
+            Ok(HttpResponse::Ok().json(attestation_response))
+        }
     }
+}
+
+#[get("/asset/{asset_pair}/batch")]
+pub(super) async fn oracle_batch_service(
+    context: ApiContext,
+    filters: web::Query<Filters>,
+    path: web::Path<(AssetPair, EventType)>,
+) -> Result<HttpResponse> {
+    let (asset_pair, event_type) = path.into_inner();
+    info!("GET /asset/{asset_pair}/{event_type:?}: {:#?}", filters);
+
+    let timestamps = filters
+        .times
+        .iter()
+        .map(|ts| Ok(DateTime::parse_from_rfc3339(ts).map_err(PythiaApiError::DatetimeParsing)?))
+        .collect::<Result<Vec<_>>>()?;
+
+    let oracle = context
+        .oracles
+        .get(&asset_pair)
+        .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
+
+    if oracle.is_empty().await {
+        info!("no oracle events found");
+        return Err(PythiaApiError::OracleEventNotFoundError(
+            "Oracle did not announce anything".to_string(),
+        )
+        .into());
+    }
+
+    let events_ids = timestamps
+        .into_iter()
+        .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
+        .collect::<Vec<_>>();
+
+    oracle
+        .is_empty()
+        .await
+        .then_some(())
+        .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
+
+    let announcements = oracle
+        .oracle_many_announcements(&events_ids)
+        .await
+        .map_err(|e| PythiaApiError::OracleFail(e))?;
+
+    Ok(HttpResponse::Ok().json(announcements))
 }
 
 #[derive(Serialize, Deserialize, Debug)]

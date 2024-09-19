@@ -10,6 +10,9 @@ pub(crate) enum OracleError {
     /// database error: {0}
     DatabaseError(#[from] sqlx::Error),
 
+    /// Some requested announcement are missing
+    MissingAnnouncements,
+
     /// pricefeed error: {0}
     PriceFeedError(#[from] PriceFeedError),
 }

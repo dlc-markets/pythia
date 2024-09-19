@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) = COALESCE ($2, 0) AS all_exist\n            FROM (\n                SELECT DISTINCT UNNEST($1::VARCHAR[]) AS id\n            ) AS distinct_event_id \n            WHERE id IN (SELECT id FROM oracle.events);",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "all_exist",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "VarcharArray",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7786c1de45fa0c49875edc1108c1a7bd3bd86eff2670f54b31f8d4dfabf4f9a9"
+}
