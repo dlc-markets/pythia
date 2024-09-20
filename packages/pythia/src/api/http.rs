@@ -160,7 +160,7 @@ struct BatchTimes {
     times: Vec<Box<str>>,
 }
 
-#[post("/asset/{asset_pair}/batch")]
+#[post("/asset/{asset_pair}/announcements")]
 pub(super) async fn oracle_batch_service(
     context: ApiContext,
     path: web::Path<AssetPair>,
