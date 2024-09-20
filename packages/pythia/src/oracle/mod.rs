@@ -178,7 +178,7 @@ impl Oracle {
     /// If it exists, return many events announcement and attestation.
     pub async fn oracle_many_announcements(
         &self,
-        events_ids: &[String],
+        events_ids: Vec<String>,
     ) -> Result<Box<[OracleAnnouncement]>> {
         let event = self
             .db

@@ -282,8 +282,11 @@ impl DBconnection {
     /// Retrieve the current state of many events in oracle's DB
     pub(super) async fn get_many_events(
         &self,
-        events_ids: &[String],
+        mut events_ids: Vec<String>,
     ) -> Result<Option<Vec<PostgresResponse>>> {
+        events_ids.sort_unstable();
+        events_ids.dedup();
+
         let BoolResponse { all_exist } = sqlx::query_as!(
             BoolResponse,
             "SELECT COUNT(*) = COALESCE ($2, 0) AS all_exist
@@ -291,7 +294,7 @@ impl DBconnection {
                 SELECT DISTINCT UNNEST($1::VARCHAR[]) AS id
             ) AS distinct_event_id 
             WHERE id IN (SELECT id FROM oracle.events);",
-            events_ids,
+            &events_ids,
             events_ids.len() as i64
         )
         .fetch_one(&self.0)
@@ -304,14 +307,14 @@ impl DBconnection {
         let events = sqlx::query_as!(
             EventResponse,
             "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = ANY ($1::VARCHAR[]) ORDER BY id",
-            events_ids
+            &events_ids
         ).fetch_all(&self.0)
         .await?;
 
         let digits = sqlx::query_as!(
             BatchedAnnouncementResponse,
                 "SELECT nonce_public, event_id FROM oracle.digits WHERE event_id = ANY ($1::VARCHAR[]) ORDER BY event_id, digit_index;",
-                events_ids
+                &events_ids
             )
             .fetch_all(&self.0)
             .await?;

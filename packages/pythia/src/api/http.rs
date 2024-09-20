@@ -198,7 +198,7 @@ pub(super) async fn oracle_batch_service(
         .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
     let announcements = oracle
-        .oracle_many_announcements(&events_ids)
+        .oracle_many_announcements(events_ids)
         .await
         .map_err(|e| PythiaApiError::OracleFail(e))?;
 
