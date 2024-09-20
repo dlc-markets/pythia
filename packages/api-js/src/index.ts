@@ -173,7 +173,7 @@ export class Pythia extends EventEmitter<Events> {
     return this.request<PythiaAnnouncement[]>(
       'POST',
       `asset/${assetPair}/announcements`,
-      { body: times.map((date) => date.toISOString()) }
+      { times: times.map((date) => date.toISOString()) }
     )
   }
 
