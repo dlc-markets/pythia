@@ -297,7 +297,7 @@ impl DBconnection {
         .fetch_one(&self.0)
         .await?;
 
-        if all_exist.expect("cannot be null because of coalesce") {
+        if !all_exist.expect("cannot be null because of coalesce") {
             return Ok(None);
         };
 

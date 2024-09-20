@@ -24,7 +24,6 @@ struct Filters {
     sort_by: SortOrder,
     page: u32,
     asset_pair: AssetPair,
-    times: Vec<Box<str>>,
 }
 
 impl Default for Filters {
@@ -33,7 +32,6 @@ impl Default for Filters {
             sort_by: SortOrder::ReverseInsertion,
             page: 0,
             asset_pair: AssetPair::BtcUsd,
-            times: [].into(),
         }
     }
 }
@@ -111,11 +109,9 @@ pub(super) async fn oracle_event_service(
         Some(val) => val,
     };
 
-    oracle
-        .is_empty()
-        .await
+    (!oracle.is_empty().await)
         .then_some(())
-        .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(ts.to_string()).into())?;
+        .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
     let event_id = (oracle.asset_pair_info.asset_pair.to_string()
         + &timestamp.timestamp().to_string())
@@ -158,16 +154,22 @@ pub(super) async fn oracle_event_service(
     }
 }
 
-#[get("/asset/{asset_pair}/batch")]
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct BatchTimes {
+    times: Vec<Box<str>>,
+}
+
+#[post("/asset/{asset_pair}/batch")]
 pub(super) async fn oracle_batch_service(
     context: ApiContext,
-    filters: web::Query<Filters>,
-    path: web::Path<(AssetPair, EventType)>,
+    path: web::Path<AssetPair>,
+    data: web::Json<BatchTimes>,
 ) -> Result<HttpResponse> {
-    let (asset_pair, event_type) = path.into_inner();
-    info!("GET /asset/{asset_pair}/{event_type:?}: {:#?}", filters);
+    let asset_pair = path.into_inner();
+    info!("POST /asset/{asset_pair}/batch: {:#?}", data);
 
-    let timestamps = filters
+    let timestamps = data
         .times
         .iter()
         .map(|ts| Ok(DateTime::parse_from_rfc3339(ts).map_err(PythiaApiError::DatetimeParsing)?))
@@ -191,9 +193,7 @@ pub(super) async fn oracle_batch_service(
         .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
         .collect::<Vec<_>>();
 
-    oracle
-        .is_empty()
-        .await
+    (!oracle.is_empty().await)
         .then_some(())
         .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 

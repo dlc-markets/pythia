@@ -61,6 +61,7 @@ pub async fn run_api_v1(
             .service(http::config)
             .service(http::pub_key)
             .service(http::asset_return)
+            .service(http::oracle_batch_service)
             .service(ws::websocket);
         if debug_mode {
             factory = factory.service(http::force)
