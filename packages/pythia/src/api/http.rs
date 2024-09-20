@@ -156,18 +156,18 @@ pub(super) async fn oracle_event_service(
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct BatchTimes {
+struct BatchAnnouncements {
     times: Vec<Box<str>>,
 }
 
 #[post("/asset/{asset_pair}/announcements")]
-pub(super) async fn oracle_batch_service(
+pub(super) async fn oracle_batch_announcements_service(
     context: ApiContext,
     path: web::Path<AssetPair>,
-    data: web::Json<BatchTimes>,
+    data: web::Json<BatchAnnouncements>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
-    info!("POST /asset/{asset_pair}/batch: {:#?}", data);
+    info!("POST /asset/{asset_pair}/announcements: {:#?}", data);
 
     let timestamps = data
         .times
