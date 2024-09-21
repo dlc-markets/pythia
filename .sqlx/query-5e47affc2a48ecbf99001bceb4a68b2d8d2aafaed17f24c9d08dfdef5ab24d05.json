@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT nonce_public, event_id FROM oracle.digits WHERE event_id = ANY ($1::VARCHAR[]) ORDER BY event_id, digit_index;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce_public",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_id",
+        "type_info": "Varchar"
+      }
+    ],
+    "parameters": {
+      "Left": ["VarcharArray"]
+    },
+    "nullable": [false, false]
+  },
+  "hash": "5e47affc2a48ecbf99001bceb4a68b2d8d2aafaed17f24c9d08dfdef5ab24d05"
+}

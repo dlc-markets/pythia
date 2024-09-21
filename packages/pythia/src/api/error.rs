@@ -21,6 +21,9 @@ pub enum PythiaApiError {
     /// event {0} does not exist.
     OracleEventNotFoundError(String),
 
+    /// oracle is empty.
+    OracleEmpty,
+
     /// could not start socket: {0}
     SocketUnavailable(#[from] io::Error),
 }
@@ -36,6 +39,7 @@ impl actix_web::error::ResponseError for PythiaApiError {
             PythiaApiError::SocketUnavailable(_) => {
                 actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
             }
+            PythiaApiError::OracleEmpty => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

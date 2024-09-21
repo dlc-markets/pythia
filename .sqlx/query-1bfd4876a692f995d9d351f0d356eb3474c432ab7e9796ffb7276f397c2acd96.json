@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events e WHERE e.id = $1",
+  "query": "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = ANY ($1::VARCHAR[]) ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -30,9 +30,9 @@
       }
     ],
     "parameters": {
-      "Left": ["Text"]
+      "Left": ["VarcharArray"]
     },
     "nullable": [false, false, false, false, true]
   },
-  "hash": "e35cb6bb966d89bac746f562f84520240396f592c659d7cf7c7acdf092bcd184"
+  "hash": "1bfd4876a692f995d9d351f0d356eb3474c432ab7e9796ffb7276f397c2acd96"
 }

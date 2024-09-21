@@ -18,6 +18,11 @@ struct DigitAnnouncementResponse {
     nonce_public: Vec<u8>,
     nonce_secret: Option<Vec<u8>>,
 }
+#[derive(Default)]
+struct BatchedAnnouncementResponse {
+    nonce_public: Vec<u8>,
+    event_id: String,
+}
 struct DigitAttestationResponse {
     nonce_public: Vec<u8>,
     signature: Option<Vec<u8>>,
@@ -27,6 +32,11 @@ struct DigitAttestationResponse {
 pub(super) enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),
     DigitsAttestations(f64, Vec<Scalar>),
+}
+
+#[derive(Clone)]
+struct BoolResponse {
+    all_exist: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -188,7 +198,7 @@ impl DBconnection {
     pub(super) async fn get_event(&self, event_id: &str) -> Result<Option<PostgresResponse>> {
         let Some(event) = sqlx::query_as!(
         EventResponse,
-        "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events e WHERE e.id = $1",
+        "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = $1",
         event_id
     )
     .fetch_optional(&self.0)
@@ -267,5 +277,80 @@ impl DBconnection {
                 }))
             }
         }
+    }
+
+    /// Retrieve the current state of many events in oracle's DB
+    pub(super) async fn get_many_events(
+        &self,
+        mut events_ids: Vec<String>,
+    ) -> Result<Option<Vec<PostgresResponse>>> {
+        events_ids.sort_unstable();
+        events_ids.dedup();
+
+        let BoolResponse { all_exist } = sqlx::query_as!(
+            BoolResponse,
+            "SELECT COUNT(*) = COALESCE ($2, 0) AS all_exist
+            FROM (
+                SELECT DISTINCT UNNEST($1::VARCHAR[]) AS id
+            ) AS distinct_event_id 
+            WHERE id IN (SELECT id FROM oracle.events);",
+            &events_ids,
+            events_ids.len() as i64
+        )
+        .fetch_one(&self.0)
+        .await?;
+
+        if !all_exist.expect("cannot be null because of coalesce") {
+            return Ok(None);
+        };
+
+        let events = sqlx::query_as!(
+            EventResponse,
+            "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = ANY ($1::VARCHAR[]) ORDER BY id",
+            &events_ids
+        ).fetch_all(&self.0)
+        .await?;
+
+        let digits = sqlx::query_as!(
+            BatchedAnnouncementResponse,
+                "SELECT nonce_public, event_id FROM oracle.digits WHERE event_id = ANY ($1::VARCHAR[]) ORDER BY event_id, digit_index;",
+                &events_ids
+            )
+            .fetch_all(&self.0)
+            .await?;
+
+        let mut events_iter = events.into_iter();
+
+        Ok(Some(
+            digits
+                .chunk_by(|a, b| a.event_id == b.event_id)
+                .map(|x| {
+                    let event = events_iter.next().unwrap();
+                    let mut mut_iter = x.iter();
+                    let BatchedAnnouncementResponse { nonce_public, .. } =
+                        mut_iter.next().expect("chunk have at least one element");
+
+                    let nonce_public =
+                        std::iter::once(XOnlyPublicKey::from_slice(&nonce_public).unwrap())
+                            .chain(mut_iter.map(
+                                |BatchedAnnouncementResponse { nonce_public, .. }| {
+                                    XOnlyPublicKey::from_slice(&nonce_public).unwrap()
+                                },
+                            ))
+                            .collect();
+                    PostgresResponse {
+                        digits: event.digits as u16,
+                        precision: event.precision as u16,
+                        maturity: event.maturity,
+                        announcement_signature: Signature::from_slice(
+                            &event.announcement_signature[..],
+                        )
+                        .unwrap(),
+                        nonce_public,
+                        scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
+                    }
+                })
+                .collect(),
+        ))
     }
 }

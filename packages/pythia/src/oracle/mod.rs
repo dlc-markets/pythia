@@ -16,7 +16,7 @@ pub(crate) mod error;
 pub(crate) mod postgres;
 
 use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
-use error::Result;
+use error::{OracleError, Result};
 use postgres::*;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
@@ -173,6 +173,23 @@ impl Oracle {
 
         let announcement = compute_announcement(self, event.clone());
         Ok(Some((announcement, compute_attestation(self, event))))
+    }
+
+    /// If it exists, return many events announcement and attestation.
+    pub async fn oracle_many_announcements(
+        &self,
+        events_ids: Vec<String>,
+    ) -> Result<Box<[OracleAnnouncement]>> {
+        let event = self
+            .db
+            .get_many_events(events_ids)
+            .await?
+            .ok_or(OracleError::MissingAnnouncements)?;
+
+        Ok(event
+            .into_iter()
+            .map(|e| compute_announcement(self, e))
+            .collect())
     }
 
     pub async fn force_new_attest_with_price(
