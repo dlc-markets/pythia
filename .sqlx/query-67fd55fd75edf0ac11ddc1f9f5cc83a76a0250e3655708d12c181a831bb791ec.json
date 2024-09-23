@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT \n                e.digits, \n                e.precision, \n                e.maturity, \n                e.announcement_signature, \n                COALESCE(\n                    array_agg(\n                        d.nonce_public \n                    ORDER BY d.digit_index\n                        ), \n                    '{}') AS nonces_public \n            FROM \n                oracle.events e \n            LEFT JOIN \n                oracle.digits d \n            ON \n                e.id = d.event_id \n            WHERE \n                d.event_id = ANY ($1::VARCHAR[]) \n            GROUP BY \n                e.id, e.digits, e.precision, e.maturity, e.announcement_signature\n            ORDER BY\n                e.id;",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "digits",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "precision",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "maturity",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "announcement_signature",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 4,
+        "name": "nonces_public",
+        "type_info": "ByteaArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "VarcharArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "67fd55fd75edf0ac11ddc1f9f5cc83a76a0250e3655708d12c181a831bb791ec"
+}

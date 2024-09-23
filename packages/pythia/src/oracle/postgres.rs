@@ -20,8 +20,11 @@ struct DigitAnnouncementResponse {
 }
 #[derive(Default)]
 struct BatchedAnnouncementResponse {
-    nonce_public: Vec<u8>,
-    event_id: String,
+    digits: i32,
+    precision: i32,
+    maturity: DateTime<Utc>,
+    announcement_signature: Vec<u8>,
+    nonces_public: Option<Vec<Vec<u8>>>,
 }
 struct DigitAttestationResponse {
     nonce_public: Vec<u8>,
@@ -284,6 +287,7 @@ impl DBconnection {
         &self,
         mut events_ids: Vec<String>,
     ) -> Result<Option<Vec<PostgresResponse>>> {
+        // Remove duplicate maturities
         events_ids.sort_unstable();
         events_ids.dedup();
 
@@ -304,52 +308,65 @@ impl DBconnection {
             return Ok(None);
         };
 
-        let events = sqlx::query_as!(
-            EventResponse,
-            "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = ANY ($1::VARCHAR[]) ORDER BY id",
+        let batch = sqlx::query_as!(
+            BatchedAnnouncementResponse,
+            "SELECT 
+                e.digits, 
+                e.precision, 
+                e.maturity, 
+                e.announcement_signature, 
+                COALESCE(
+                    array_agg(
+                        d.nonce_public 
+                    ORDER BY d.digit_index
+                        ), 
+                    '{}') AS nonces_public 
+            FROM 
+                oracle.events e 
+            LEFT JOIN 
+                oracle.digits d 
+            ON 
+                e.id = d.event_id 
+            WHERE 
+                d.event_id = ANY ($1::VARCHAR[]) 
+            GROUP BY 
+                e.id, e.digits, e.precision, e.maturity, e.announcement_signature
+            ORDER BY
+                e.id;",
             &events_ids
-        ).fetch_all(&self.0)
+        )
+        .fetch_all(&self.0)
         .await?;
 
-        let digits = sqlx::query_as!(
-            BatchedAnnouncementResponse,
-                "SELECT nonce_public, event_id FROM oracle.digits WHERE event_id = ANY ($1::VARCHAR[]) ORDER BY event_id, digit_index;",
-                &events_ids
-            )
-            .fetch_all(&self.0)
-            .await?;
-
-        let mut events_iter = events.into_iter();
-
         Ok(Some(
-            digits
-                .chunk_by(|a, b| a.event_id == b.event_id)
-                .map(|x| {
-                    let event = events_iter.next().unwrap();
-                    let mut mut_iter = x.iter();
-                    let BatchedAnnouncementResponse { nonce_public, .. } =
-                        mut_iter.next().expect("chunk have at least one element");
-
-                    let nonce_public =
-                        std::iter::once(XOnlyPublicKey::from_slice(&nonce_public).unwrap())
-                            .chain(mut_iter.map(
-                                |BatchedAnnouncementResponse { nonce_public, .. }| {
-                                    XOnlyPublicKey::from_slice(&nonce_public).unwrap()
-                                },
-                            ))
-                            .collect();
-                    PostgresResponse {
-                        digits: event.digits as u16,
-                        precision: event.precision as u16,
-                        maturity: event.maturity,
-                        announcement_signature: Signature::from_slice(
-                            &event.announcement_signature[..],
-                        )
-                        .unwrap(),
-                        nonce_public,
-                        scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
-                    }
-                })
+            batch
+                .into_iter()
+                .map(
+                    |BatchedAnnouncementResponse {
+                         digits,
+                         precision,
+                         maturity,
+                         announcement_signature,
+                         nonces_public,
+                     }| {
+                        let nonces_public =
+                            nonces_public.expect("COALESCE in psql query guarantee it is not None");
+                        PostgresResponse {
+                            digits: digits as u16,
+                            precision: precision as u16,
+                            maturity,
+                            announcement_signature: Signature::from_slice(
+                                &announcement_signature[..],
+                            )
+                            .unwrap(),
+                            nonce_public: nonces_public
+                                .into_iter()
+                                .map(|ref s| XOnlyPublicKey::from_slice(s).unwrap())
+                                .collect(),
+                            scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
+                        }
+                    },
+                )
                 .collect(),
         ))
     }

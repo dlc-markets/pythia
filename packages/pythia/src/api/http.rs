@@ -1,8 +1,9 @@
 use actix_web::{get, post, web, Error, HttpResponse, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::str::FromStr;
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -11,29 +12,29 @@ use crate::{
     contexts::api_context::ApiContext,
 };
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum SortOrder {
-    Insertion,
-    ReverseInsertion,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct Filters {
-    sort_by: SortOrder,
-    page: u32,
+struct AssetPairFilters {
     asset_pair: AssetPair,
 }
 
-impl Default for Filters {
-    fn default() -> Self {
-        Filters {
-            sort_by: SortOrder::ReverseInsertion,
-            page: 0,
-            asset_pair: AssetPair::BtcUsd,
-        }
-    }
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct MaturityFilters {
+    #[serde(deserialize_with = "from_seq")]
+    maturities: Vec<DateTime<FixedOffset>>,
+}
+
+fn from_seq<'de, D>(deserializer: D) -> Result<Vec<DateTime<FixedOffset>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = <&str>::deserialize(deserializer)?;
+
+    s.split(',')
+        .map(|i| DateTime::<FixedOffset>::from_str(i))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Serialize)]
@@ -54,7 +55,7 @@ struct ApiOracleEvent {
 #[get("/oracle/publickey")]
 pub(super) async fn pub_key(
     context: ApiContext,
-    filters: web::Query<Filters>,
+    filters: web::Query<AssetPairFilters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
     let oracle = match context.oracles.get(&filters.asset_pair) {
@@ -94,15 +95,10 @@ pub(super) async fn config(
 #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
 pub(super) async fn oracle_event_service(
     context: ApiContext,
-    filters: web::Query<Filters>,
-    path: web::Path<(AssetPair, EventType, String)>,
+    path: web::Path<(AssetPair, EventType, DateTime<FixedOffset>)>,
 ) -> Result<HttpResponse> {
-    let (asset_pair, event_type, ts) = path.into_inner();
-    info!(
-        "GET /asset/{asset_pair}/{event_type:?}/{ts}: {:#?}",
-        filters
-    );
-    let timestamp = DateTime::parse_from_rfc3339(&ts).map_err(PythiaApiError::DatetimeParsing)?;
+    let (asset_pair, event_type, timestamp) = path.into_inner();
+    info!("GET /asset/{asset_pair}/{event_type:?}/{timestamp}");
 
     let oracle = match context.oracles.get(&asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(asset_pair).into()),
@@ -154,26 +150,14 @@ pub(super) async fn oracle_event_service(
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct BatchAnnouncements {
-    times: Vec<Box<str>>,
-}
-
-#[post("/asset/{asset_pair}/announcements")]
+#[get("/asset/{asset_pair}/announcements")]
 pub(super) async fn oracle_batch_announcements_service(
     context: ApiContext,
     path: web::Path<AssetPair>,
-    data: web::Json<BatchAnnouncements>,
+    filter: web::Query<MaturityFilters>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
-    info!("POST /asset/{asset_pair}/announcements: {:#?}", data);
-
-    let timestamps = data
-        .times
-        .iter()
-        .map(|ts| Ok(DateTime::parse_from_rfc3339(ts).map_err(PythiaApiError::DatetimeParsing)?))
-        .collect::<Result<Vec<_>>>()?;
+    info!("POST /asset/{asset_pair}/announcements: {:#?}", filter);
 
     let oracle = context
         .oracles
@@ -188,8 +172,9 @@ pub(super) async fn oracle_batch_announcements_service(
         .into());
     }
 
-    let events_ids = timestamps
-        .into_iter()
+    let events_ids = filter
+        .maturities
+        .iter()
         .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
         .collect::<Vec<_>>();
 

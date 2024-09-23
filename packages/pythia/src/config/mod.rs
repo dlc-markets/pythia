@@ -11,9 +11,10 @@ pub(super) mod cli;
 mod env;
 pub(super) mod error;
 
-#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, EnumIter)]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, EnumIter)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum AssetPair {
+    #[default]
     BtcUsd,
 }
 
