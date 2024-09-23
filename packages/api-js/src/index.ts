@@ -170,10 +170,10 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAnnouncements({ assetPair, times }: { assetPair: string; times: Date[] }) {
+    const maturities = times.map((date) => date.toISOString())
     return this.request<PythiaAnnouncement[]>(
-      'POST',
-      `asset/${assetPair}/announcements`,
-      { times: times.map((date) => date.toISOString()) }
+      'GET',
+      `asset/${assetPair}/announcements/${maturities}`
     )
   }
 
