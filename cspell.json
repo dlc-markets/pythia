@@ -56,6 +56,7 @@
     "Swatinem",
     "thiserror",
     "trunc",
+    "tsbuildinfo",
     "typecheck",
     "usec",
     "wscat",
