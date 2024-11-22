@@ -4,7 +4,7 @@ extern crate log;
 use clap::Parser;
 use futures::future::TryFutureExt;
 use hex::ToHex;
-use secp256k1_zkp::{KeyPair, Secp256k1};
+use secp256k1_zkp::{Keypair, Secp256k1};
 use std::collections::HashMap;
 use tokio::select;
 
@@ -38,9 +38,8 @@ async fn main() -> Result<(), PythiaError> {
     ) = args.match_args()?;
     let config = asset_pair_infos.into_boxed_slice();
     // Setup secp context, keypair and postgres DB for oracles
-
     let secp = Secp256k1::new();
-    let keypair = KeyPair::from_secret_key(&secp, &secret_key);
+    let keypair = Keypair::from_secret_key(&secp, &secret_key);
     info!(
         "oracle public key is {}",
         keypair.public_key().serialize().encode_hex::<String>()

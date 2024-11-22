@@ -1,7 +1,9 @@
 use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
-    hashes::sha256, schnorr::Signature, All, KeyPair, Message, Scalar, Secp256k1, XOnlyPublicKey,
+    hashes::{sha256, Hash},
+    schnorr::Signature,
+    All, Keypair, Message, Scalar, Secp256k1, XOnlyPublicKey,
 };
 
 /// We use custom types to implement signature splitting into nonce and scalar.
@@ -66,7 +68,7 @@ pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u
 
 pub(super) fn sign_outcome(
     secp: &Secp256k1<All>,
-    key_pair: &KeyPair,
+    key_pair: &Keypair,
     outcome: &String,
     outstanding_sk_nonce: &[u8; 32],
 ) -> (String, Signature) {
@@ -74,7 +76,7 @@ pub(super) fn sign_outcome(
         outcome.to_owned(),
         schnorrsig_sign_with_nonce(
             secp,
-            &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
+            &Message::from_digest(*sha256::Hash::hash(outcome.as_bytes()).as_ref()),
             key_pair,
             outstanding_sk_nonce,
         ),
@@ -86,9 +88,9 @@ pub(super) mod test {
     use std::str::FromStr;
 
     use secp256k1_zkp::{
-        hashes::{hex::FromHex, Hash},
+        hashes::{hex::FromHex, sha256, Hash},
         schnorr::Signature,
-        All, KeyPair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
+        All, Keypair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
     };
 
     use crate::oracle::crypto::{
@@ -152,12 +154,12 @@ pub(super) mod test {
         if let Some(sk_nonce) = outstanding_sk_nonce {
             let (nonce, _): (NoncePoint, SigningScalar) =
                 Into::<OracleSignature>::into(result).into();
-            let nonce_pair = KeyPair::from_seckey_slice(secp, sk_nonce).unwrap();
+            let nonce_pair = Keypair::from_seckey_slice(secp, sk_nonce).unwrap();
             assert_eq!(nonce_pair.x_only_public_key().0, nonce.0);
         }
         secp.verify_schnorr(
             &result,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(outcome.as_bytes()),
+            &Message::from_digest(*sha256::Hash::hash(outcome.as_bytes()).as_ref()),
             key,
         )
         // secp.verify_schnorr(
@@ -179,7 +181,7 @@ pub(super) mod test {
         let payload = [tag, tag, msg.as_ref()].concat();
         secp.verify_schnorr(
             &result,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
+            &Message::from_digest(*sha256::Hash::hash(payload.as_ref()).as_ref()),
             key,
         )
         // secp.verify_schnorr(
@@ -198,7 +200,7 @@ pub(super) mod test {
     ) {
         // Check if passing bip340 test vec
         let sig_secp = Signature::from_str(sig_str).unwrap();
-        let zero_msg = Message::from_slice(&<[u8; 32]>::from_hex(msg_hex).unwrap()).unwrap();
+        let zero_msg = Message::from_digest(<[u8; 32]>::from_hex(msg_hex).unwrap());
         let pub_key = XOnlyPublicKey::from_str(pub_key_str).unwrap();
         secp.verify_schnorr(&sig_secp, &zero_msg, &pub_key).unwrap();
 
@@ -212,7 +214,7 @@ pub(super) mod test {
         match nonce_secret_str {
             Some(secret_str) => assert_eq!(
                 &NoncePoint(
-                    KeyPair::from_seckey_str(secp, secret_str)
+                    Keypair::from_seckey_str(secp, secret_str)
                         .unwrap()
                         .x_only_public_key()
                         .0
@@ -231,10 +233,10 @@ pub(super) mod test {
     }
 
     fn hash_zero() -> String {
-        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).as_ref())
+        hex::encode::<[u8; 32]>(*secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).as_ref())
     }
     fn hash_one() -> String {
-        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).as_ref())
+        hex::encode::<[u8; 32]>(*secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).as_ref())
     }
 
     #[test]

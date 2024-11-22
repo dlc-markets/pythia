@@ -6,9 +6,10 @@ use dlc_messages::oracle_msgs::{
 };
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
+    hashes::{sha256, Hash},
     rand::{thread_rng, RngCore},
     schnorr::Signature,
-    All, KeyPair, Message, Secp256k1, XOnlyPublicKey,
+    All, Keypair, Message, Secp256k1, XOnlyPublicKey,
 };
 
 mod crypto;
@@ -26,7 +27,7 @@ pub struct Oracle {
     pub asset_pair_info: AssetPairInfo,
     db: DBconnection,
     secp: Secp256k1<All>,
-    keypair: KeyPair,
+    keypair: Keypair,
 }
 
 impl Oracle {
@@ -35,7 +36,7 @@ impl Oracle {
         asset_pair_info: AssetPairInfo,
         secp: Secp256k1<All>,
         db: DBconnection,
-        keypair: KeyPair,
+        keypair: Keypair,
     ) -> Oracle {
         Oracle {
             asset_pair_info,
@@ -78,7 +79,7 @@ impl Oracle {
                 let mut sk_nonce = [0u8; 32];
                 rng.fill_bytes(&mut sk_nonce);
                 let oracle_r_kp =
-                    secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, &sk_nonce).unwrap();
+                    secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, &sk_nonce).unwrap();
                 let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                 sk_nonces.push(sk_nonce);
                 nonces.push(nonce);
@@ -96,9 +97,7 @@ impl Oracle {
 
         let announcement = OracleAnnouncement {
             announcement_signature: self.secp.sign_schnorr(
-                &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
-                    &oracle_event.encode(),
-                ),
+                &Message::from_digest(*sha256::Hash::hash(&oracle_event.encode()).as_ref()),
                 &self.keypair,
             ),
             oracle_public_key: self.keypair.public_key().into(),
@@ -125,7 +124,7 @@ impl Oracle {
                 "Event {} already attested (should be possible only in debug mode)",
                 &event_id
             );
-            return Ok(compute_attestation(self, event));
+            return Ok(compute_attestation(self, &event_id, event));
         };
         trace!("retrieving price feed for attestation");
         let outcome = self
@@ -145,6 +144,7 @@ impl Oracle {
             .unzip();
 
         let attestation = OracleAttestation {
+            event_id: event_id.to_string(),
             oracle_public_key: self.keypair.public_key().into(),
             signatures,
             outcomes: outcome_vec,
@@ -172,7 +172,10 @@ impl Oracle {
         };
 
         let announcement = compute_announcement(self, event.clone());
-        Ok(Some((announcement, compute_attestation(self, event))))
+        Ok(Some((
+            announcement,
+            compute_attestation(self, event_id, event),
+        )))
     }
 
     /// If it exists, return many events announcement and attestation.
@@ -212,7 +215,7 @@ impl Oracle {
                         .iter()
                         .map(|sk| {
                             let oracle_r_kp =
-                                secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, sk)
+                                secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, sk)
                                     .expect("too low probability of secret to be invalid");
                             XOnlyPublicKey::from_keypair(&oracle_r_kp).0
                         })
@@ -247,7 +250,7 @@ impl Oracle {
                         let mut sk_nonce = [0u8; 32];
                         rng.fill_bytes(&mut sk_nonce);
                         let oracle_r_kp =
-                            secp256k1_zkp::KeyPair::from_seckey_slice(&self.secp, &sk_nonce)
+                            secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, &sk_nonce)
                                 .unwrap();
                         let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                         sk_nonces.push(sk_nonce);
@@ -269,9 +272,7 @@ impl Oracle {
 
         let announcement = OracleAnnouncement {
             announcement_signature: self.secp.sign_schnorr(
-                &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
-                    &oracle_event.encode(),
-                ),
+                &Message::from_digest(*sha256::Hash::hash(&oracle_event.encode()).as_ref()),
                 &self.keypair,
             ),
             oracle_public_key: self.keypair.public_key().into(),
@@ -303,6 +304,7 @@ impl Oracle {
             .unzip();
 
         let attestation = OracleAttestation {
+            event_id: event_id.to_string(),
             oracle_public_key: self.keypair.public_key().into(),
             signatures,
             outcomes: outcome_vec,
@@ -321,7 +323,11 @@ impl Oracle {
     }
 }
 
-fn compute_attestation(oracle: &Oracle, event: PostgresResponse) -> Option<OracleAttestation> {
+fn compute_attestation(
+    oracle: &Oracle,
+    event_id: &str,
+    event: PostgresResponse,
+) -> Option<OracleAttestation> {
     if let ScalarsRecords::DigitsAttestations(outcome, sigs) = event.scalars_records {
         let full_signatures = sigs
             .into_iter()
@@ -332,6 +338,7 @@ fn compute_attestation(oracle: &Oracle, event: PostgresResponse) -> Option<Oracl
             })
             .collect();
         Some(OracleAttestation {
+            event_id: event_id.to_string(),
             oracle_public_key: oracle.keypair.public_key().into(),
             signatures: full_signatures,
             outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
@@ -371,7 +378,12 @@ mod test {
         OracleEvent,
     };
     use lightning::util::ser::Writeable;
-    use secp256k1_zkp::{rand, schnorr::Signature, KeyPair, Message, Secp256k1, XOnlyPublicKey};
+    use secp256k1_zkp::{
+        hashes::{sha256, Hash},
+        rand,
+        schnorr::Signature,
+        Keypair, Message, Secp256k1, XOnlyPublicKey,
+    };
     use sqlx::postgres::PgPool;
 
     use super::{
@@ -387,8 +399,6 @@ mod test {
             ImplementedPriceFeed::{self, Lnmarkets},
         },
     };
-
-    use secp256k1_zkp::hashes::Hash;
 
     async fn setup_oracle(
         tbd: PgPool,
@@ -412,7 +422,7 @@ mod test {
 
         let secp = Secp256k1::new();
         let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
-        let keypair = KeyPair::from_secret_key(&secp, &secret_key);
+        let keypair = Keypair::from_secret_key(&secp, &secret_key);
         let db = DBconnection(tbd);
         return Oracle::new(asset_pair_info, secp, db, keypair);
     }
@@ -441,8 +451,8 @@ mod test {
         let secp = &oracle.secp;
         secp.verify_schnorr(
             &oracle_announcement.announcement_signature,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
-                oracle_announcement.oracle_event.encode().as_ref(),
+            &Message::from_digest(
+                *sha256::Hash::hash(&oracle_announcement.oracle_event.encode()).as_ref(),
             ),
             &oracle.get_public_key(),
         )
@@ -536,9 +546,7 @@ mod test {
                 {
                     secp.verify_schnorr(
                         &signature,
-                        &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
-                            outcome.as_ref(),
-                        ),
+                        &Message::from_digest(*sha256::Hash::hash(outcome.as_ref()).as_ref()),
                         &oracle.get_public_key(),
                     )
                     .unwrap();
@@ -637,8 +645,8 @@ mod test {
         let secp = Secp256k1::new();
         secp.verify_schnorr(
             &announcement.announcement_signature,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(
-                announcement.oracle_event.encode().as_slice(),
+            &Message::from_digest(
+                *sha256::Hash::hash(announcement.oracle_event.encode().as_slice()).as_ref(),
             ),
             &announcement.oracle_public_key,
         )
@@ -649,6 +657,7 @@ mod test {
     fn tests_vector_attestation() {
         // https://oracle.holzeis.me/asset/btcusd/attestation/2023-06-16T13:00:00Z
         let attestation_test_vec = OracleAttestation {
+            event_id: "btcusd1686920400".into(),
             oracle_public_key: XOnlyPublicKey::from_str("16f88cf7d21e6c0f46bcbc983a4e3b19726c6c98858cc31c83551a88fde171c0").unwrap(),
             signatures: [
                 "5ff9c4efb62b88f2538e9e5702240b5043a94e79e584fca308e96df2a31ae37064712a2f4a568c9a7e602c8dd862ba450570a1bc4dc9143049aa27d8a58872c0",
@@ -699,6 +708,7 @@ mod test {
         check_test_vec(attestation_test_vec);
         // https://oracle.p2pderivatives.io/asset/btcusd/attestation/2023-07-06T16:20:00Z
         let attestation_test_vec = OracleAttestation {
+            event_id: "btcusd1688660400".into(),
             oracle_public_key: XOnlyPublicKey::from_str("ce4b7ad2b45de01f0897aa716f67b4c2f596e54506431e693f898712fe7e9bf3").unwrap(),
             signatures: [
                 "9c4b0f2f79a7b6baa152274fedaa8576afaf912552057d01487dac2d11ca93487a53f91ddbfac44da9a828f42a1287f8f0290113d895616bc6f8ea3fbb78c623",
@@ -749,6 +759,7 @@ mod test {
         check_test_vec(attestation_test_vec);
         //http://localhost:8000/v1/asset/btcusd/attestation/2023-07-07T10:48:00Z
         let attestation_test_vec = OracleAttestation {
+            event_id: "btcusd1688726880".into(),
             oracle_public_key: XOnlyPublicKey::from_str("24653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c").unwrap(),
             signatures: [
                 "cfade64b475a23bcbea453ad17349a3907683c1aa09bcff4d4c319f6444adf9f6ac38e0c60bcd8c14c91faaec429e72803a870e8e29a5ae0fe2392e874dd9b08",
@@ -887,7 +898,7 @@ mod test {
         let payload = [tag, tag, announcement.oracle_event.encode().as_slice()].concat();
         secp.verify_schnorr(
             &announcement.announcement_signature,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
+            &Message::from_digest(*sha256::Hash::hash(payload.as_ref()).as_ref()),
             &announcement.oracle_public_key,
         )
         .unwrap();
@@ -900,6 +911,7 @@ mod test {
 
         // https://oracle.suredbits.com/announcement/3ef91d749960d85f1190e86bd89d7d65a6303ca9bd4f16111c569d46d81f8f04
         let attestation_test_vec = OracleAttestation {
+            event_id: "btcusd1688661600".into(), // random
             oracle_public_key: XOnlyPublicKey::from_str("04ba9838623f02c940d20d7b185d410178cff7990c7fcf19186c7f58c7c4b8de").unwrap(),
             signatures: [
                 "02ef69281933974a279c4961adc96a442847739bd4af2d137fcac924438a223e0dd7103814689c706241f789a1f48a6670d24045b874e6956b0e673cc0160ecd",
