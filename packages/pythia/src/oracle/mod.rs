@@ -122,9 +122,9 @@ impl Oracle {
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
             info!(
                 "Event {} already attested (should be possible only in debug mode)",
-                &event_id
+                event_id
             );
-            return Ok(compute_attestation(self, &event_id, event));
+            return Ok(compute_attestation(self, event_id, event));
         };
         trace!("retrieving price feed for attestation");
         let outcome = self

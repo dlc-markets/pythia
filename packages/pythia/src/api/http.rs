@@ -32,7 +32,7 @@ where
     let s = <&str>::deserialize(deserializer)?;
 
     s.split(',')
-        .map(|i| DateTime::<FixedOffset>::from_str(i))
+        .map(DateTime::<FixedOffset>::from_str)
         .collect::<Result<Vec<_>, _>>()
         .map_err(serde::de::Error::custom)
 }
@@ -115,7 +115,7 @@ pub(super) async fn oracle_event_service(
     let (announcement, maybe_attestation) = oracle
         .oracle_state(&event_id)
         .await
-        .map_err(|e| PythiaApiError::OracleFail(e))?
+        .map_err(PythiaApiError::OracleFail)?
         .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
 
     match event_type {
@@ -128,7 +128,7 @@ pub(super) async fn oracle_event_service(
                         Ok(oracle
                             .try_attest_event(&event_id)
                             .await
-                            .map_err(|e| PythiaApiError::OracleFail(e))?
+                            .map_err(PythiaApiError::OracleFail)?
                             .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
                         )
                     } else {
@@ -185,7 +185,7 @@ pub(super) async fn oracle_batch_announcements_service(
     let announcements = oracle
         .oracle_many_announcements(events_ids)
         .await
-        .map_err(|e| PythiaApiError::OracleFail(e))?;
+        .map_err(PythiaApiError::OracleFail)?;
 
     Ok(HttpResponse::Ok().json(announcements))
 }
