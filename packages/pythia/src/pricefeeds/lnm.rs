@@ -51,7 +51,7 @@ impl PriceFeed for Lnmarkets {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
-        if res[0].time.timestamp() != start_time {
+        if res[0].time.and_utc().timestamp() != start_time {
             return Err(PriceFeedError::PriceNotAvailable(
                 asset_pair,
                 Utc::from_utc_datetime(&Utc, &res[0].time),

@@ -448,15 +448,11 @@ mod test {
             .unwrap_or_else(|| panic!("No oracle announcement in DB !"));
         assert_eq!(oracle_announcement, db_oracle_announcement.0);
 
-        let secp = &oracle.secp;
-        secp.verify_schnorr(
-            &oracle_announcement.announcement_signature,
-            &Message::from_digest(
-                *sha256::Hash::hash(&oracle_announcement.oracle_event.encode()).as_ref(),
-            ),
-            &oracle.get_public_key(),
-        )
-        .unwrap();
+        (oracle_announcement.oracle_public_key == oracle.get_public_key())
+            .then_some(())
+            .unwrap_or_else(|| panic!("Public key in announcement mismatch the oracle's one"));
+
+        oracle_announcement.validate(&oracle.secp).unwrap();
     }
 
     #[sqlx::test]
@@ -541,16 +537,9 @@ mod test {
                     .abs()
                         < 0.01
                 );
-                let secp = &oracle.secp;
-                for (outcome, signature) in attestation.outcomes.iter().zip(attestation.signatures)
-                {
-                    secp.verify_schnorr(
-                        &signature,
-                        &Message::from_digest(*sha256::Hash::hash(outcome.as_ref()).as_ref()),
-                        &oracle.get_public_key(),
-                    )
+                attestation
+                    .validate(&oracle.secp, &oracle_announcement)
                     .unwrap();
-                }
             }
         }
     }

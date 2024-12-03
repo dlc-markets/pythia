@@ -43,14 +43,14 @@ struct ApiOraclePubKey {
     public_key: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ApiOracleEvent {
-    asset_pair: AssetPair,
-    announcement: String,
-    attestation: Option<String>,
-    maturation: String,
-    outcome: Option<u64>,
-}
+// #[derive(Debug, Serialize)]
+// struct ApiOracleEvent {
+//     asset_pair: AssetPair,
+//     announcement: String,
+//     attestation: Option<String>,
+//     maturation: String,
+//     outcome: Option<u64>,
+// }
 
 #[get("/oracle/publickey")]
 pub(super) async fn pub_key(
