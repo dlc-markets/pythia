@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use actix_utils::future::{err, ok, Ready};
 use actix_web::{
@@ -6,16 +6,16 @@ use actix_web::{
     FromRequest,
 };
 use chrono::Duration;
-use cron::Schedule;
 use tokio::sync::broadcast::Receiver;
 
-use crate::{api::EventNotification, config::AssetPair, oracle::Oracle};
+use crate::api::EventNotification;
+
+use super::OracleContextInner;
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler.
 /// This context also includes the channel receiver endpoint to broadcast announcements/attestations
 pub(crate) struct ApiContext {
-    pub(crate) oracles: Arc<HashMap<AssetPair, Oracle>>,
-    pub(crate) schedule: Arc<Schedule>,
+    pub(crate) oracle_context: Arc<OracleContextInner>,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_receiver: Receiver<EventNotification>,
 }
@@ -23,8 +23,7 @@ pub(crate) struct ApiContext {
 impl Clone for ApiContext {
     fn clone(&self) -> Self {
         Self {
-            oracles: Arc::clone(&self.oracles),
-            schedule: Arc::clone(&self.schedule),
+            oracle_context: Arc::clone(&self.oracle_context),
             offset_duration: self.offset_duration,
             channel_receiver: self.channel_receiver.resubscribe(),
         }

@@ -4,12 +4,7 @@ use actix_web_actors::ws;
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::broadcast::Receiver;
+use std::time::{Duration, Instant};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 use super::{EventNotification, EventType};
@@ -53,9 +48,8 @@ struct PythiaWebSocket {
     /// otherwise we drop connection.
     hb: Instant,
     /// The Oracles instances the websocket is allowed to interact with
-    oracles: Arc<HashMap<AssetPair, Oracle>>,
-    /// The stream of broadcasted event for the client
-    event_rx: Receiver<EventNotification>,
+    /// and the stream of broadcasted event for the client
+    api_context: ApiContext,
     /// Subscription options to channels
     subscribed_to: Vec<EventChannel>,
 }
@@ -66,22 +60,19 @@ async fn websocket(
     stream: web::Payload,
     req: HttpRequest,
 ) -> super::Result<HttpResponse> {
-    ws::start(
-        PythiaWebSocket::new(context.oracles.clone(), context.channel_receiver),
-        &req,
-        stream,
-    )
+    ws::start(PythiaWebSocket::new(context), &req, stream)
 }
 
 impl PythiaWebSocket {
-    fn new(
-        oracles: Arc<HashMap<AssetPair, Oracle>>,
-        event_rx: Receiver<EventNotification>,
-    ) -> Self {
+    fn new(api_context: ApiContext) -> Self {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
         // if such oracle is available
-        if oracles.get(&AssetPair::BtcUsd).is_some() {
+        if api_context
+            .oracle_context
+            .oracles
+            .contains_key(&AssetPair::BtcUsd)
+        {
             subscription_vec.push(EventChannel {
                 asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Attestation,
@@ -89,8 +80,7 @@ impl PythiaWebSocket {
         }
         Self {
             hb: Instant::now(),
-            oracles,
-            event_rx,
+            api_context,
             subscribed_to: subscription_vec,
         }
     }
@@ -125,7 +115,9 @@ impl Actor for PythiaWebSocket {
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
         // Attach the stream of event produced by the schedulers to the websocket
-        ctx.add_stream(BroadcastStream::from(self.event_rx.resubscribe()));
+        ctx.add_stream(BroadcastStream::from(
+            self.api_context.channel_receiver.resubscribe(),
+        ));
     }
 }
 
@@ -183,7 +175,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                                 ty: EventType::Attestation,
                             } => asset_pair,
                         };
-                        match self.oracles.get(&asset_pair) {
+                        match self.api_context.oracle_context.oracles.get(&asset_pair) {
                             Some(oracle) => future_oracle_state(oracle.clone(), get_request),
                             None => {
                                 ctx.text(
