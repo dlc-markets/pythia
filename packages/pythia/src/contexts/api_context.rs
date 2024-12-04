@@ -6,18 +6,31 @@ use actix_web::{
     FromRequest,
 };
 use chrono::Duration;
+use cron::Schedule;
 use tokio::sync::broadcast::Receiver;
 
-use crate::api::EventNotification;
+use crate::{api::EventNotification, oracle::Oracle};
 
-use super::OracleContextInner;
+use super::{AssetPair, OracleContextInner};
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler.
 /// This context also includes the channel receiver endpoint to broadcast announcements/attestations
 pub(crate) struct ApiContext {
-    pub(crate) oracle_context: Arc<OracleContextInner>,
+    pub(super) oracle_context: Arc<OracleContextInner>,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_receiver: Receiver<EventNotification>,
+}
+
+impl ApiContext {
+    /// Get the oracle for the given asset pair
+    pub(crate) fn get_oracle(&self, asset_pair: &AssetPair) -> Option<&Oracle> {
+        self.oracle_context.oracles.get(asset_pair)
+    }
+
+    /// Get the schedule
+    pub(crate) fn schedule(&self) -> &Schedule {
+        &self.oracle_context.schedule
+    }
 }
 
 impl Clone for ApiContext {

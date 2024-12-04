@@ -68,11 +68,7 @@ impl PythiaWebSocket {
         let mut subscription_vec = Vec::with_capacity(2);
         // A client is by default subscribing to the channel of btcusd attestation
         // if such oracle is available
-        if api_context
-            .oracle_context
-            .oracles
-            .contains_key(&AssetPair::BtcUsd)
-        {
+        if api_context.get_oracle(&AssetPair::BtcUsd).is_some() {
             subscription_vec.push(EventChannel {
                 asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Attestation,
@@ -175,7 +171,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                                 ty: EventType::Attestation,
                             } => asset_pair,
                         };
-                        match self.api_context.oracle_context.oracles.get(&asset_pair) {
+                        match self.api_context.get_oracle(&asset_pair) {
                             Some(oracle) => future_oracle_state(oracle.clone(), get_request),
                             None => {
                                 ctx.text(

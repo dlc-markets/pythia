@@ -58,7 +58,7 @@ pub(super) async fn pub_key(
     filters: web::Query<AssetPairFilters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
-    let oracle = match context.oracle_context.oracles.get(&filters.asset_pair) {
+    let oracle = match context.get_oracle(&filters.asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(filters.asset_pair).into()),
         Some(val) => val,
     };
@@ -82,14 +82,12 @@ pub(super) async fn config(
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
     let oracle = context
-        .oracle_context
-        .oracles
-        .get(&asset_pair)
+        .get_oracle(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse {
         pricefeed: oracle.asset_pair_info.pricefeed,
         announcement_offset: context.offset_duration,
-        schedule: context.oracle_context.schedule.clone(),
+        schedule: context.schedule().clone(),
     }))
 }
 
@@ -101,7 +99,7 @@ pub(super) async fn oracle_event_service(
     let (asset_pair, event_type, timestamp) = path.into_inner();
     info!("GET /asset/{asset_pair}/{event_type:?}/{timestamp}");
 
-    let oracle = match context.oracle_context.oracles.get(&asset_pair) {
+    let oracle = match context.get_oracle(&asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(asset_pair).into()),
         Some(val) => val,
     };
@@ -161,9 +159,7 @@ pub(super) async fn oracle_batch_announcements_service(
     info!("GET /asset/{asset_pair}/announcements: {:#?}", filter);
 
     let oracle = context
-        .oracle_context
-        .oracles
-        .get(&asset_pair)
+        .get_oracle(&asset_pair)
         .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
 
     if oracle.is_empty().await {
@@ -213,7 +209,7 @@ pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Re
     let timestamp =
         DateTime::parse_from_rfc3339(&maturation).map_err(PythiaApiError::DatetimeParsing)?;
 
-    let oracle = match context.oracle_context.oracles.get(&AssetPair::BtcUsd) {
+    let oracle = match context.get_oracle(&AssetPair::BtcUsd) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(AssetPair::BtcUsd).into()),
         Some(val) => val,
     };

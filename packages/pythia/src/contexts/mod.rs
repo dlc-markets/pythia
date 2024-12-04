@@ -16,9 +16,9 @@ pub(super) mod scheduler;
 use api_context::ApiContext;
 use error::PythiaContextError;
 
-pub(crate) struct OracleContextInner {
-    pub(crate) oracles: HashMap<AssetPair, Oracle>,
-    pub(crate) schedule: Schedule,
+struct OracleContextInner {
+    oracles: HashMap<AssetPair, Oracle>,
+    schedule: Schedule,
 }
 
 /// Initialize contexts for the API and scheduler bind internally together through a channel sending scheduled event to websocket context
