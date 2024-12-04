@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
@@ -16,19 +18,15 @@ pub(super) struct NoncePoint(XOnlyPublicKey);
 pub(super) struct SigningScalar(Scalar);
 /// Custom signature type
 #[derive(From)]
-pub(super) struct OracleSignature(pub(super) NoncePoint, pub(super) SigningScalar);
-
-impl From<OracleSignature> for (NoncePoint, SigningScalar) {
-    /// Split signature into public nonce and scalar parts
-    fn from(sig: OracleSignature) -> Self {
-        (sig.0, sig.1)
-    }
+pub(super) struct OracleSignature {
+    pub(super) nonce: NoncePoint,
+    pub(super) scalar: SigningScalar,
 }
 
 impl From<OracleSignature> for Signature {
     fn from(sig: OracleSignature) -> Self {
         Signature::from_slice(
-            [sig.0 .0.serialize(), sig.1 .0.to_be_bytes()]
+            [sig.nonce.0.serialize(), sig.scalar.0.to_be_bytes()]
                 .concat()
                 .as_slice(),
         )
@@ -42,15 +40,14 @@ impl From<Signature> for OracleSignature {
         let scalar_array = scalar_bytes
             .try_into()
             .expect("Schnorr signature is 64 bytes long");
-        (
-            XOnlyPublicKey::from_slice(x_nonce_bytes)
+        Self {
+            nonce: XOnlyPublicKey::from_slice(x_nonce_bytes)
                 .expect("signature split correctly")
                 .into(),
-            Scalar::from_be_bytes(scalar_array)
+            scalar: Scalar::from_be_bytes(scalar_array)
                 .expect("signature scalar is always less then curve order")
                 .into(),
-        )
-            .into()
+        }
     }
 }
 
@@ -66,21 +63,27 @@ pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u
         .collect::<Vec<_>>()
 }
 
+static HASH_ZERO: LazyLock<Message> =
+    LazyLock::new(|| Message::from_digest(*sha256::Hash::hash("0".as_bytes()).as_ref()));
+static HASH_ONE: LazyLock<Message> =
+    LazyLock::new(|| Message::from_digest(*sha256::Hash::hash("1".as_bytes()).as_ref()));
+
 pub(super) fn sign_outcome(
     secp: &Secp256k1<All>,
     key_pair: &Keypair,
-    outcome: &String,
+    outcome: &str,
     outstanding_sk_nonce: &[u8; 32],
-) -> (String, Signature) {
-    (
-        outcome.to_owned(),
-        schnorrsig_sign_with_nonce(
+) -> Signature {
+    match outcome {
+        "0" => schnorrsig_sign_with_nonce(secp, &HASH_ZERO, key_pair, outstanding_sk_nonce),
+        "1" => schnorrsig_sign_with_nonce(secp, &HASH_ONE, key_pair, outstanding_sk_nonce),
+        other => schnorrsig_sign_with_nonce(
             secp,
-            &Message::from_digest(*sha256::Hash::hash(outcome.as_bytes()).as_ref()),
+            &Message::from_digest(*sha256::Hash::hash(other.as_bytes()).as_ref()),
             key_pair,
             outstanding_sk_nonce,
         ),
-    )
+    }
 }
 
 #[cfg(test)]
@@ -93,9 +96,7 @@ pub(super) mod test {
         All, Keypair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
     };
 
-    use crate::oracle::crypto::{
-        to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar,
-    };
+    use crate::oracle::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature};
 
     fn check_bit_conversion(number: f64, digits: u16, precision: u16, result: Vec<String>) {
         assert_eq!(
@@ -152,8 +153,7 @@ pub(super) mod test {
         result: Signature,
     ) -> Result<(), UpstreamError> {
         if let Some(sk_nonce) = outstanding_sk_nonce {
-            let (nonce, _): (NoncePoint, SigningScalar) =
-                Into::<OracleSignature>::into(result).into();
+            let OracleSignature { nonce, scalar: _ } = result.into();
             let nonce_pair = Keypair::from_seckey_slice(secp, sk_nonce).unwrap();
             assert_eq!(nonce_pair.x_only_public_key().0, nonce.0);
         }
@@ -207,7 +207,7 @@ pub(super) mod test {
         // Convert into nonce and scalar
 
         let oracle_sig = OracleSignature::from(sig_secp);
-        let (oracle_nonce, oracle_scalar) = oracle_sig.into();
+        let OracleSignature { nonce, scalar } = oracle_sig.into();
 
         // If secret nonce is given, check that it match public one in signature
 
@@ -219,13 +219,13 @@ pub(super) mod test {
                         .x_only_public_key()
                         .0
                 ),
-                &oracle_nonce
+                &nonce
             ),
             None => {}
         }
 
         // Aggregate back into a signature
-        let oracle_sig: OracleSignature = (oracle_nonce, oracle_scalar).into();
+        let oracle_sig = OracleSignature { nonce, scalar };
 
         // Check if Signature if still valid after manipulations
         secp.verify_schnorr(&oracle_sig.into(), &zero_msg, &pub_key)

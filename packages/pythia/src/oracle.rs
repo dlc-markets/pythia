@@ -139,10 +139,12 @@ impl Oracle {
 
         let outcomes = to_digit_decomposition_vec(outcome, event.digits, event.precision);
         let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
-            .iter()
+            .into_iter()
             .zip(outstanding_sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                sign_outcome(&self.secp, &self.keypair, outcome, outstanding_sk_nonce)
+                let signature =
+                    sign_outcome(&self.secp, &self.keypair, &outcome, outstanding_sk_nonce);
+                (outcome, signature)
             })
             .unzip();
 
@@ -299,10 +301,12 @@ impl Oracle {
         );
 
         let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
-            .iter()
+            .into_iter()
             .zip(sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                sign_outcome(&self.secp, &self.keypair, outcome, outstanding_sk_nonce)
+                let signature =
+                    sign_outcome(&self.secp, &self.keypair, &outcome, outstanding_sk_nonce);
+                (outcome, signature)
             })
             .unzip();
 
