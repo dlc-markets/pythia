@@ -22,6 +22,11 @@ pub(crate) struct ApiContext {
 }
 
 impl ApiContext {
+    /// Get iterator over AssetPairs
+    pub(crate) fn asset_pairs(&self) -> impl Iterator<Item = &AssetPair> {
+        self.oracle_context.oracles.keys()
+    }
+
     /// Get the oracle for the given asset pair
     pub(crate) fn get_oracle(&self, asset_pair: &AssetPair) -> Option<&Oracle> {
         self.oracle_context.oracles.get(asset_pair)

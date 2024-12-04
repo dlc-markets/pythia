@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate log;
 
+use actix::spawn;
 use clap::Parser;
-use futures::future::TryFutureExt;
 use hex::ToHex;
 use secp256k1_zkp::{Keypair, Secp256k1};
 use std::collections::HashMap;
@@ -10,10 +10,10 @@ use tokio::select;
 
 mod api;
 mod config;
-mod contexts;
 mod error;
 mod oracle;
 mod pricefeeds;
+mod schedule_context;
 
 use config::cli::PythiaArgs;
 use config::{AssetPair, AssetPairInfo};
@@ -72,19 +72,18 @@ async fn main() -> Result<(), PythiaError> {
     };
 
     let (scheduler_context, api_context) =
-        contexts::create_contexts(oracles, oracle_scheduler_config)?;
+        schedule_context::create_contexts(oracles, oracle_scheduler_config)?;
 
-    // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
+    // Spawn oracle events scheduler (announcements/attestations) and API
+    // using the channel receiver for websocket.
     // In case of failure of scheduler or API, get the error and return it
 
-    select!(
-        e = contexts::scheduler::start_schedule(
-            scheduler_context,
-        ) => {e},
-        e = api::run_api_v1(
-            api_context,
-            port,
-            debug_mode,
-        ).err_into() => {e}
-    )
+    select! {
+        e = spawn(schedule_context::scheduler::start_schedule(scheduler_context)) => {
+            e?.map_err(PythiaError::from)
+        },
+        e = spawn(api::run_api_v1(api_context, port, debug_mode)) => {
+            e?.map_err(PythiaError::from)
+        },
+    }
 }

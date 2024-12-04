@@ -11,8 +11,8 @@ use super::{EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
     config::AssetPair,
-    contexts::api_context::ApiContext,
     oracle::Oracle,
+    schedule_context::api_context::ApiContext,
 };
 
 #[derive(Clone, Serialize, Debug)]

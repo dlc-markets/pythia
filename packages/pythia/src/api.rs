@@ -10,7 +10,7 @@ use error::PythiaApiError;
 mod http;
 mod ws;
 
-use crate::{config::AssetPair, contexts::api_context::ApiContext};
+use crate::{config::AssetPair, schedule_context::api_context::ApiContext};
 
 #[derive(PartialEq, Deserialize, Clone)]
 struct EventChannel {
