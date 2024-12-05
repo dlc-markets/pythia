@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
@@ -7,6 +5,18 @@ use secp256k1_zkp::{
     schnorr::Signature,
     All, Keypair, Message, Scalar, Secp256k1, XOnlyPublicKey,
 };
+
+/// SHA 256 hash of the string "0"
+const HASH_ZERO_BYTES: [u8; 32] = [
+    95, 236, 235, 102, 255, 200, 111, 56, 217, 82, 120, 108, 109, 105, 108, 121, 194, 219, 194, 57,
+    221, 78, 145, 180, 103, 41, 215, 58, 39, 251, 87, 233,
+];
+
+/// SHA 256 hash of the string "1"
+const HASH_ONE_BYTES: [u8; 32] = [
+    107, 134, 178, 115, 255, 52, 252, 225, 157, 107, 128, 78, 255, 90, 63, 87, 71, 173, 164, 234,
+    162, 47, 29, 73, 192, 30, 82, 221, 183, 135, 91, 75,
+];
 
 /// We use custom types to implement signature splitting into nonce and scalar.
 /// Custom public nonce type
@@ -21,6 +31,48 @@ pub(super) struct SigningScalar(Scalar);
 pub(super) struct OracleSignature {
     pub(super) nonce: NoncePoint,
     pub(super) scalar: SigningScalar,
+}
+
+/// Decompose numerical outcome into base 2 and convert into vec of string
+/// digits is the vec length or number of digits used iun total
+/// precision is the number of digits dedicated to fractional part
+pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
+    let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
+    let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
+    outcome_binary
+        .chars()
+        .map(|char| char.to_string())
+        .collect::<Vec<_>>()
+}
+
+pub(super) fn sign_outcome(
+    secp: &Secp256k1<All>,
+    key_pair: &Keypair,
+    outcome: &str,
+    outstanding_sk_nonce: &[u8; 32],
+) -> Signature {
+    // The oracle will often only sign "0" and "1" by design
+    // so we use precomputed hash in those cases to speed up
+    match outcome {
+        "0" => schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_digest(HASH_ZERO_BYTES),
+            key_pair,
+            outstanding_sk_nonce,
+        ),
+        "1" => schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_digest(HASH_ONE_BYTES),
+            key_pair,
+            outstanding_sk_nonce,
+        ),
+        other => schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_digest(sha256::Hash::hash(other.as_bytes()).to_byte_array()),
+            key_pair,
+            outstanding_sk_nonce,
+        ),
+    }
 }
 
 impl From<OracleSignature> for Signature {
@@ -51,41 +103,6 @@ impl From<Signature> for OracleSignature {
     }
 }
 
-/// Decompose numerical outcome into base 2 and convert into vec of string
-/// digits is the vec length or number of digits used iun total
-/// precision is the number of digits dedicated to fractional part
-pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
-    let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
-    let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
-    outcome_binary
-        .chars()
-        .map(|char| char.to_string())
-        .collect::<Vec<_>>()
-}
-
-static HASH_ZERO: LazyLock<Message> =
-    LazyLock::new(|| Message::from_digest(*sha256::Hash::hash("0".as_bytes()).as_ref()));
-static HASH_ONE: LazyLock<Message> =
-    LazyLock::new(|| Message::from_digest(*sha256::Hash::hash("1".as_bytes()).as_ref()));
-
-pub(super) fn sign_outcome(
-    secp: &Secp256k1<All>,
-    key_pair: &Keypair,
-    outcome: &str,
-    outstanding_sk_nonce: &[u8; 32],
-) -> Signature {
-    match outcome {
-        "0" => schnorrsig_sign_with_nonce(secp, &HASH_ZERO, key_pair, outstanding_sk_nonce),
-        "1" => schnorrsig_sign_with_nonce(secp, &HASH_ONE, key_pair, outstanding_sk_nonce),
-        other => schnorrsig_sign_with_nonce(
-            secp,
-            &Message::from_digest(*sha256::Hash::hash(other.as_bytes()).as_ref()),
-            key_pair,
-            outstanding_sk_nonce,
-        ),
-    }
-}
-
 #[cfg(test)]
 pub(super) mod test {
     use std::str::FromStr;
@@ -97,6 +114,8 @@ pub(super) mod test {
     };
 
     use crate::oracle::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature};
+
+    use super::{HASH_ONE_BYTES, HASH_ZERO_BYTES};
 
     fn check_bit_conversion(number: f64, digits: u16, precision: u16, result: Vec<String>) {
         assert_eq!(
@@ -159,7 +178,7 @@ pub(super) mod test {
         }
         secp.verify_schnorr(
             &result,
-            &Message::from_digest(*sha256::Hash::hash(outcome.as_bytes()).as_ref()),
+            &Message::from_digest(sha256::Hash::hash(outcome.as_bytes()).to_byte_array()),
             key,
         )
         // secp.verify_schnorr(
@@ -181,7 +200,7 @@ pub(super) mod test {
         let payload = [tag, tag, msg.as_ref()].concat();
         secp.verify_schnorr(
             &result,
-            &Message::from_digest(*sha256::Hash::hash(payload.as_ref()).as_ref()),
+            &Message::from_digest(sha256::Hash::hash(payload.as_ref()).to_byte_array()),
             key,
         )
         // secp.verify_schnorr(
@@ -232,11 +251,23 @@ pub(super) mod test {
             .unwrap();
     }
 
-    fn hash_zero() -> String {
-        hex::encode::<[u8; 32]>(*secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).as_ref())
+    fn hash_zero() -> Box<str> {
+        hex::encode::<[u8; 32]>(HASH_ZERO_BYTES).into_boxed_str()
     }
-    fn hash_one() -> String {
-        hex::encode::<[u8; 32]>(*secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).as_ref())
+    fn hash_one() -> Box<str> {
+        hex::encode::<[u8; 32]>(HASH_ONE_BYTES).into_boxed_str()
+    }
+
+    #[test]
+    fn hash_0_1_check() {
+        assert_eq!(
+            secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).to_byte_array(),
+            HASH_ZERO_BYTES
+        );
+        assert_eq!(
+            secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).to_byte_array(),
+            HASH_ONE_BYTES
+        );
     }
 
     #[test]

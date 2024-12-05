@@ -100,7 +100,7 @@ impl Oracle {
 
         let announcement = OracleAnnouncement {
             announcement_signature: self.secp.sign_schnorr(
-                &Message::from_digest(*sha256::Hash::hash(&oracle_event.encode()).as_ref()),
+                &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
                 &self.keypair,
             ),
             oracle_public_key: self.keypair.public_key().into(),
@@ -160,10 +160,10 @@ impl Oracle {
         );
         trace!("attestation {:#?}", &attestation);
 
-        let _ = &self
-            .db
+        self.db
             .update_to_attestation(event_id, &attestation, outcome)
             .await?;
+
         Ok(Some(attestation))
     }
 
@@ -277,7 +277,7 @@ impl Oracle {
 
         let announcement = OracleAnnouncement {
             announcement_signature: self.secp.sign_schnorr(
-                &Message::from_digest(*sha256::Hash::hash(&oracle_event.encode()).as_ref()),
+                &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
                 &self.keypair,
             ),
             oracle_public_key: self.keypair.public_key().into(),

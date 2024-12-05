@@ -263,7 +263,7 @@ fn test_vector_announcement() {
     secp.verify_schnorr(
         &announcement.announcement_signature,
         &Message::from_digest(
-            *sha256::Hash::hash(announcement.oracle_event.encode().as_slice()).as_ref(),
+            sha256::Hash::hash(announcement.oracle_event.encode().as_slice()).to_byte_array(),
         ),
         &announcement.oracle_public_key,
     )
@@ -515,7 +515,7 @@ fn test_vector_announcement_suredbits() {
     let payload = [tag, tag, announcement.oracle_event.encode().as_slice()].concat();
     secp.verify_schnorr(
         &announcement.announcement_signature,
-        &Message::from_digest(*sha256::Hash::hash(payload.as_ref()).as_ref()),
+        &Message::from_digest(sha256::Hash::hash(payload.as_ref()).to_byte_array()),
         &announcement.oracle_public_key,
     )
     .unwrap();
