@@ -9,8 +9,10 @@ use secp256k1_zkp::{
     hashes::{sha256, Hash},
     rand::{thread_rng, RngCore},
     schnorr::Signature,
-    All, Keypair, Message, Secp256k1, XOnlyPublicKey,
+    Keypair, Message, XOnlyPublicKey,
 };
+
+use crate::SECP;
 
 mod crypto;
 pub(crate) mod error;
@@ -29,22 +31,15 @@ pub struct Oracle {
     /// Oracle attestation event format summary
     pub asset_pair_info: AssetPairInfo,
     db: DBconnection,
-    secp: Secp256k1<All>,
     keypair: Keypair,
 }
 
 impl Oracle {
-    /// Create a new instance of oracle for a numerical outcome given an lib secp256k1 context, a postgres DB connection and a keypair.
-    pub fn new(
-        asset_pair_info: AssetPairInfo,
-        secp: Secp256k1<All>,
-        db: DBconnection,
-        keypair: Keypair,
-    ) -> Oracle {
+    /// Create a new instance of oracle for a numerical outcome given a postgres DB connection and a keypair.
+    pub fn new(asset_pair_info: AssetPairInfo, db: DBconnection, keypair: Keypair) -> Oracle {
         Oracle {
             asset_pair_info,
             db,
-            secp,
             keypair,
         }
     }
@@ -82,7 +77,7 @@ impl Oracle {
                 let mut sk_nonce = [0u8; 32];
                 rng.fill_bytes(&mut sk_nonce);
                 let oracle_r_kp =
-                    secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, &sk_nonce).unwrap();
+                    secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
                 let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                 sk_nonces.push(sk_nonce);
                 nonces.push(nonce);
@@ -99,7 +94,7 @@ impl Oracle {
         };
 
         let announcement = OracleAnnouncement {
-            announcement_signature: self.secp.sign_schnorr(
+            announcement_signature: SECP.sign_schnorr(
                 &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
                 &self.keypair,
             ),
@@ -142,8 +137,7 @@ impl Oracle {
             .into_iter()
             .zip(outstanding_sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                let signature =
-                    sign_outcome(&self.secp, &self.keypair, &outcome, outstanding_sk_nonce);
+                let signature = sign_outcome(&SECP, &self.keypair, &outcome, outstanding_sk_nonce);
                 (outcome, signature)
             })
             .unzip();
@@ -219,9 +213,8 @@ impl Oracle {
                     let nonces = sk_nonces
                         .iter()
                         .map(|sk| {
-                            let oracle_r_kp =
-                                secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, sk)
-                                    .expect("too low probability of secret to be invalid");
+                            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, sk)
+                                .expect("too low probability of secret to be invalid");
                             XOnlyPublicKey::from_keypair(&oracle_r_kp).0
                         })
                         .collect::<Vec<_>>();
@@ -255,8 +248,7 @@ impl Oracle {
                         let mut sk_nonce = [0u8; 32];
                         rng.fill_bytes(&mut sk_nonce);
                         let oracle_r_kp =
-                            secp256k1_zkp::Keypair::from_seckey_slice(&self.secp, &sk_nonce)
-                                .unwrap();
+                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
                         let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                         sk_nonces.push(sk_nonce);
                         nonces.push(nonce);
@@ -276,7 +268,7 @@ impl Oracle {
         };
 
         let announcement = OracleAnnouncement {
-            announcement_signature: self.secp.sign_schnorr(
+            announcement_signature: SECP.sign_schnorr(
                 &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
                 &self.keypair,
             ),
@@ -304,8 +296,7 @@ impl Oracle {
             .into_iter()
             .zip(sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                let signature =
-                    sign_outcome(&self.secp, &self.keypair, &outcome, outstanding_sk_nonce);
+                let signature = sign_outcome(&SECP, &self.keypair, &outcome, outstanding_sk_nonce);
                 (outcome, signature)
             })
             .unzip();

@@ -22,6 +22,7 @@ use super::{
 };
 use crate::{
     config::{AssetPair, AssetPairInfo},
+    oracle::SECP,
     pricefeeds::{
         error::PriceFeedError,
         ImplementedPriceFeed::{self, Lnmarkets},
@@ -52,7 +53,7 @@ async fn setup_oracle(
     let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
     let keypair = Keypair::from_secret_key(&secp, &secret_key);
     let db = DBconnection(tbd);
-    return Oracle::new(asset_pair_info, secp, db, keypair);
+    return Oracle::new(asset_pair_info, db, keypair);
 }
 
 #[sqlx::test]
@@ -80,7 +81,7 @@ async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
         .then_some(())
         .unwrap_or_else(|| panic!("Public key in announcement mismatch the oracle's one"));
 
-    oracle_announcement.validate(&oracle.secp).unwrap();
+    oracle_announcement.validate(&SECP).unwrap();
 }
 
 #[sqlx::test]
@@ -165,9 +166,7 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
                 .abs()
                     < 0.01
             );
-            attestation
-                .validate(&oracle.secp, &oracle_announcement)
-                .unwrap();
+            attestation.validate(&SECP, &oracle_announcement).unwrap();
         }
     }
 }

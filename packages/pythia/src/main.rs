@@ -4,8 +4,9 @@ extern crate log;
 use actix::spawn;
 use clap::Parser;
 use hex::ToHex;
-use secp256k1_zkp::{Keypair, Secp256k1};
+use secp256k1_zkp::{All, Keypair, Secp256k1};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use tokio::select;
 
 mod api;
@@ -19,6 +20,8 @@ use config::cli::PythiaArgs;
 use config::{AssetPair, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};
+
+static SECP: LazyLock<Secp256k1<All>> = const { LazyLock::new(Secp256k1::new) };
 
 #[actix_web::main]
 async fn main() -> Result<(), PythiaError> {
@@ -37,9 +40,8 @@ async fn main() -> Result<(), PythiaError> {
         debug_mode,
     ) = args.match_args()?;
     let config = asset_pair_infos.into_boxed_slice();
-    // Setup secp context, keypair and postgres DB for oracles
-    let secp = Secp256k1::new();
-    let keypair = Keypair::from_secret_key(&secp, &secret_key);
+    // Setup keypair and postgres DB for oracles
+    let keypair = Keypair::from_secret_key(&SECP, &secret_key);
     info!(
         "oracle public key is {}",
         keypair.public_key().serialize().encode_hex::<String>()
@@ -56,12 +58,7 @@ async fn main() -> Result<(), PythiaError> {
             let asset_pair = asset_pair_info.asset_pair;
 
             info!("creating oracle for {}", asset_pair);
-            Oracle::new(
-                asset_pair_info,
-                secp.clone(),
-                db_connection.clone(),
-                keypair,
-            )
+            Oracle::new(asset_pair_info, db_connection.clone(), keypair)
         }))
         .collect::<HashMap<_, _>>();
 
