@@ -1,8 +1,22 @@
 use derive_more::From;
 use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
-    hashes::sha256, schnorr::Signature, All, KeyPair, Message, Scalar, Secp256k1, XOnlyPublicKey,
+    hashes::{sha256, Hash},
+    schnorr::Signature,
+    All, Keypair, Message, Scalar, Secp256k1, XOnlyPublicKey,
 };
+
+/// SHA 256 hash of the string "0"
+const HASH_ZERO_BYTES: [u8; 32] = [
+    95, 236, 235, 102, 255, 200, 111, 56, 217, 82, 120, 108, 109, 105, 108, 121, 194, 219, 194, 57,
+    221, 78, 145, 180, 103, 41, 215, 58, 39, 251, 87, 233,
+];
+
+/// SHA 256 hash of the string "1"
+const HASH_ONE_BYTES: [u8; 32] = [
+    107, 134, 178, 115, 255, 52, 252, 225, 157, 107, 128, 78, 255, 90, 63, 87, 71, 173, 164, 234,
+    162, 47, 29, 73, 192, 30, 82, 221, 183, 135, 91, 75,
+];
 
 /// We use custom types to implement signature splitting into nonce and scalar.
 /// Custom public nonce type
@@ -14,42 +28,9 @@ pub(super) struct NoncePoint(XOnlyPublicKey);
 pub(super) struct SigningScalar(Scalar);
 /// Custom signature type
 #[derive(From)]
-pub(super) struct OracleSignature(pub(super) NoncePoint, pub(super) SigningScalar);
-
-impl From<OracleSignature> for (NoncePoint, SigningScalar) {
-    /// Split signature into public nonce and scalar parts
-    fn from(sig: OracleSignature) -> Self {
-        (sig.0, sig.1)
-    }
-}
-
-impl From<OracleSignature> for Signature {
-    fn from(sig: OracleSignature) -> Self {
-        Signature::from_slice(
-            [sig.0 .0.serialize(), sig.1 .0.to_be_bytes()]
-                .concat()
-                .as_slice(),
-        )
-        .expect("Nonce and scalar are 64 bytes long")
-    }
-}
-
-impl From<Signature> for OracleSignature {
-    fn from(sig: Signature) -> Self {
-        let (x_nonce_bytes, scalar_bytes) = sig.as_ref().split_at(32);
-        let scalar_array = scalar_bytes
-            .try_into()
-            .expect("Schnorr signature is 64 bytes long");
-        (
-            XOnlyPublicKey::from_slice(x_nonce_bytes)
-                .expect("signature split correctly")
-                .into(),
-            Scalar::from_be_bytes(scalar_array)
-                .expect("signature scalar is always less then curve order")
-                .into(),
-        )
-            .into()
-    }
+pub(super) struct OracleSignature {
+    pub(super) nonce: NoncePoint,
+    pub(super) scalar: SigningScalar,
 }
 
 /// Decompose numerical outcome into base 2 and convert into vec of string
@@ -66,19 +47,60 @@ pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u
 
 pub(super) fn sign_outcome(
     secp: &Secp256k1<All>,
-    key_pair: &KeyPair,
-    outcome: &String,
+    key_pair: &Keypair,
+    outcome: &str,
     outstanding_sk_nonce: &[u8; 32],
-) -> (String, Signature) {
-    (
-        outcome.to_owned(),
-        schnorrsig_sign_with_nonce(
+) -> Signature {
+    // The oracle will often only sign "0" and "1" by design
+    // so we use precomputed hash in those cases to speed up
+    match outcome {
+        "0" => schnorrsig_sign_with_nonce(
             secp,
-            &Message::from_hashed_data::<sha256::Hash>(outcome.as_bytes()),
+            &Message::from_digest(HASH_ZERO_BYTES),
             key_pair,
             outstanding_sk_nonce,
         ),
-    )
+        "1" => schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_digest(HASH_ONE_BYTES),
+            key_pair,
+            outstanding_sk_nonce,
+        ),
+        other => schnorrsig_sign_with_nonce(
+            secp,
+            &Message::from_digest(sha256::Hash::hash(other.as_bytes()).to_byte_array()),
+            key_pair,
+            outstanding_sk_nonce,
+        ),
+    }
+}
+
+impl From<OracleSignature> for Signature {
+    fn from(sig: OracleSignature) -> Self {
+        Signature::from_slice(
+            [sig.nonce.0.serialize(), sig.scalar.0.to_be_bytes()]
+                .concat()
+                .as_slice(),
+        )
+        .expect("Nonce and scalar are 64 bytes long")
+    }
+}
+
+impl From<Signature> for OracleSignature {
+    fn from(sig: Signature) -> Self {
+        let (x_nonce_bytes, scalar_bytes) = sig.as_ref().split_at(32);
+        let scalar_array = scalar_bytes
+            .try_into()
+            .expect("Schnorr signature is 64 bytes long");
+        Self {
+            nonce: XOnlyPublicKey::from_slice(x_nonce_bytes)
+                .expect("signature split correctly")
+                .into(),
+            scalar: Scalar::from_be_bytes(scalar_array)
+                .expect("signature scalar is always less then curve order")
+                .into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,14 +108,14 @@ pub(super) mod test {
     use std::str::FromStr;
 
     use secp256k1_zkp::{
-        hashes::{hex::FromHex, Hash},
+        hashes::{hex::FromHex, sha256, Hash},
         schnorr::Signature,
-        All, KeyPair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
+        All, Keypair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
     };
 
-    use crate::oracle::crypto::{
-        to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar,
-    };
+    use crate::oracle::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature};
+
+    use super::{HASH_ONE_BYTES, HASH_ZERO_BYTES};
 
     fn check_bit_conversion(number: f64, digits: u16, precision: u16, result: Vec<String>) {
         assert_eq!(
@@ -150,14 +172,13 @@ pub(super) mod test {
         result: Signature,
     ) -> Result<(), UpstreamError> {
         if let Some(sk_nonce) = outstanding_sk_nonce {
-            let (nonce, _): (NoncePoint, SigningScalar) =
-                Into::<OracleSignature>::into(result).into();
-            let nonce_pair = KeyPair::from_seckey_slice(secp, sk_nonce).unwrap();
+            let OracleSignature { nonce, scalar: _ } = result.into();
+            let nonce_pair = Keypair::from_seckey_slice(secp, sk_nonce).unwrap();
             assert_eq!(nonce_pair.x_only_public_key().0, nonce.0);
         }
         secp.verify_schnorr(
             &result,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(outcome.as_bytes()),
+            &Message::from_digest(sha256::Hash::hash(outcome.as_bytes()).to_byte_array()),
             key,
         )
         // secp.verify_schnorr(
@@ -179,7 +200,7 @@ pub(super) mod test {
         let payload = [tag, tag, msg.as_ref()].concat();
         secp.verify_schnorr(
             &result,
-            &Message::from_hashed_data::<secp256k1_zkp::hashes::sha256::Hash>(payload.as_ref()),
+            &Message::from_digest(sha256::Hash::hash(payload.as_ref()).to_byte_array()),
             key,
         )
         // secp.verify_schnorr(
@@ -198,43 +219,55 @@ pub(super) mod test {
     ) {
         // Check if passing bip340 test vec
         let sig_secp = Signature::from_str(sig_str).unwrap();
-        let zero_msg = Message::from_slice(&<[u8; 32]>::from_hex(msg_hex).unwrap()).unwrap();
+        let zero_msg = Message::from_digest(<[u8; 32]>::from_hex(msg_hex).unwrap());
         let pub_key = XOnlyPublicKey::from_str(pub_key_str).unwrap();
         secp.verify_schnorr(&sig_secp, &zero_msg, &pub_key).unwrap();
 
         // Convert into nonce and scalar
 
         let oracle_sig = OracleSignature::from(sig_secp);
-        let (oracle_nonce, oracle_scalar) = oracle_sig.into();
+        let OracleSignature { nonce, scalar } = oracle_sig.into();
 
         // If secret nonce is given, check that it match public one in signature
 
         match nonce_secret_str {
             Some(secret_str) => assert_eq!(
                 &NoncePoint(
-                    KeyPair::from_seckey_str(secp, secret_str)
+                    Keypair::from_seckey_str(secp, secret_str)
                         .unwrap()
                         .x_only_public_key()
                         .0
                 ),
-                &oracle_nonce
+                &nonce
             ),
             None => {}
         }
 
         // Aggregate back into a signature
-        let oracle_sig: OracleSignature = (oracle_nonce, oracle_scalar).into();
+        let oracle_sig = OracleSignature { nonce, scalar };
 
         // Check if Signature if still valid after manipulations
         secp.verify_schnorr(&oracle_sig.into(), &zero_msg, &pub_key)
             .unwrap();
     }
 
-    fn hash_zero() -> String {
-        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).as_ref())
+    fn hash_zero() -> Box<str> {
+        hex::encode::<[u8; 32]>(HASH_ZERO_BYTES).into_boxed_str()
     }
-    fn hash_one() -> String {
-        hex::encode(secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).as_ref())
+    fn hash_one() -> Box<str> {
+        hex::encode::<[u8; 32]>(HASH_ONE_BYTES).into_boxed_str()
+    }
+
+    #[test]
+    fn hash_0_1_check() {
+        assert_eq!(
+            secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).to_byte_array(),
+            HASH_ZERO_BYTES
+        );
+        assert_eq!(
+            secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).to_byte_array(),
+            HASH_ONE_BYTES
+        );
     }
 
     #[test]

@@ -4,12 +4,11 @@ use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
-use strum::IntoEnumIterator;
 
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, EventType},
     config::{AssetPair, ConfigResponse},
-    contexts::api_context::ApiContext,
+    schedule_context::api_context::ApiContext,
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -32,7 +31,7 @@ where
     let s = <&str>::deserialize(deserializer)?;
 
     s.split(',')
-        .map(|i| DateTime::<FixedOffset>::from_str(i))
+        .map(DateTime::<FixedOffset>::from_str)
         .collect::<Result<Vec<_>, _>>()
         .map_err(serde::de::Error::custom)
 }
@@ -43,14 +42,14 @@ struct ApiOraclePubKey {
     public_key: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ApiOracleEvent {
-    asset_pair: AssetPair,
-    announcement: String,
-    attestation: Option<String>,
-    maturation: String,
-    outcome: Option<u64>,
-}
+// #[derive(Debug, Serialize)]
+// struct ApiOracleEvent {
+//     asset_pair: AssetPair,
+//     announcement: String,
+//     attestation: Option<String>,
+//     maturation: String,
+//     outcome: Option<u64>,
+// }
 
 #[get("/oracle/publickey")]
 pub(super) async fn pub_key(
@@ -58,7 +57,7 @@ pub(super) async fn pub_key(
     filters: web::Query<AssetPairFilters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
-    let oracle = match context.oracles.get(&filters.asset_pair) {
+    let oracle = match context.get_oracle(&filters.asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(filters.asset_pair).into()),
         Some(val) => val,
     };
@@ -69,9 +68,9 @@ pub(super) async fn pub_key(
 }
 
 #[get("/assets")]
-pub(super) async fn asset_return() -> Result<HttpResponse> {
+pub(super) async fn asset_return(context: ApiContext) -> Result<HttpResponse> {
     info!("GET /oracle/assets");
-    Ok(HttpResponse::Ok().json(AssetPair::iter().collect::<Box<[_]>>()))
+    Ok(HttpResponse::Ok().json(context.asset_pairs().collect::<Box<[_]>>()))
 }
 
 #[get("/asset/{asset_id}/config")]
@@ -82,13 +81,12 @@ pub(super) async fn config(
     let asset_pair = path.into_inner();
     info!("GET /asset/{asset_pair}/config");
     let oracle = context
-        .oracles
-        .get(&asset_pair)
+        .get_oracle(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse {
         pricefeed: oracle.asset_pair_info.pricefeed,
         announcement_offset: context.offset_duration,
-        schedule: context.schedule.as_ref().clone(),
+        schedule: context.schedule().clone(),
     }))
 }
 
@@ -100,7 +98,7 @@ pub(super) async fn oracle_event_service(
     let (asset_pair, event_type, timestamp) = path.into_inner();
     info!("GET /asset/{asset_pair}/{event_type:?}/{timestamp}");
 
-    let oracle = match context.oracles.get(&asset_pair) {
+    let oracle = match context.get_oracle(&asset_pair) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(asset_pair).into()),
         Some(val) => val,
     };
@@ -115,7 +113,7 @@ pub(super) async fn oracle_event_service(
     let (announcement, maybe_attestation) = oracle
         .oracle_state(&event_id)
         .await
-        .map_err(|e| PythiaApiError::OracleFail(e))?
+        .map_err(PythiaApiError::OracleFail)?
         .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
 
     match event_type {
@@ -128,7 +126,7 @@ pub(super) async fn oracle_event_service(
                         Ok(oracle
                             .try_attest_event(&event_id)
                             .await
-                            .map_err(|e| PythiaApiError::OracleFail(e))?
+                            .map_err(PythiaApiError::OracleFail)?
                             .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
                         )
                     } else {
@@ -157,11 +155,10 @@ pub(super) async fn oracle_batch_announcements_service(
     filter: web::Query<MaturityFilters>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
-    info!("POST /asset/{asset_pair}/announcements: {:#?}", filter);
+    info!("GET /asset/{asset_pair}/announcements: {:#?}", filter);
 
     let oracle = context
-        .oracles
-        .get(&asset_pair)
+        .get_oracle(&asset_pair)
         .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
 
     if oracle.is_empty().await {
@@ -185,7 +182,7 @@ pub(super) async fn oracle_batch_announcements_service(
     let announcements = oracle
         .oracle_many_announcements(events_ids)
         .await
-        .map_err(|e| PythiaApiError::OracleFail(e))?;
+        .map_err(PythiaApiError::OracleFail)?;
 
     Ok(HttpResponse::Ok().json(announcements))
 }
@@ -211,7 +208,7 @@ pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Re
     let timestamp =
         DateTime::parse_from_rfc3339(&maturation).map_err(PythiaApiError::DatetimeParsing)?;
 
-    let oracle = match context.oracles.get(&AssetPair::BtcUsd) {
+    let oracle = match context.get_oracle(&AssetPair::BtcUsd) {
         None => return Err(PythiaApiError::UnrecordedAssetPair(AssetPair::BtcUsd).into()),
         Some(val) => val,
     };

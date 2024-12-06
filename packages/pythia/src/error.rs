@@ -1,9 +1,10 @@
 use displaydoc::Display;
 use thiserror::Error;
+use tokio::task::JoinError;
 
 use crate::{
-    api::error::PythiaApiError, config::error::PythiaConfigError,
-    contexts::error::PythiaContextError, oracle::error::OracleError,
+    api::error::PythiaApiError, config::error::PythiaConfigError, oracle::error::OracleError,
+    schedule_context::error::PythiaContextError,
 };
 
 #[derive(Display, Error)]
@@ -22,6 +23,9 @@ pub enum PythiaError {
 
     /// Context Error: {0}
     ContextSetup(#[from] PythiaContextError),
+
+    /// Pythia API or Scheduler panicked: {0}
+    Panic(#[from] JoinError),
 }
 
 // Error in main are shown using Debug display which is sad

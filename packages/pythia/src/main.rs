@@ -1,24 +1,27 @@
 #[macro_use]
 extern crate log;
 
+use actix::spawn;
 use clap::Parser;
-use futures::future::TryFutureExt;
 use hex::ToHex;
-use secp256k1_zkp::{KeyPair, Secp256k1};
+use secp256k1_zkp::{All, Keypair, Secp256k1};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use tokio::select;
 
 mod api;
 mod config;
-mod contexts;
 mod error;
 mod oracle;
 mod pricefeeds;
+mod schedule_context;
 
 use config::cli::PythiaArgs;
 use config::{AssetPair, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};
+
+static SECP: LazyLock<Secp256k1<All>> = const { LazyLock::new(Secp256k1::new) };
 
 #[actix_web::main]
 async fn main() -> Result<(), PythiaError> {
@@ -37,10 +40,8 @@ async fn main() -> Result<(), PythiaError> {
         debug_mode,
     ) = args.match_args()?;
     let config = asset_pair_infos.into_boxed_slice();
-    // Setup secp context, keypair and postgres DB for oracles
-
-    let secp = Secp256k1::new();
-    let keypair = KeyPair::from_secret_key(&secp, &secret_key);
+    // Setup keypair and postgres DB for oracles
+    let keypair = Keypair::from_secret_key(&SECP, &secret_key);
     info!(
         "oracle public key is {}",
         keypair.public_key().serialize().encode_hex::<String>()
@@ -57,12 +58,7 @@ async fn main() -> Result<(), PythiaError> {
             let asset_pair = asset_pair_info.asset_pair;
 
             info!("creating oracle for {}", asset_pair);
-            Oracle::new(
-                asset_pair_info,
-                secp.clone(),
-                db_connection.clone(),
-                keypair,
-            )
+            Oracle::new(asset_pair_info, db_connection.clone(), keypair)
         }))
         .collect::<HashMap<_, _>>();
 
@@ -73,19 +69,18 @@ async fn main() -> Result<(), PythiaError> {
     };
 
     let (scheduler_context, api_context) =
-        contexts::create_contexts(oracles, oracle_scheduler_config)?;
+        schedule_context::create_contexts(oracles, oracle_scheduler_config)?;
 
-    // schedule oracle events (announcements/attestations) and start API using the channel receiver for websocket
+    // Spawn oracle events scheduler (announcements/attestations) and API
+    // using the channel receiver for websocket.
     // In case of failure of scheduler or API, get the error and return it
 
-    select!(
-        e = contexts::scheduler::start_schedule(
-            scheduler_context,
-        ) => {e},
-        e = api::run_api_v1(
-            api_context,
-            port,
-            debug_mode,
-        ).err_into() => {e}
-    )
+    select! {
+        e = spawn(schedule_context::scheduler::start_schedule(scheduler_context)) => {
+            e?.map_err(PythiaError::from)
+        },
+        e = spawn(api::run_api_v1(api_context, port, debug_mode)) => {
+            e?.map_err(PythiaError::from)
+        },
+    }
 }

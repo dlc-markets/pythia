@@ -1,3 +1,4 @@
+use cron::Schedule;
 use scheduler::SchedulerContext;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::broadcast::channel;
@@ -15,28 +16,29 @@ pub(super) mod scheduler;
 use api_context::ApiContext;
 use error::PythiaContextError;
 
+struct OracleContextInner {
+    oracles: HashMap<AssetPair, Oracle>,
+    schedule: Schedule,
+}
+
 /// Initialize contexts for the API and scheduler bind internally together through a channel sending scheduled event to websocket context
 pub(super) fn create_contexts(
     oracles: HashMap<AssetPair, Oracle>,
     scheduler_config: OracleSchedulerConfig,
 ) -> Result<(SchedulerContext, ApiContext), PythiaContextError> {
-    let oracles = Arc::new(oracles);
-    let schedule = Arc::new(scheduler_config.schedule);
+    let oracle_context = Arc::new(OracleContextInner {
+        oracles,
+        schedule: scheduler_config.schedule,
+    });
     let offset_duration = scheduler_config.announcement_offset;
     // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
     // at the same time (if offset is a multiple of the attestation frequency schedule)
-    let channel_size = 2 * oracles.len();
+    let channel_size = 2 * oracle_context.oracles.len();
     let (channel_sender, channel_receiver) = channel::<EventNotification>(channel_size);
     Ok((
-        SchedulerContext::new(
-            oracles.clone(),
-            Arc::clone(&schedule),
-            offset_duration,
-            channel_sender,
-        )?,
+        SchedulerContext::new(oracle_context.clone(), offset_duration, channel_sender)?,
         ApiContext {
-            oracles: oracles.clone(),
-            schedule: Arc::clone(&schedule),
+            oracle_context,
             offset_duration,
             channel_receiver,
         },

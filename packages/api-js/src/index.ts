@@ -17,8 +17,8 @@ interface PythiaAsset {
 interface PythiaAnnouncement {
   announcementSignature: string
   oraclePublicKey: string
+  eventId: string
   oracleEvent: {
-    eventId: string
     oracleNonces: string[]
     eventMaturityEpoch: number
     eventDescriptor: {
@@ -173,7 +173,8 @@ export class Pythia extends EventEmitter<Events> {
     const maturities = times.map((date) => date.toISOString()).join(',')
     return this.request<PythiaAnnouncement[]>(
       'GET',
-      `asset/${assetPair}/announcements/${maturities}`
+      `asset/${assetPair}/announcements/`,
+      { maturities }
     )
   }
 

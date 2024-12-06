@@ -5,13 +5,16 @@ use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
+
+#[cfg(test)]
 use strum::EnumIter;
 
 pub(super) mod cli;
 mod env;
 pub(super) mod error;
 
-#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize, EnumIter)]
+#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "snake_case")]
 pub(super) enum AssetPair {
     #[default]
@@ -71,7 +74,7 @@ mod standard_duration {
     {
         struct DurationVisitor;
 
-        impl<'de> Visitor<'de> for DurationVisitor {
+        impl Visitor<'_> for DurationVisitor {
             type Value = Duration;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
