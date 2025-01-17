@@ -1,4 +1,4 @@
-use crate::{oracle::crypto::sign_outcome, AssetPairInfo};
+use crate::{config::AssetPair, oracle::crypto::sign_outcome, AssetPairInfo};
 
 use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{
@@ -199,8 +199,8 @@ impl Oracle {
         maturation: DateTime<Utc>,
         price: f64,
     ) -> Result<(OracleAnnouncement, OracleAttestation)> {
-        let event_id =
-            ("btcusd".to_string() + &maturation.timestamp().to_string()).into_boxed_str();
+        let event_id = (AssetPair::default().to_string() + &maturation.timestamp().to_string())
+            .into_boxed_str();
         let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let (sk_nonces, nonces, was_not_announced) = match self.db.get_event(&event_id).await? {
@@ -302,7 +302,7 @@ impl Oracle {
             .unzip();
 
         let attestation = OracleAttestation {
-            event_id: event_id.to_string(),
+            event_id: announcement.oracle_event.event_id.clone(),
             oracle_public_key: self.keypair.public_key().into(),
             signatures,
             outcomes: outcome_vec,
