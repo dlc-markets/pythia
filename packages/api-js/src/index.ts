@@ -17,7 +17,6 @@ interface PythiaAsset {
 interface PythiaAnnouncement {
   announcementSignature: string
   oraclePublicKey: string
-  eventId: string
   oracleEvent: {
     oracleNonces: string[]
     eventMaturityEpoch: number
@@ -30,6 +29,7 @@ interface PythiaAnnouncement {
         nbDigits: number
       }
     }
+    eventId: string
   }
 }
 
