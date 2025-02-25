@@ -2,8 +2,7 @@ use actix_web::{get, post, web, Error, HttpResponse, Result};
 use chrono::{DateTime, FixedOffset, Utc};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
-use serde::{Deserialize, Deserializer, Serialize};
-use std::str::FromStr;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, EventType},
@@ -15,25 +14,6 @@ use crate::{
 #[serde(default, rename_all = "camelCase")]
 struct AssetPairFilters {
     asset_pair: AssetPair,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct MaturityFilters {
-    #[serde(deserialize_with = "from_seq")]
-    maturities: Vec<DateTime<FixedOffset>>,
-}
-
-fn from_seq<'de, D>(deserializer: D) -> Result<Vec<DateTime<FixedOffset>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = <&str>::deserialize(deserializer)?;
-
-    s.split(',')
-        .map(DateTime::<FixedOffset>::from_str)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Serialize)]
@@ -148,14 +128,20 @@ pub(super) async fn oracle_event_service(
     }
 }
 
-#[get("/asset/{asset_pair}/announcements")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchAnnouncementsRequest {
+    maturities: Vec<DateTime<FixedOffset>>,
+}
+
+#[post("/asset/{asset_pair}/announcements/batch")]
 pub(super) async fn oracle_batch_announcements_service(
     context: ApiContext,
     path: web::Path<AssetPair>,
-    filter: web::Query<MaturityFilters>,
+    data: web::Json<BatchAnnouncementsRequest>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
-    info!("GET /asset/{asset_pair}/announcements: {:#?}", filter);
+    info!("POST /asset/{asset_pair}/announcements/batch: {:#?}", data);
 
     let oracle = context
         .get_oracle(&asset_pair)
@@ -169,7 +155,8 @@ pub(super) async fn oracle_batch_announcements_service(
         .into());
     }
 
-    let events_ids = filter
+    let events_ids = data
+        .0
         .maturities
         .iter()
         .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
