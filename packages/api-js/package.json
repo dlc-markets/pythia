@@ -1,6 +1,6 @@
 {
   "name": "@dlc-markets/pythia",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "A set of wrappers to easily communicate with Pythia",
   "contributors": [
     {
