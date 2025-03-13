@@ -72,9 +72,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 if !pending_maturations.is_empty() {
                     debug!("pending maturations size: {:?}", pending_maturations.len());
                     for (_, oracle) in oracle_context.oracles.iter() {
-                        let _ = oracle
-                            .create_many_announcements(&pending_maturations)
-                            .await;
+                        let _ = oracle.create_many_announcements(&pending_maturations).await;
                     }
                     pending_maturations.clear();
                 }
