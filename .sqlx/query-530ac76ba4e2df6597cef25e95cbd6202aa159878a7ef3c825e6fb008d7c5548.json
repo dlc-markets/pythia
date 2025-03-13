@@ -4,13 +4,7 @@
   "describe": {
     "columns": [],
     "parameters": {
-      "Left": [
-        "Float8",
-        "Text",
-        "ByteaArray",
-        "VarcharArray",
-        "Int4Array"
-      ]
+      "Left": ["Float8", "Text", "ByteaArray", "VarcharArray", "Int4Array"]
     },
     "nullable": []
   },
