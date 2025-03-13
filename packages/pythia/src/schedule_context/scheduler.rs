@@ -1,4 +1,4 @@
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
@@ -53,6 +53,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         .schedule
         .after_owned(start_time)
         .map(move |date| date - context.offset_duration);
+    let mut pending_maturations: Vec<DateTime<Utc>> = Vec::new();
 
     let announcement_thread = async move {
         for next_time in announcement_scheduled_dates {
@@ -67,20 +68,38 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     next_time + context.offset_duration
                 );
                 sleep(duration).await;
-            };
 
-            for (_, oracle) in oracle_context.oracles.iter() {
-                let perhaps_announcement = oracle
-                    .create_announcement(next_time + context.offset_duration)
-                    .await;
+                if !pending_maturations.is_empty() {
+                    debug!("pending maturations size: {:?}", pending_maturations.len());
+                    for (_, oracle) in oracle_context.oracles.iter() {
+                        let _ = oracle
+                            .create_many_announcements(&mut pending_maturations)
+                            .await;
+                    }
+                    pending_maturations.clear();
+                }
 
-                // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
-                if maybe_std_duration.is_ok() {
+                for (_, oracle) in oracle_context.oracles.iter() {
+                    let perhaps_announcement = oracle
+                        .create_announcement(next_time + context.offset_duration)
+                        .await;
+
+                    // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
                     cloned_event_tx
                         .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
                         .expect("usable channel");
                 }
-            }
+            } else {
+                // We accumulate announcements in a vector to avoid frequent individual database insertions.
+                // When (next_time - Utc::now()) is negative, it means the event has already matured or is
+                // imminent, so we continue accumulating announcements rather than inserting them immediately.
+                // Once (next_time - Utc::now()) becomes non-negative (future events), we perform a bulk
+                // insertion of all accumulated announcements into the PostgreSQL database with a single query
+                // for better performance.
+                for (_, _) in oracle_context.oracles.iter() {
+                    pending_maturations.push(next_time + context.offset_duration);
+                }
+            };
         }
         unreachable!("Cron schedule can be consumed only after 2100")
     };
