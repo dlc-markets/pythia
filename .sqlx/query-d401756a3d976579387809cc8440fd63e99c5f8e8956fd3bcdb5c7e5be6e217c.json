@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH maturity_array AS (\n                SELECT UNNEST($1::TIMESTAMPTZ[]) AS maturity\n            )\n            SELECT\n                maturity\n            FROM\n                maturity_array\n            WHERE maturity NOT IN (SELECT maturity FROM oracle.events);",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "maturity",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d401756a3d976579387809cc8440fd63e99c5f8e8956fd3bcdb5c7e5be6e217c"
+}
