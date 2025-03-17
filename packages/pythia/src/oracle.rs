@@ -7,7 +7,7 @@ use dlc_messages::oracle_msgs::{
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     hashes::{sha256, Hash},
-    rand::{thread_rng, RngCore},
+    rand::{rngs::ThreadRng, thread_rng, RngCore},
     schnorr::Signature,
     Keypair, Message, XOnlyPublicKey,
 };
@@ -50,11 +50,11 @@ impl Oracle {
         self.db.is_empty().await
     }
 
-    pub fn prepare_announcement(
+    fn prepare_announcement(
         &self,
         maturation: DateTime<Utc>,
+        rng: &mut ThreadRng,
     ) -> Result<OracleAnnouncementWithSkNonces> {
-        let mut rng = thread_rng();
         let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
             + maturation.timestamp().to_string().as_str();
         let event = &self.asset_pair_info.event_descriptor;
@@ -94,8 +94,9 @@ impl Oracle {
         maturations: &[DateTime<Utc>],
     ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
         let mut announcements: Vec<(OracleAnnouncement, Vec<[u8; 32]>)> = Vec::new();
+        let mut rng = thread_rng();
         for maturation in maturations {
-            let (announcement, sk_nonces) = self.prepare_announcement(*maturation)?;
+            let (announcement, sk_nonces) = self.prepare_announcement(*maturation, &mut rng)?;
             announcements.push((announcement, sk_nonces));
         }
         Ok(announcements)
@@ -117,11 +118,13 @@ impl Oracle {
             return Ok(compute_announcement(self, event));
         }
 
-        let (announcement, sk_nonces) = self.prepare_announcement(maturation)?;
+        let (announcement, sk_nonces) = self
+            .prepare_announcement(maturation, &mut thread_rng())?;
 
         self.db
             .insert_announcement(&announcement, sk_nonces)
             .await?;
+
         debug!("created oracle announcement with maturation {}", maturation);
 
         trace!("announcement {:#?}", &announcement);
@@ -688,7 +691,7 @@ mod test {
         use bitcoin::hashes::{sha256, Hash};
         use dlc_messages::oracle_msgs::EventDescriptor;
         use lightning::util::ser::Writeable;
-        use secp256k1_zkp::{Message, XOnlyPublicKey};
+        use secp256k1_zkp::{rand::thread_rng, Message, XOnlyPublicKey};
 
         #[sqlx::test]
         fn test_prepare_announcement_basic(pool: PgPool) -> Result<()> {
@@ -700,7 +703,8 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) = oracle.prepare_announcement(maturation)?;
+            let (announcement, sk_nonces) = oracle
+                .prepare_announcement(maturation, &mut thread_rng())?;
 
             // Verify event ID format (asset_pair + timestamp)
             let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
@@ -761,7 +765,8 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) = oracle.prepare_announcement(maturation)?;
+            let (announcement, sk_nonces) = oracle
+                .prepare_announcement(maturation, &mut thread_rng())?;
 
             // Verify that public nonces match the secret nonces
             for (i, sk_nonce) in sk_nonces.iter().enumerate() {
@@ -785,10 +790,12 @@ mod test {
             // Test with different digit counts
             let digit_counts = [1, 5, 10, 20, 32];
             let maturation = Utc::now() + Duration::hours(1);
+            let mut rng = thread_rng();
 
             for &digits in &digit_counts {
                 let oracle = create_test_oracle_with_digits(&db, digits)?;
-                let (announcement, sk_nonces) = oracle.prepare_announcement(maturation)?;
+                let (announcement, sk_nonces) =
+                    oracle.prepare_announcement(maturation, &mut rng)?;
 
                 // Verify the nonce counts match the digit count
                 assert_eq!(
@@ -825,7 +832,8 @@ mod test {
             ];
 
             for &maturation in &maturation_times {
-                let (announcement, _) = oracle.prepare_announcement(maturation)?;
+                let (announcement, _) =
+                    oracle.prepare_announcement(maturation, &mut thread_rng())?;
 
                 // Verify the maturation time is set correctly
                 assert_eq!(
@@ -859,7 +867,7 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, _) = oracle.prepare_announcement(maturation)?;
+            let (announcement, _) = oracle.prepare_announcement(maturation, &mut thread_rng())?;
 
             // Verify the signature
             let message = Message::from_digest(
@@ -887,8 +895,9 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare two announcements with the same parameters
-            let (announcement1, _) = oracle.prepare_announcement(maturation)?;
-            let (announcement2, _) = oracle.prepare_announcement(maturation)?;
+            let mut rng = thread_rng();
+            let (announcement1, _) = oracle.prepare_announcement(maturation, &mut rng)?;
+            let (announcement2, _) = oracle.prepare_announcement(maturation, &mut rng)?;
 
             // The event IDs should be identical
             assert_eq!(

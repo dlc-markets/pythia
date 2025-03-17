@@ -177,7 +177,6 @@ impl DBconnection {
                     type_name: "Only DigitDecomposition event type is supported".to_string(),
                 });
             };
-
             event_ids.push(announcement.oracle_event.event_id.clone());
             digits_counts.push(digit.nb_digits as i32);
             precisions.push(digit.precision);
@@ -712,6 +711,8 @@ mod test {
     }
 
     mod test_insert_many_announcements {
+        use secp256k1_zkp::rand::thread_rng;
+
         use super::*;
 
         #[sqlx::test]
@@ -738,7 +739,8 @@ mod test {
 
             // Create a test announcement from a secret_key
             let now = Utc::now();
-            let announcement_with_sk_nonces = oracle.prepare_announcement(now)?;
+            let announcement_with_sk_nonces =
+                oracle.prepare_announcement(now, &mut thread_rng())?;
 
             // Insert the announcement
             db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
@@ -823,7 +825,8 @@ mod test {
 
             // Create a test announcement from a secret_key
             let now = Utc::now();
-            let announcement_with_sk_nonces = oracle.prepare_announcement(now)?;
+            let announcement_with_sk_nonces =
+                oracle.prepare_announcement(now, &mut thread_rng())?;
 
             // Insert the announcement twice
             db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
