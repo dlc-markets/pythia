@@ -490,7 +490,11 @@ impl DBconnection {
                 maturity
             FROM
                 maturity_array
-            WHERE maturity NOT IN (SELECT maturity FROM oracle.events);",
+            WHERE NOT EXISTS (
+                SELECT maturity
+                FROM oracle.events
+                WHERE oracle.events.maturity = maturity_array.maturity
+            );",
             &maturities
         )
         .fetch_all(&self.0)
@@ -556,6 +560,7 @@ mod test {
         let oracle = Oracle::new(asset_pair_info.clone(), db.clone(), keypair);
         Ok(oracle)
     }
+
     mod test_get_non_existing_maturity {
         use super::*;
         async fn insert_test_events(db: &DBconnection, maturities: &[DateTime<Utc>]) {
