@@ -44,6 +44,7 @@
     "psql",
     "reqwest",
     "rustfmt",
+    "rngs",
     "rustls",
     "schnorrsig",
     "seckey",
