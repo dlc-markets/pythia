@@ -170,8 +170,8 @@ impl DBconnection {
             Vec<i32>,
             Vec<DateTime<Utc>>,
             Vec<Vec<u8>>,
-            Vec<Vec<Vec<u8>>>,
-            Vec<Vec<Vec<u8>>>,
+            Vec<_>,
+            Vec<_>,
         ) = announcements_with_sk_nonces
             .into_iter()
             .map(|(announcement, outstanding_sk_nonces)| {
@@ -196,12 +196,8 @@ impl DBconnection {
                         .oracle_event
                         .oracle_nonces
                         .iter()
-                        .map(|x| x.serialize().to_vec())
-                        .collect::<Vec<Vec<u8>>>(),
-                    outstanding_sk_nonces
-                        .iter()
-                        .map(|x| x.to_vec())
-                        .collect::<Vec<Vec<u8>>>(),
+                        .map(|x| x.serialize().to_vec()),
+                    outstanding_sk_nonces.iter().map(|x| x.to_vec()),
                 ))
             })
             .collect::<Result<_>>()?;
