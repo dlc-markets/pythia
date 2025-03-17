@@ -156,73 +156,76 @@ impl DBconnection {
             return Ok(());
         }
 
-        // Prepare arrays for bulk insertion
-        let mut event_ids: Vec<String> = Vec::new();
-        let mut digits_counts: Vec<i32> = Vec::new();
-        let mut precisions: Vec<i32> = Vec::new();
-        let mut maturities: Vec<DateTime<Utc>> = Vec::new();
-        let mut announcement_signatures: Vec<Vec<u8>> = Vec::new();
-
-        // For digits table - we'll collect all items for a single UNNEST operation
-        let mut digit_event_ids = Vec::new();
-        let mut digit_indexes = Vec::new();
-        let mut nonce_publics = Vec::new();
-        let mut nonce_secrets = Vec::new();
-
-        for (announcement, outstanding_sk_nonces) in announcements_with_sk_nonces {
-            let EventDescriptor::DigitDecompositionEvent(ref digit) =
-                announcement.oracle_event.event_descriptor
-            else {
-                return Err(sqlx::Error::TypeNotFound {
-                    type_name: "Only DigitDecomposition event type is supported".to_string(),
-                });
-            };
-            event_ids.push(announcement.oracle_event.event_id.clone());
-            digits_counts.push(digit.nb_digits as i32);
-            precisions.push(digit.precision);
-            maturities.push(
-                DateTime::from_timestamp(announcement.oracle_event.event_maturity_epoch.into(), 0)
+        let (
+            event_ids,
+            digits_counts,
+            precisions,
+            maturities,
+            announcement_signatures,
+            nonce_publics,
+            nonce_secrets,
+        ): (
+            Vec<String>,
+            Vec<i32>,
+            Vec<i32>,
+            Vec<DateTime<Utc>>,
+            Vec<Vec<u8>>,
+            Vec<Vec<Vec<u8>>>,
+            Vec<Vec<Vec<u8>>>,
+        ) = announcements_with_sk_nonces
+            .into_iter()
+            .map(|(announcement, outstanding_sk_nonces)| {
+                let EventDescriptor::DigitDecompositionEvent(ref digit) =
+                    announcement.oracle_event.event_descriptor
+                else {
+                    return Err(sqlx::Error::TypeNotFound {
+                        type_name: "Only DigitDecomposition event type is supported".to_string(),
+                    });
+                };
+                Ok((
+                    announcement.oracle_event.event_id.clone(),
+                    digit.nb_digits as i32,
+                    digit.precision,
+                    DateTime::from_timestamp(
+                        announcement.oracle_event.event_maturity_epoch.into(),
+                        0,
+                    )
                     .unwrap(),
-            );
-            announcement_signatures.push(announcement.announcement_signature.as_ref().to_vec());
-
-            digit_event_ids.push(vec![
-                announcement.oracle_event.event_id.to_owned();
-                digit.nb_digits as usize
-            ]);
-
-            digit_indexes.push((0..digit.nb_digits as i32).collect::<Vec<i32>>());
-
-            nonce_publics.push(
-                announcement
-                    .oracle_event
-                    .oracle_nonces
-                    .iter()
-                    .map(|x| x.serialize().to_vec())
-                    .collect::<Vec<Vec<u8>>>(),
-            );
-            let sk_nonces = outstanding_sk_nonces
-                .iter()
-                .map(|x| x.into())
-                .collect::<Vec<Vec<u8>>>();
-            nonce_secrets.push(sk_nonces);
-        }
-
-        // flatten the arrays
-        let digit_event_ids: Vec<String> = digit_event_ids.into_iter().flatten().collect();
-        let digit_indexes: Vec<i32> = digit_indexes.into_iter().flatten().collect();
-        let nonce_publics: Vec<Vec<u8>> = nonce_publics.into_iter().flatten().collect();
-        let nonce_secrets: Vec<Vec<u8>> = nonce_secrets.into_iter().flatten().collect();
+                    announcement.announcement_signature.as_ref().to_vec(),
+                    announcement
+                        .oracle_event
+                        .oracle_nonces
+                        .iter()
+                        .map(|x| x.serialize().to_vec())
+                        .collect::<Vec<Vec<u8>>>(),
+                    outstanding_sk_nonces
+                        .iter()
+                        .map(|x| x.to_vec())
+                        .collect::<Vec<Vec<u8>>>(),
+                ))
+            })
+            .collect::<Result<_>>()?;
 
         let query_result = sqlx::query!(
             "WITH events AS (
                 INSERT INTO oracle.events (id, digits, precision, maturity, announcement_signature) 
                 SELECT * FROM UNNEST($1::VARCHAR[], $2::INT[], $3::INT[], $4::TIMESTAMPTZ[], $5::BYTEA[])
                 ON CONFLICT DO NOTHING
-                RETURNING id
+                RETURNING id, digits
+            ),
+            nonces_arrays AS (
+                SELECT array_agg(nonce_public) as nonce_publics,
+                       array_agg(nonce_secret) as nonce_secrets
+                FROM UNNEST($6::BYTEA[], $7::BYTEA[]) as t(nonce_public, nonce_secret)
             )
             INSERT INTO oracle.digits (event_id, digit_index, nonce_public, nonce_secret)
-            SELECT * FROM UNNEST($6::VARCHAR[], $7::INT[], $8::BYTEA[], $9::BYTEA[])
+            SELECT 
+                e.id,
+                g.digit_index,
+                (SELECT nonce_publics[g.digit_index + 1] FROM nonces_arrays),
+                (SELECT nonce_secrets[g.digit_index + 1] FROM nonces_arrays)
+            FROM events e
+            CROSS JOIN LATERAL generate_series(0, e.digits - 1) as g(digit_index)
             ON CONFLICT DO NOTHING
             ",
             &event_ids,
@@ -230,10 +233,8 @@ impl DBconnection {
             &precisions,
             &maturities,
             &announcement_signatures,
-            &digit_event_ids,
-            &digit_indexes,
-            &nonce_publics,
-            &nonce_secrets,
+            &nonce_publics.into_iter().flatten().collect::<Vec<_>>(),
+            &nonce_secrets.into_iter().flatten().collect::<Vec<_>>(),
         ).execute(&self.0).await?;
 
         let affected_raws_counts = query_result.rows_affected();

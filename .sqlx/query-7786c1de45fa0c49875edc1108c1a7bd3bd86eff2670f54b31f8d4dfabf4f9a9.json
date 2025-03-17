@@ -10,9 +10,14 @@
       }
     ],
     "parameters": {
-      "Left": ["VarcharArray", "Int4"]
+      "Left": [
+        "VarcharArray",
+        "Int4"
+      ]
     },
-    "nullable": [null]
+    "nullable": [
+      null
+    ]
   },
   "hash": "7786c1de45fa0c49875edc1108c1a7bd3bd86eff2670f54b31f8d4dfabf4f9a9"
 }
