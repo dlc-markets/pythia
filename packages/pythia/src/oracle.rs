@@ -118,8 +118,7 @@ impl Oracle {
             return Ok(compute_announcement(self, event));
         }
 
-        let (announcement, sk_nonces) = self
-            .prepare_announcement(maturation, &mut thread_rng())?;
+        let (announcement, sk_nonces) = self.prepare_announcement(maturation, &mut thread_rng())?;
 
         self.db
             .insert_announcement(&announcement, sk_nonces)
@@ -703,8 +702,8 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) = oracle
-                .prepare_announcement(maturation, &mut thread_rng())?;
+            let (announcement, sk_nonces) =
+                oracle.prepare_announcement(maturation, &mut thread_rng())?;
 
             // Verify event ID format (asset_pair + timestamp)
             let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
@@ -765,8 +764,8 @@ mod test {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) = oracle
-                .prepare_announcement(maturation, &mut thread_rng())?;
+            let (announcement, sk_nonces) =
+                oracle.prepare_announcement(maturation, &mut thread_rng())?;
 
             // Verify that public nonces match the secret nonces
             for (i, sk_nonce) in sk_nonces.iter().enumerate() {
