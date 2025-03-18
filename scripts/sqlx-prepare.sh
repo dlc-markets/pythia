@@ -23,4 +23,4 @@ echo "Running migrations..."
 cargo sqlx migrate run --source packages/pythia/migrations --database-url $DATABASE_URL
 
 echo "Preparing SQLx..."
-cargo sqlx prepare --check --workspace --database-url $DATABASE_URL -- --all-targets
+cargo sqlx prepare --workspace --database-url $DATABASE_URL -- --all-targets 
