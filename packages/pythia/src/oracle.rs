@@ -93,12 +93,11 @@ impl Oracle {
         &self,
         maturations: &[DateTime<Utc>],
     ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
-        let mut announcements: Vec<(OracleAnnouncement, Vec<[u8; 32]>)> = Vec::new();
         let mut rng = thread_rng();
-        for maturation in maturations {
-            let (announcement, sk_nonces) = self.prepare_announcement(*maturation, &mut rng)?;
-            announcements.push((announcement, sk_nonces));
-        }
+        let announcements = maturations
+            .iter()
+            .map(|maturity| self.prepare_announcement(*maturity, &mut rng))
+            .collect::<Result<Vec<OracleAnnouncementWithSkNonces>>>()?;
         Ok(announcements)
     }
 
