@@ -7,5 +7,4 @@ if [[ -n "$RUNNING_IN_DOCKER" || -n "$CI" ]]; then
   exit 0
 fi
 
-pnpm install
 pnpm lefthook install
