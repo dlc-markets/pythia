@@ -1,0 +1,41 @@
+
+# EXAMPLE USAGE:
+#
+#   Refer for explanation to following link:
+#   https://github.com/evilmartians/lefthook/blob/master/docs/configuration.md
+
+pre-commit:
+  parallel: true
+  commands:
+    sqlx:
+      run: |
+        if ! command -v cargo-sqlx &> /dev/null; then
+          echo "sqlx-cli is not installed. Installing..."
+          cargo install sqlx-cli --no-default-features --features native-tls,postgres
+        fi
+        cargo sqlx prepare --workspace
+    spelling:
+      run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
+    format:
+      run: pnpm biome format --fix
+    cargo-fmt:
+      tags: rust
+      glob: '*.rs'
+      run: cargo fmt --all -- --check
+      stage_fixed: true
+    cargo-clippy:
+      tags: rust
+      glob: '*.rs'
+      run: cargo clippy
+
+post-merge:
+  commands:
+    install:
+      run: pnpm install
+
+post-checkout:
+  commands:
+    install:
+      skip:
+        - ref: main
+      run: pnpm install

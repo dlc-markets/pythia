@@ -6,7 +6,7 @@ A numeric (and extensible) oracle implementation for bitcoin forked from sibyls,
 
 ## Configuration
 
-You can configure Pythia with the CLI arguments  with `pythia --help` or environment variables.
+You can configure Pythia with the CLI arguments with `pythia --help` or environment variables.
 
 Pythia will run an http server on port `8000` by default but you can change it with the `--port` argument or the `PORT` environment variable.
 
@@ -44,9 +44,9 @@ Output example:
 
 ```json
 {
-    "pricefeed": "lnmarkets",
-    "schedule": "0 */30 * * * * *",
-    "announcement_offset": "1d"
+  "pricefeed": "lnmarkets",
+  "schedule": "0 */30 * * * * *",
+  "announcement_offset": "1d"
 }
 ```
 
@@ -58,7 +58,7 @@ curl -X GET http://localhost:8000/v1/asset/{asset_id}/announcement/{date_in_rfc3
 
 This endpoint returns the [`oracle announcement`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_announcement) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
 
-Request example: 
+Request example:
 
 ```sh
 curl -X GET http://localhost:8000/v1/asset/btc_usd/announcement/2024-01-22T16:28:00+01:00
@@ -68,26 +68,26 @@ Output:
 
 ```json
 {
-    "announcementSignature":"731c70e...48a6de3b840ac603c2704e11d",
-    "oraclePublicKey":"b0d191ff8...276",
-    "oracleEvent":
-    {
-        "oracleNonces":
-        ["4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898f","...", "b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a"],
-        "eventMaturityEpoch": 1705937280,
-        "eventDescriptor":
-        {
-            "digitDecompositionEvent":
-            {
-                "base":2,
-                "isSigned":false,
-                "unit":"usd/btc",
-                "precision":7,
-                "nbDigits":30
-            }
-        },
-        "eventId":"btc_usd1705937280"
-    }
+  "announcementSignature": "731c70e...48a6de3b840ac603c2704e11d",
+  "oraclePublicKey": "b0d191ff8...276",
+  "oracleEvent": {
+    "oracleNonces": [
+      "4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898f",
+      "...",
+      "b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a"
+    ],
+    "eventMaturityEpoch": 1705937280,
+    "eventDescriptor": {
+      "digitDecompositionEvent": {
+        "base": 2,
+        "isSigned": false,
+        "unit": "usd/btc",
+        "precision": 7,
+        "nbDigits": 30
+      }
+    },
+    "eventId": "btc_usd1705937280"
+  }
 }
 ```
 
@@ -99,7 +99,7 @@ curl -X GET http://localhost:8000/v1/asset/{asset_id}/attestation/{date_in_rfc33
 
 This endpoint returns the [`oracle attestation`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#the-oracle_attestation-type) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
 
-Request example with the same event as announcement: 
+Request example with the same event as announcement:
 
 ```sh
 curl -X GET http://localhost:8000/v1/asset/btc_usd/attestation/2024-01-22T16:28:00+01:00
@@ -109,10 +109,13 @@ Output:
 
 ```json
 {
-    "eventId":"btc_usd1705937280",
-    "signatures": ["4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898fdf9504361c674a6578330840e621517492caff0abcf0984f2d0f6cd101e6b166", "...",
-"b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a1aba6de3c4b048ee922621152bb94db7967d0024bf429002a0119612104a727f"],
-"values":["0","...", "0"]
+  "eventId": "btc_usd1705937280",
+  "signatures": [
+    "4e8a0e7fb0c77f10057f4fb693bad73a141cc8bea846a88bda9c04eed5b9898fdf9504361c674a6578330840e621517492caff0abcf0984f2d0f6cd101e6b166",
+    "...",
+    "b5607c9d342dc3d518c38d08c54a148e419d93c771bd9ed63f5f2f90b652487a1aba6de3c4b048ee922621152bb94db7967d0024bf429002a0119612104a727f"
+  ],
+  "values": ["0", "...", "0"]
 }
 ```
 
@@ -163,11 +166,11 @@ Opt-out to default subscription to `btc_usd_/attestation` using the following RP
 
 ```json
 > {
-    "jsonrpc": "2.0", 
-    "method": "unsubscribe", 
-    "params": 
+    "jsonrpc": "2.0",
+    "method": "unsubscribe",
+    "params":
     {
-        "type": "attestation", 
+        "type": "attestation",
         "assetPair": "btc_usd",
     },
     "id": 1337
@@ -188,11 +191,11 @@ You can subscribe to the freshly prepared announcement using the following:
 
 ```json
 > {
-    "jsonrpc": "2.0", 
-    "method": "subscribe", 
-    "params": 
+    "jsonrpc": "2.0",
+    "method": "subscribe",
+    "params":
     {
-        "type": "announcement", 
+        "type": "announcement",
         "assetPair": "btc_usd",
     },
     "id": 4242
@@ -221,12 +224,12 @@ Example of request:
 
 ```json
 > {
-    "jsonrpc": "2.0", 
-    "method": "anything_but_prefer_get", 
-    "params": 
+    "jsonrpc": "2.0",
+    "method": "anything_but_prefer_get",
+    "params":
     {
-        "type": "announcement", 
-        "assetPair": "btc_usd", 
+        "type": "announcement",
+        "assetPair": "btc_usd",
         "eventId": "btc_usd1705947180",
     },
     "id": 21000000
@@ -312,14 +315,13 @@ Asset pair configs will be discussed in [Asset Pairs](#asset-pairs).
 There are three configurable parameters for the oracle:
 
 | name                  | type                                                                                                                                                                         | description                                                                                                           |
-|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------                                                                           |
-| `schedule`           | `0 */1 * * * * *` | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `schedule`            | `0 */1 * * * * *`                                                                                                                                                            | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily                          |
 | `announcement_offset` | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h` |
-
 
 ## Extend
 
-This oracle implementation is extensible to using other pricefeeds, asset pairs, and (to come) event descriptors (for more information, see https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) rather than just {Bitstamp, Kraken, Gate.io, LNmarkets.com}, BTCUSD.
+This oracle implementation is extensible to using other pricefeeds, asset pairs, and (to come) event descriptors (for more information, see <https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor>) rather than just {Bitstamp, Kraken, Gate.io, LNmarkets.com}, BTCUSD.
 
 ### Pricefeeds
 
@@ -343,11 +345,11 @@ After this, you are good to go!
 
 Asset pairs may also be added, although it is a bit more involved. To add a new asset pair, say, ETHBTC, you must first add an entry in `"asset_pair_infos"` section of `config.json`, or whatever file you are using for asset pair config. There, you will add an `AssetPairInfo` object to the array. `AssetPairInfo`s contain the following fields:
 
-| name               | type                                                                                                                      | description      |
-|--------------------|---------------------------------------------------------------------------------------------------------------------------|------------------|
-| `pricefeed`           | `(lnmarkets\|bitstamp\|kraken\|gateio)`                                                                                                                                                | Source of the stream of price to attest    
-| `asset_pair`       | `AssetPair` enum                                                                                                          | asset pair       |
-| `event_descriptor` | [`event_descriptor`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) | event descriptor |
+| name               | type                                                                                                          | description                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `pricefeed`        | `(lnmarkets\|bitstamp\|kraken\|gateio)`                                                                       | Source of the stream of price to attest |
+| `asset_pair`       | `AssetPair` enum                                                                                              | asset pair                              |
+| `event_descriptor` | [`event_descriptor`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) | event descriptor                        |
 
 For now, the only `event_descriptor` supported is `digit_decomposition_event_descriptor` because that is the most immediate use case (for bitcoin).
 
@@ -355,17 +357,17 @@ An example of a valid addition in `config/asset_pair.json` is the following:
 
 ```json
 [
-    {
-        "pricefeed": "bitstamp",
-        "asset_pair": "eth_btc",
-        "event_descriptor": {
-            "base": 2,
-            "is_signed": false,
-            "unit": "eth/btc",
-            "precision": 0,
-            "num_digits": 14
-        }
-    },
+  {
+    "pricefeed": "bitstamp",
+    "asset_pair": "eth_btc",
+    "event_descriptor": {
+      "base": 2,
+      "is_signed": false,
+      "unit": "eth/btc",
+      "precision": 0,
+      "num_digits": 14
+    }
+  }
 ]
 ```
 
@@ -396,3 +398,19 @@ impl PriceFeed for Kraken {
     //snip
 }
 ```
+
+## Lefthook
+
+Run
+
+```bash
+chmod +x ./scripts/add-precommit-hook.sh
+```
+
+to make the script executable and then run
+
+```bash
+./scripts/add-precommit-hook.sh
+```
+
+to add the precommit hook to your git repository.
