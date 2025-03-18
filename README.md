@@ -398,19 +398,3 @@ impl PriceFeed for Kraken {
     //snip
 }
 ```
-
-## Lefthook
-
-Run
-
-```bash
-chmod +x ./scripts/prepare.sh
-```
-
-to make the script executable and then run
-
-```bash
-pnpm install & pnpm prepare
-```
-
-to add the precommit hook to your git repository.
