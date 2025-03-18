@@ -46,7 +46,7 @@ struct BoolResponse {
 
 #[derive(PartialEq, PartialOrd)]
 pub(super) struct MaturityResponse {
-    pub maturity: Option<DateTime<Utc>>,
+    pub maturity: DateTime<Utc>,
 }
 
 #[derive(Clone)]
@@ -479,26 +479,26 @@ impl DBconnection {
     ) -> Result<Vec<DateTime<Utc>>> {
         let maturity_response = sqlx::query_as!(
             MaturityResponse,
-            "
+            r#"
             WITH maturity_array AS (
-                SELECT UNNEST($1::TIMESTAMPTZ[]) AS maturity
+                SELECT maturity FROM UNNEST($1::TIMESTAMPTZ[]) as maturity
             )
             SELECT
-                maturity
+               maturity as "maturity!"
             FROM
                 maturity_array
             WHERE NOT EXISTS (
                 SELECT maturity
                 FROM oracle.events
                 WHERE oracle.events.maturity = maturity_array.maturity
-            );",
+            );"#,
             &maturities
         )
         .fetch_all(&self.0)
         .await?;
         let maturity_array = maturity_response
             .into_iter()
-            .filter_map(|x| x.maturity)
+            .map(|x| x.maturity)
             .collect();
         Ok(maturity_array)
     }
