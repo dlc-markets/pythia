@@ -7,17 +7,16 @@
 pre-commit:
   parallel: true
   commands:
-    sqlx:
+    sqlx-prepare-and-biome-format:
       run: |
         if ! command -v cargo-sqlx &> /dev/null; then
           echo "sqlx-cli is not installed. Installing..."
           cargo install sqlx-cli --no-default-features --features native-tls,postgres
         fi
         cargo sqlx prepare --workspace
+        pnpm biome format --fix
     spelling:
       run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
-    format:
-      run: pnpm biome format --fix
     cargo-fmt:
       tags: rust
       glob: '*.rs'

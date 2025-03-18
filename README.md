@@ -404,13 +404,13 @@ impl PriceFeed for Kraken {
 Run
 
 ```bash
-chmod +x ./scripts/add-precommit-hook.sh
+chmod +x ./scripts/prepare.sh
 ```
 
 to make the script executable and then run
 
 ```bash
-./scripts/add-precommit-hook.sh
+./scripts/prepare.sh
 ```
 
 to add the precommit hook to your git repository.
