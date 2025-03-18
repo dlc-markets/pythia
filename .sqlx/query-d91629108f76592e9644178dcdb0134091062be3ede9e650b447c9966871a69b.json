@@ -10,13 +10,9 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "TimestamptzArray"
-      ]
+      "Left": ["TimestamptzArray"]
     },
-    "nullable": [
-      null
-    ]
+    "nullable": [null]
   },
   "hash": "d91629108f76592e9644178dcdb0134091062be3ede9e650b447c9966871a69b"
 }
