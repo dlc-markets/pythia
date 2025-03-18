@@ -156,6 +156,7 @@ impl DBconnection {
             return Ok(());
         }
 
+        #[allow(clippy::type_complexity)]
         let (
             event_ids,
             digits_counts,
@@ -173,7 +174,7 @@ impl DBconnection {
             Vec<_>,
             Vec<_>,
         ) = announcements_with_sk_nonces
-            .into_iter()
+            .iter()
             .map(|(announcement, outstanding_sk_nonces)| {
                 let EventDescriptor::DigitDecompositionEvent(ref digit) =
                     announcement.oracle_event.event_descriptor
