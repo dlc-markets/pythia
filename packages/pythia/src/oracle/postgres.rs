@@ -496,10 +496,7 @@ impl DBconnection {
         )
         .fetch_all(&self.0)
         .await?;
-        let maturity_array = maturity_response
-            .into_iter()
-            .map(|x| x.maturity)
-            .collect();
+        let maturity_array = maturity_response.into_iter().map(|x| x.maturity).collect();
         Ok(maturity_array)
     }
 }
