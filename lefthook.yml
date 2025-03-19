@@ -6,23 +6,41 @@
 
 pre-commit:
   parallel: true
-  commands:
-    sqlx-prepare-and-biome-format:
-      run: |
-        if ! command -v cargo-sqlx &> /dev/null; then
-          echo "sqlx-cli is not installed. Installing..."
-          cargo install sqlx-cli --no-default-features --features native-tls,postgres
-        fi
-        cargo sqlx prepare --workspace
-        pnpm biome format --fix
-    spelling:
+  jobs:
+    - name: prepare sqlx for offline mode
+      group:
+        piped: true
+        jobs:
+          - name: check if sqlx-cli is installed
+            run: |
+              if ! command -v cargo-sqlx &> /dev/null; then
+              echo "sqlx-cli is not installed. Installing..."
+              cargo install sqlx-cli --no-default-features --features native-tls,postgres
+              fi
+          - name: check if docker and docker-compose are installed
+            run: |
+              if ! command -v docker &> /dev/null; then
+                echo "Error: docker is not installed but required for database setup"
+                exit 1
+              fi
+              if ! command -v docker compose &> /dev/null; then
+                echo "Error: docker compose is not installed but required for database setup" 
+                exit 1
+              fi
+          - name: prepare sqlx
+            run: pnpm sqlx-prepare
+          - name: reformat generated sqlx files
+            run: pnpm biome format --fix
+    - name: spelling
       run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
-    cargo-fmt:
+    - name: linting
+      run: pnpm biome format --fix
+    - name: cargo-fmt
       tags: rust
       glob: '*.rs'
       run: cargo fmt --all -- --check
       stage_fixed: true
-    cargo-clippy:
+    - name: cargo-clippy
       tags: rust
       glob: '*.rs'
       run: cargo clippy
