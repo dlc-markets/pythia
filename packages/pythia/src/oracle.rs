@@ -134,7 +134,10 @@ impl Oracle {
         // Check if all the events were already announced
         let non_existing_maturations = self.db.get_non_existing_maturity(maturations).await?;
         if non_existing_maturations.is_empty() {
-            info!("All events already announced");
+            info!(
+                "All events of these maturations: {:?} are already announced",
+                maturations
+            );
             return Ok(());
         }
 
