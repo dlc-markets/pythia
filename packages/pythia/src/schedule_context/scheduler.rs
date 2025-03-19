@@ -95,9 +95,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 // Once (next_time - Utc::now()) becomes non-negative (future events), we perform a bulk
                 // insertion of all accumulated announcements into the PostgreSQL database with a single query
                 // for better performance.
-                for (_, _) in oracle_context.oracles.iter() {
-                    pending_maturations.push(next_time + context.offset_duration);
-                }
+                pending_maturations.push(next_time + context.offset_duration);
             };
         }
         unreachable!("Cron schedule can be consumed only after 2100")
