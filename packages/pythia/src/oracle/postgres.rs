@@ -766,6 +766,14 @@ mod test {
             Ok(())
         }
 
+        async fn get_number_of_rows(db: &DBconnection, table: &str) -> Result<i64> {
+            let query = format!("SELECT COUNT(*) FROM oracle.{}", table);
+            let rows_afftected = sqlx::query_scalar::<_, i64>(&query)
+                .fetch_one(&db.0)
+                .await?;
+            Ok(rows_afftected)
+        }
+
         #[sqlx::test]
         async fn test_insert_many_announcements_multiple(pool: PgPool) -> Result<()> {
             // Create a DB connection
@@ -777,22 +785,43 @@ mod test {
 
             // Create multiple test announcements
             let now = Utc::now();
-            let maturations_even = [now, now + Duration::hours(2), now + Duration::hours(4)];
-            let maturations_odd = [
+            let maturations_20 = [now, now + Duration::hours(2), now + Duration::hours(4)];
+            let maturations_8 = [
                 now + Duration::hours(1),
                 now + Duration::hours(3),
                 now + Duration::hours(5),
             ];
-            let announcements_with_sk_nonces20 =
-                oracle20.prepare_announcements(&maturations_even)?;
-            let announcements_with_sk_nonces8 = oracle8.prepare_announcements(&maturations_odd)?;
+            let announcements_with_sk_nonces20 = oracle20.prepare_announcements(&maturations_20)?;
+            let announcements_with_sk_nonces8 = oracle8.prepare_announcements(&maturations_8)?;
 
-            // Insert the announcements
+            // Get number of rows before inserting announcements (oracle with 20 digits)
+            let mut rows_at_start = get_number_of_rows(&db, "digits").await?
+                + get_number_of_rows(&db, "events").await?;
+
+            // Insert the announcements (oracle with 20 digits)
             db.insert_many_announcements(&announcements_with_sk_nonces20)
                 .await?;
+
+            // Check number of affected rows
+            let rows_20_after_insert = get_number_of_rows(&db, "digits").await?
+                + get_number_of_rows(&db, "events").await?;
+            let affected_rows_20 = rows_20_after_insert - rows_at_start;
+            let expected_rows_20 = (maturations_20.len() as i64) * (1 + 20);
+            assert_eq!(affected_rows_20, expected_rows_20);
+
+            // Get number of rows before inserting announcements (oracle wth 8 digits)
+            rows_at_start = rows_20_after_insert;
             db.insert_many_announcements(&announcements_with_sk_nonces8)
                 .await?;
 
+            // Check number of affected rows
+            let rows_8_after_insert = get_number_of_rows(&db, "digits").await?
+                + get_number_of_rows(&db, "events").await?;
+            let affected_rows_8 = rows_8_after_insert - rows_at_start;
+            let expected_rows_8 = (maturations_8.len() as i64) * (1 + 8);
+            assert_eq!(affected_rows_8, expected_rows_8);
+
+            // Check events
             let event1 = db
                 .get_event(&announcements_with_sk_nonces20[0].0.oracle_event.event_id)
                 .await?
