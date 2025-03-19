@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, Utc};
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
@@ -53,7 +53,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         .schedule
         .after_owned(start_time)
         .map(move |date| date - context.offset_duration);
-    let mut pending_maturations: Vec<DateTime<Utc>> = Vec::new();
+    let mut pending_maturations = Vec::new();
 
     let announcement_thread = async move {
         for next_time in announcement_scheduled_dates {
