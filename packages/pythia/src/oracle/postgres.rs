@@ -886,7 +886,7 @@ mod test {
             // Let's create 7282 announcements with 2 digits each
             // This would be 7282 * (5 + 2*2) = 65538 parameters (> 655535)
             // Since we use UNNEST in our query, this test should pass
-            const NUM_ANNOUNCEMENTS: usize = 7282;
+            const NUM_ANNOUNCEMENTS: usize = 10000;
 
             // Generate maturity dates
             let now = Utc::now();
