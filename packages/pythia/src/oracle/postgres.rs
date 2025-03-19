@@ -768,10 +768,10 @@ mod test {
 
         async fn get_number_of_rows(db: &DBconnection, table: &str) -> Result<i64> {
             let query = format!("SELECT COUNT(*) FROM oracle.{}", table);
-            let rows_afftected = sqlx::query_scalar::<_, i64>(&query)
+            let rows_affected = sqlx::query_scalar::<_, i64>(&query)
                 .fetch_one(&db.0)
                 .await?;
-            Ok(rows_afftected)
+            Ok(rows_affected)
         }
 
         #[sqlx::test]

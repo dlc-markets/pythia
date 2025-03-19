@@ -42,7 +42,6 @@
     "pricefeed",
     "pricefeeds",
     "psql",
-    "query_scalar",
     "reqwest",
     "rngs",
     "rustfmt",
