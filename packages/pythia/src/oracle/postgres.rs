@@ -867,5 +867,92 @@ mod test {
 
             Ok(())
         }
+
+        #[sqlx::test]
+        async fn test_insert_many_announcements_maximum_query_parameter(
+            pool: PgPool,
+        ) -> Result<()> {
+            // Create a DB connection
+            let db = DBconnection(pool);
+
+            // Create a test oracle with minimal digits to allow more announcements
+            let nb_digits = 2; // Using fewer digits to create more announcements
+            let oracle = create_test_oracle_with_digits(&db, nb_digits)?;
+
+            // Create many announcements to potentially hit the parameter limit
+            // PostgreSQL has a default limit of 65535 parameters per query
+            // Each announcement uses (1 event_id + 1 digits + 1 precision + 1 maturity + 1 sig + nb_digits*2 for nonces) parameters
+            // So parameter count = num_announcements * (5 + nb_digits*2)
+            // Let's create 7282 announcements with 2 digits each
+            // This would be 7282 * (5 + 2*2) = 65538 parameters (> 655535)
+            // Since we use UNNEST in our query, this test should pass
+            const NUM_ANNOUNCEMENTS: usize = 7282;
+
+            // Generate maturity dates
+            let now = Utc::now();
+            let mut maturities = Vec::with_capacity(NUM_ANNOUNCEMENTS);
+            for i in 0..NUM_ANNOUNCEMENTS {
+                maturities.push(now + Duration::minutes(i as i64));
+            }
+
+            // Prepare all announcements
+            let announcements_with_sk_nonces = oracle.prepare_announcements(&maturities)?;
+
+            // Count rows before insertion to calculate affected rows later
+            let rows_before = get_number_of_rows(&db, "digits").await?
+                + get_number_of_rows(&db, "events").await?;
+
+            // Insert all announcements at once
+            db.insert_many_announcements(&announcements_with_sk_nonces)
+                .await?;
+
+            // Count rows after insertion
+            let rows_after = get_number_of_rows(&db, "digits").await?
+                + get_number_of_rows(&db, "events").await?;
+
+            // Calculate expected rows:
+            // Each event adds 1 row to events table and nb_digits rows to digits table
+            let expected_affected_rows = (NUM_ANNOUNCEMENTS as i64) * (1 + nb_digits as i64);
+            let actual_affected_rows = rows_after - rows_before;
+
+            // Verify number of affected rows matches expected
+            assert_eq!(
+                actual_affected_rows, expected_affected_rows,
+                "Expected {} rows to be affected, but got {}",
+                expected_affected_rows, actual_affected_rows
+            );
+
+            // Verify we can retrieve all announcements
+            let sample_indexes = [0, NUM_ANNOUNCEMENTS / 2, NUM_ANNOUNCEMENTS - 1];
+            for &idx in &sample_indexes {
+                let event_id = &announcements_with_sk_nonces[idx].0.oracle_event.event_id;
+                let event = db.get_event(event_id).await?.expect("event should exist");
+
+                // Check event properties
+                assert_eq!(event.digits, nb_digits);
+                assert_eq!(event.nonce_public.len(), nb_digits as usize);
+            }
+
+            // Check batch retrieval works with a subset of events
+            let batch_event_ids: Vec<String> = sample_indexes
+                .iter()
+                .map(|&idx| {
+                    announcements_with_sk_nonces[idx]
+                        .0
+                        .oracle_event
+                        .event_id
+                        .clone()
+                })
+                .collect();
+
+            let batch_events = db
+                .get_many_events(batch_event_ids)
+                .await?
+                .expect("batch events should exist");
+
+            assert_eq!(batch_events.len(), sample_indexes.len());
+
+            Ok(())
+        }
     }
 }
