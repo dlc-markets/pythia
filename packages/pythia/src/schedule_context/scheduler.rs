@@ -85,7 +85,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         .create_announcement(next_time + context.offset_duration)
                         .await;
 
-                    // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
+                    // To avoid flooding the websocket with announcements when starting. We only broadcast the announcement created after the sleep function
                     cloned_event_tx
                         .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
                         .expect("usable channel");
