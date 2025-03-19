@@ -13,7 +13,7 @@
     "release:version": "changeset version && pnpm install --lockfile-only && biome check . --write",
     "bake": "./scripts/bake.sh",
     "prepare": "./scripts/prepare.sh",
-    "sqlx-prepare":"./scripts/sqlx-prepare.sh"
+    "sqlx-prepare": "./scripts/sqlx-prepare.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
