@@ -28,9 +28,7 @@ pre-commit:
                 exit 1
               fi
           - name: prepare sqlx
-            run: pnpm sqlx-prepare
-          - name: reformat generated sqlx files and add them to git
-            run: pnpm biome format --fix && git add .sqlx/
+            run: pnpm sqlx-prepare && git add .sqlx/
     - name: spelling
       run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
     - name: linting

@@ -43,5 +43,8 @@
     "formatter": {
       "trailingCommas": "none"
     }
+  },
+  "files": {
+    "ignore": [".sqlx/*.json"]
   }
 }
