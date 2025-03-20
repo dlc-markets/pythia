@@ -151,10 +151,13 @@ impl Oracle {
             "created oracle announcements with maturation {:?}",
             maturations
         );
-        trace!("announcements {:#?}", &announcements_with_sk_nonces
-            .into_iter()
-            .map(|(announcement, _)| announcement)
-            .collect::<Vec<_>>());
+        trace!(
+            "announcements {:#?}",
+            &announcements_with_sk_nonces
+                .into_iter()
+                .map(|(announcement, _)| announcement)
+                .collect::<Vec<_>>()
+        );
 
         Ok(())
     }

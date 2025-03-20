@@ -24,7 +24,7 @@ fn create_test_oracle(db: &DBconnection) -> Result<Oracle> {
     let secret_key =
         SecretKey::from_str("d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a")?;
     let keypair = Keypair::from_secret_key(&SECP, &secret_key);
-    let oracle = Oracle::new(asset_pair_info.clone(), db.clone(), keypair);
+    let oracle = Oracle::new(asset_pair_info, db.clone(), keypair);
     Ok(oracle)
 }
 
@@ -495,14 +495,14 @@ mod test_get_many_events {
         let announcement_with_sk_nonces = oracle.prepare_announcement(now, &mut thread_rng())?;
 
         // Insert the announcement
-        db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
+        db.insert_many_announcements(core::slice::from_ref(&announcement_with_sk_nonces))
             .await?;
 
         // Get the event ID
-        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id.clone();
+        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id;
 
         // Test get_many_events with a single event ID
-        let result = db.get_many_events(vec![event_id.clone()]).await?;
+        let result = db.get_many_events(vec![event_id]).await?;
 
         // Should return Some with one event
         assert!(result.is_some());
@@ -539,13 +539,11 @@ mod test_get_many_events {
             .await?;
 
         // Get event IDs
-        let event_id1 = announcement1.0.oracle_event.event_id.clone();
-        let event_id2 = announcement2.0.oracle_event.event_id.clone();
+        let event_id1 = announcement1.0.oracle_event.event_id;
+        let event_id2 = announcement2.0.oracle_event.event_id;
 
         // Test get_many_events with both event IDs
-        let result = db
-            .get_many_events(vec![event_id1.clone(), event_id2.clone()])
-            .await?;
+        let result = db.get_many_events(vec![event_id1, event_id2]).await?;
 
         // Should return Some with two events
         assert!(result.is_some());
@@ -582,15 +580,15 @@ mod test_get_many_events {
         let announcement_with_sk_nonces = oracle.prepare_announcement(now, &mut thread_rng())?;
 
         // Insert the announcement
-        db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
+        db.insert_many_announcements(core::slice::from_ref(&announcement_with_sk_nonces))
             .await?;
 
         // Get the event ID
-        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id.clone();
+        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id;
 
         // Test get_many_events with duplicated event IDs
         let result = db
-            .get_many_events(vec![event_id.clone(), event_id.clone(), event_id.clone()])
+            .get_many_events(vec![event_id.clone(), event_id.clone(), event_id])
             .await?;
 
         // Should return Some with one event (duplicates should be removed)
@@ -614,15 +612,15 @@ mod test_get_many_events {
         let announcement_with_sk_nonces = oracle.prepare_announcement(now, &mut thread_rng())?;
 
         // Insert the announcement
-        db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
+        db.insert_many_announcements(core::slice::from_ref(&announcement_with_sk_nonces))
             .await?;
 
         // Get the event ID
-        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id.clone();
+        let event_id = announcement_with_sk_nonces.0.oracle_event.event_id;
 
         // Test get_many_events with a mix of existing and non-existing event IDs
         let result = db
-            .get_many_events(vec![event_id.clone(), "non_existent_event".to_string()])
+            .get_many_events(vec![event_id, "non_existent_event".to_string()])
             .await?;
 
         // Should return None since not all events exist
@@ -645,7 +643,7 @@ mod test_get_many_events {
         let event_id = announcement_with_sk_nonces.0.oracle_event.event_id.clone();
 
         // Insert the announcement
-        db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
+        db.insert_many_announcements(core::slice::from_ref(&announcement_with_sk_nonces))
             .await?;
 
         // Create attestation and update to attestation
@@ -658,7 +656,7 @@ mod test_get_many_events {
             .await?;
 
         // Test get_many_events after attestation
-        let result = db.get_many_events(vec![event_id.clone()]).await?;
+        let result = db.get_many_events(vec![event_id]).await?;
 
         // Should return Some with one event
         assert!(result.is_some());
@@ -707,7 +705,7 @@ mod test_get_many_events {
         db.insert_many_announcements(&announcements).await?;
 
         // Test get_many_events with all event IDs
-        let result = db.get_many_events(event_ids.clone()).await?;
+        let result = db.get_many_events(event_ids).await?;
 
         // Should return Some with BATCH_SIZE events
         assert!(result.is_some());
