@@ -606,6 +606,11 @@ mod test {
                     "Event should exist for maturation {}",
                     maturation
                 );
+                let events = db
+                    .get_many_events([event_id].to_vec())
+                    .await?
+                    .unwrap_or_default();
+                assert_eq!(events.len(), 1, "Event should be unique");
             }
 
             Ok(())
@@ -615,7 +620,6 @@ mod test {
         async fn test_create_many_announcements_empty(pool: PgPool) -> Result<()> {
             // Create a DB connection and oracle
             let db = DBconnection(pool);
-            db.migrate().await?;
             let oracle = create_test_oracle(&db)?;
 
             // Try with empty array
@@ -631,7 +635,6 @@ mod test {
         async fn test_create_many_announcements_different_digit_counts(pool: PgPool) -> Result<()> {
             // Create a DB connection
             let db = DBconnection(pool);
-            db.migrate().await?;
 
             // Create two oracles with different digit counts
             let oracle20 = create_test_oracle_with_digits(&db, 20)?;
