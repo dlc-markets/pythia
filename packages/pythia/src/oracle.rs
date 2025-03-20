@@ -91,7 +91,7 @@ impl Oracle {
         Ok((announcement, sk_nonces))
     }
 
-    pub fn prepare_announcements(
+    fn prepare_announcements(
         &self,
         maturations: &[DateTime<Utc>],
     ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
