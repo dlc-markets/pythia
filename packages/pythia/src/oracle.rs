@@ -147,15 +147,14 @@ impl Oracle {
         self.db
             .insert_many_announcements(&announcements_with_sk_nonces)
             .await?;
-        let announcements = announcements_with_sk_nonces
-            .into_iter()
-            .map(|(announcement, _)| announcement)
-            .collect::<Vec<_>>();
         debug!(
             "created oracle announcements with maturation {:?}",
             maturations
         );
-        trace!("announcements {:#?}", &announcements);
+        trace!("announcements {:#?}", &announcements_with_sk_nonces
+            .into_iter()
+            .map(|(announcement, _)| announcement)
+            .collect::<Vec<_>>());
 
         Ok(())
     }
