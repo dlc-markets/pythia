@@ -75,7 +75,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                             .create_many_announcements(&pending_maturations)
                             .await?;
                     }
-                    pending_maturations.clear();
+                    pending_maturations = Vec::new();
                 }
 
                 sleep(duration).await;
