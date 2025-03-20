@@ -230,7 +230,7 @@ mod test_insert_many_announcements {
         let announcement_with_sk_nonces = oracle.prepare_announcement(now, &mut thread_rng())?;
 
         // Insert the announcement
-        db.insert_many_announcements(&[announcement_with_sk_nonces.clone()])
+        db.insert_many_announcements(core::slice::from_ref(&announcement_with_sk_nonces))
             .await?;
 
         // Verify the announcement was inserted
