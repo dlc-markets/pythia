@@ -96,11 +96,10 @@ impl Oracle {
         maturations: &[DateTime<Utc>],
     ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
         let mut rng = thread_rng();
-        let announcements = maturations
+        maturations
             .iter()
-            .map(|maturity| self.prepare_announcement(*maturity, &mut rng))
-            .collect::<Result<Vec<OracleAnnouncementWithSkNonces>>>()?;
-        Ok(announcements)
+            .map(|&maturity| self.prepare_announcement(maturity, &mut rng))
+            .collect()
     }
 
     /// Create an oracle announcement that it will sign the price at given maturity instant
