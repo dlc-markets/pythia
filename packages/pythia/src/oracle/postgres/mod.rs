@@ -33,7 +33,7 @@ struct DigitAttestationResponse {
     signature: Option<Vec<u8>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),
     DigitsAttestations(f64, Vec<Scalar>),
@@ -49,7 +49,7 @@ pub(super) struct MaturityResponse {
     pub maturity: DateTime<Utc>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct PostgresResponse {
     pub digits: u16,
     pub precision: u16,
@@ -210,6 +210,11 @@ impl DBconnection {
                 ON CONFLICT DO NOTHING
                 RETURNING id, digits
             ),
+            events_with_offset AS (
+                SELECT id, digits,
+                       SUM(digits) OVER (ORDER BY id) - digits as prev_sum
+                FROM events
+            ),
             nonces_arrays AS (
                 SELECT array_agg(nonce_public) as nonce_publics,
                        array_agg(nonce_secret) as nonce_secrets
@@ -219,9 +224,9 @@ impl DBconnection {
             SELECT 
                 e.id,
                 g.digit_index,
-                (SELECT nonce_publics[g.digit_index + 1] FROM nonces_arrays),
-                (SELECT nonce_secrets[g.digit_index + 1] FROM nonces_arrays)
-            FROM events e
+                (SELECT nonce_publics[e.prev_sum + g.digit_index + 1] FROM nonces_arrays),
+                (SELECT nonce_secrets[e.prev_sum + g.digit_index + 1] FROM nonces_arrays)
+            FROM events_with_offset e
             CROSS JOIN LATERAL generate_series(0, e.digits - 1) as g(digit_index)
             ON CONFLICT DO NOTHING
             ",

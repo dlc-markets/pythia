@@ -244,12 +244,24 @@ mod test_insert_many_announcements {
         assert_eq!(event.digits, 20);
         assert_eq!(event.nonce_public.len(), 20);
 
+        // Verify public nonces match what we generated
+        for (i, nonce) in event.nonce_public.iter().enumerate() {
+            assert_eq!(
+                nonce, &announcement_with_sk_nonces.0.oracle_event.oracle_nonces[i],
+                "Public nonce at index {} for event id {} doesn't match original announcement",
+                i, announcement_with_sk_nonces.0.oracle_event.event_id
+            );
+        }
         // Check if we can retrieve the secret nonces
         match event.scalars_records {
             ScalarsRecords::DigitsSkNonce(secret_nonces) => {
                 assert_eq!(secret_nonces.len(), 20);
                 for (i, nonce) in secret_nonces.iter().enumerate() {
-                    assert_eq!(nonce, &secret_nonces[i]);
+                    assert_eq!(
+                        nonce, &announcement_with_sk_nonces.1[i],
+                        "Secret nonce at index {} for event id {} doesn't match original announcement",
+                        i, announcement_with_sk_nonces.0.oracle_event.event_id
+                    );
                 }
             }
             _ => panic!("Expected DigitsSkNonce"),
@@ -420,6 +432,47 @@ mod test_insert_many_announcements {
             // Check event properties
             assert_eq!(event.digits, nb_digits);
             assert_eq!(event.nonce_public.len(), nb_digits as usize);
+            println!(
+                "announcement: {:#?}, event: {event:#?}",
+                announcements_with_sk_nonces[idx]
+            );
+
+            // Verify public nonces match what we generated
+            for (i, nonce) in event.nonce_public.iter().enumerate() {
+                assert_eq!(
+                    nonce,
+                    &announcements_with_sk_nonces[idx]
+                        .0
+                        .oracle_event
+                        .oracle_nonces[i],
+                    "Public nonce at index {} for event id {} doesn't match original announcement",
+                    i,
+                    idx
+                );
+            }
+
+            // Verify secret nonces match what we generated
+            match &event.scalars_records {
+                ScalarsRecords::DigitsSkNonce(secret_nonces) => {
+                    assert_eq!(
+                        secret_nonces.len(),
+                        nb_digits as usize,
+                        "Expected {} secret nonces, got {}",
+                        nb_digits,
+                        secret_nonces.len()
+                    );
+
+                    for (i, nonce) in secret_nonces.iter().enumerate() {
+                        assert_eq!(
+                            nonce,
+                            &announcements_with_sk_nonces[idx].1[i],
+                            "Secret nonce at index {} for event id {} doesn't match original announcement",
+                            i, idx
+                        );
+                    }
+                }
+                _ => panic!("Expected DigitsSkNonce for event that hasn't been attested"),
+            }
         }
 
         // Check batch retrieval works with a subset of events
