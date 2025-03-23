@@ -8,6 +8,8 @@ pre-commit:
   parallel: true
   jobs:
     - name: prepare sqlx for offline mode
+      tags: rust
+      glob: '*.rs'
       group:
         piped: true
         jobs:
