@@ -19,16 +19,6 @@ pre-commit:
               echo "sqlx-cli is not installed. Installing..."
               cargo install sqlx-cli --no-default-features --features native-tls,postgres
               fi
-          - name: check if docker and docker-compose are installed
-            run: |
-              if ! command -v docker &> /dev/null; then
-                echo "Error: docker is not installed but required for database setup"
-                exit 1
-              fi
-              if ! command -v docker compose &> /dev/null; then
-                echo "Error: docker compose is not installed but required for database setup" 
-                exit 1
-              fi
           - name: prepare sqlx
             run: pnpm sqlx-prepare && git add .sqlx/
     - name: spelling
