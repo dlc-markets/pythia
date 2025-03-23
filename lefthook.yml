@@ -8,19 +8,23 @@ pre-commit:
   parallel: true
   jobs:
     - name: prepare sqlx for offline mode
-      tags: rust
-      glob: '*.rs'
       group:
         piped: true
         jobs:
           - name: check if sqlx-cli is installed
+            tags: rust
+            glob: '*.rs'
             run: |
               if ! command -v cargo-sqlx &> /dev/null; then
               echo "sqlx-cli is not installed. Installing..."
               cargo install sqlx-cli --no-default-features --features native-tls,postgres
               fi
           - name: prepare sqlx
-            run: pnpm sqlx-prepare && git add .sqlx/
+            tags: rust
+            glob: '*.rs'
+            run: pnpm sqlx-prepare
+            stage_fixed: true
+
     - name: spelling
       run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
     - name: linting
