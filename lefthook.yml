@@ -22,8 +22,7 @@ pre-commit:
           - name: prepare sqlx
             tags: rust
             glob: '*.rs'
-            run: pnpm sqlx-prepare
-            stage_fixed: true
+            run: pnpm sqlx-prepare && git add .sqlx/
 
     - name: spelling
       run: pnpm cspell --config cspell.json --show-suggestions --show-context --no-progress --no-must-find-files {staged_files}
