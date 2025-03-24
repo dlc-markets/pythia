@@ -45,6 +45,7 @@ cron = "0.12.0"
 serde_with = "3.4.0"
 actix-utils = "3.0.1"
 time = "0.3.36"
+futures = "0.3.31"
 
 [dev-dependencies]
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [

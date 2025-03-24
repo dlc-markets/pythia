@@ -6,7 +6,7 @@ x-defaults: &defaults
   environment: &environment
     POSTGRES_PASSWORD: postgres
     POSTGRES_USER: postgres
-    POSTGRES_DB: postgres
+    POSTGRES_DB: pythia
     POSTGRES_HOST: postgres
 
   logging:
@@ -54,7 +54,7 @@ services:
       pythia
       --pair '{"pricefeed":"lnmarkets","assetPair":"btc_usd","eventDescriptor":{"base":2,"isSigned":false,"unit":"usd/btc","precision":0,"nbDigits":20}}'
       --schedule '0 */1 * * * * *'
-      --offset '2min'
+      --offset '2months'
     ports:
       - 8000:8000
     depends_on:
