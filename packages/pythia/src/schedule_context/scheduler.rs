@@ -94,37 +94,30 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     );
                     let error_chan = error_chan.clone();
                     actix::spawn(async move {
-                        // Create a stream that processes pending maturations in chunks
-                        let stream = stream::try_unfold(
-                            (pending_maturations, oracle_context_processor),
-                            |(mut remaining_maturations, oracle_announcer)| async move {
-                                // Handle the final batch if smaller than CHUNK_SIZE
-                                if remaining_maturations.len() < CHUNK_SIZE {
-                                    for oracle in oracle_announcer.oracles.values() {
-                                        let _ = oracle
-                                            .create_many_announcements(&remaining_maturations)
-                                            .await;
-                                    }
-                                    Ok(None)
-                                } else {
-                                    // Process a full chunk of maturations
-                                    // Take the last CHUNK_SIZE elements (quicker than taking first CHUNK_SIZE elements)
-                                    let yielded = remaining_maturations
-                                        .drain((remaining_maturations.len() - CHUNK_SIZE)..);
-                                    for oracle in oracle_announcer.oracles.values() {
-                                        oracle
-                                            .create_many_announcements(yielded.as_slice())
-                                            .await?;
-                                    }
-                                    drop(yielded);
-                                    let next_state = (remaining_maturations, oracle_announcer);
-                                    Ok(Some(((), next_state)))
-                                }
-                            },
-                        );
+                        // Create a stream that divides pending maturations into chunks
+                        // Each chunk is mapped to an async operation that processes the maturations with all oracles
+                        // The Ok wrapper is needed because try_buffer_unordered expects a Result type
+                        let chunks_stream =
+                            stream::iter(pending_maturations.chunks(CHUNK_SIZE).map(
+                                |processing_mats| {
+                                    let oracle_context = oracle_context_processor.clone();
+                                    Ok(async move {
+                                        for oracle in oracle_context.oracles.values() {
+                                            oracle
+                                                .create_many_announcements(processing_mats)
+                                                .await?;
+                                        }
+                                        Ok(())
+                                    })
+                                },
+                            ));
+                        // Process chunks concurrently with a maximum of 2 chunks being processed at once
+                        // This helps prevent database connection pool exhaustion while maintaining throughput
+                        // try_buffer_unordered maintains ordering of results but allows concurrent processing
+                        let processing_stream = chunks_stream.try_buffer_unordered(2);
 
                         // Collect all processed chunks and store any errors in the error channel
-                        let result = stream.try_collect().await;
+                        let result = processing_stream.try_collect().await;
                         error_chan.set(result);
                     });
 
