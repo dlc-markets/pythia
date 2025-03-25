@@ -1,5 +1,6 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use futures::{stream, TryStreamExt};
+use futures_buffered::BufferedTryStreamExt;
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
@@ -52,7 +53,9 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
     // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
     let error_chan = Rc::new(Cell::new(Ok::<(), OracleError>(())));
 
-    // TODO: add doc
+    // Vector to store maturation dates that need to be processed in batches
+    // Used to accumulate announcements when events have already matured or are imminent
+    // This batching approach improves performance by reducing database operations
     let mut pending_maturations = Vec::new();
 
     // start event creation task
@@ -94,9 +97,12 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     );
                     let error_chan = error_chan.clone();
                     actix::spawn(async move {
+                        // TODO: comment
+                        pending_maturations.sort();
                         // Create a stream that divides pending maturations into chunks
                         // Each chunk is mapped to an async operation that processes the maturations with all oracles
                         // The Ok wrapper is needed because try_buffer_unordered expects a Result type
+                        // TODO: move all this stream into create_many_announcements,
                         let chunks_stream =
                             stream::iter(pending_maturations.chunks(CHUNK_SIZE).map(
                                 |processing_mats| {
@@ -114,11 +120,10 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         // Process chunks concurrently with a maximum of 2 chunks being processed at once
                         // This helps prevent database connection pool exhaustion while maintaining throughput
                         // try_buffer_unordered maintains ordering of results but allows concurrent processing
-                        let processing_stream = chunks_stream.try_buffer_unordered(2);
+                        let processing_stream = chunks_stream.try_buffered_unordered(2);
 
                         // Collect all processed chunks and store any errors in the error channel
-                        let result = processing_stream.try_collect().await;
-                        error_chan.set(result);
+                        error_chan.set(processing_stream.try_collect().await);
                     });
 
                     pending_maturations = Vec::new();

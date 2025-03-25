@@ -148,13 +148,26 @@ impl DBconnection {
         Ok(())
     }
 
+    // TODO: document this function, make sure announcements_with_sk_nonces is sort in ascending
+    // order
     pub(super) async fn insert_many_announcements(
         &self,
-        announcements_with_sk_nonces: &[OracleAnnouncementWithSkNonces],
+        announcements_with_sk_nonces_sorted_by_id: &[OracleAnnouncementWithSkNonces],
     ) -> Result<()> {
-        if announcements_with_sk_nonces.is_empty() {
+        if announcements_with_sk_nonces_sorted_by_id.is_empty() {
             return Ok(());
         }
+
+        // Check that announcements are sorted
+        assert!(
+            announcements_with_sk_nonces_sorted_by_id.is_sorted_by(|a, b| a
+                .0
+                .oracle_event
+                .event_id
+                .as_str()
+                <= b.0.oracle_event.event_id.as_str()),
+            "announcements_with_sk_nonces_sorted_by_id must be sorted in ascending order before inserting into database"
+        );
 
         #[allow(clippy::type_complexity)]
         let (
@@ -173,7 +186,7 @@ impl DBconnection {
             Vec<Vec<u8>>,
             Vec<_>,
             Vec<_>,
-        ) = announcements_with_sk_nonces
+        ) = announcements_with_sk_nonces_sorted_by_id
             .iter()
             .map(|(announcement, outstanding_sk_nonces)| {
                 let EventDescriptor::DigitDecompositionEvent(ref digit) =
@@ -496,7 +509,9 @@ impl DBconnection {
                 SELECT maturity
                 FROM oracle.events
                 WHERE oracle.events.maturity = maturity_array.maturity
-            );"#,
+            )
+            ORDER BY maturity
+            ;"#,
             &maturities
         )
         .fetch_all(&self.0)

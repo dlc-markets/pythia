@@ -203,6 +203,14 @@ mod test_insert_many_announcements {
 
     use super::*;
 
+    async fn get_number_of_rows(db: &DBconnection, table: &str) -> Result<i64> {
+        let query = format!("SELECT COUNT(*) FROM oracle.{}", table);
+        let rows_affected = sqlx::query_scalar::<_, i64>(&query)
+            .fetch_one(&db.0)
+            .await?;
+        Ok(rows_affected)
+    }
+
     #[sqlx::test]
     async fn test_insert_many_announcements_empty(pool: PgPool) -> Result<()> {
         // Create a DB connection
@@ -268,14 +276,6 @@ mod test_insert_many_announcements {
         }
 
         Ok(())
-    }
-
-    async fn get_number_of_rows(db: &DBconnection, table: &str) -> Result<i64> {
-        let query = format!("SELECT COUNT(*) FROM oracle.{}", table);
-        let rows_affected = sqlx::query_scalar::<_, i64>(&query)
-            .fetch_one(&db.0)
-            .await?;
-        Ok(rows_affected)
     }
 
     #[sqlx::test]
@@ -495,6 +495,37 @@ mod test_insert_many_announcements {
         assert_eq!(batch_events.len(), sample_indexes.len());
 
         Ok(())
+    }
+
+    #[sqlx::test]
+    #[should_panic]
+    async fn test_insert_many_announcements_wrong_insertion_order(pool: PgPool) {
+        // Create a DB connection
+        let db = DBconnection(pool);
+        let nb_digits = 20;
+
+        // Create test oracles with different digits to make order verification clearer
+        let oracle_10 =
+            create_test_oracle_with_digits(&db, nb_digits).expect("test oracle should be created");
+
+        // Create announcements with different maturity times and digit counts
+        let now = Utc::now();
+        let announcements_with_sk_nonces = vec![
+            oracle_10
+                .prepare_announcement(now + Duration::minutes(3), &mut thread_rng())
+                .expect("test announcement 1 should be created"),
+            oracle_10
+                .prepare_announcement(now, &mut thread_rng())
+                .expect("test announcement 2 should be created"),
+            oracle_10
+                .prepare_announcement(now + Duration::minutes(1), &mut thread_rng())
+                .expect("test announcement 3 should be created"),
+        ];
+
+        // Insert all announcements at once, this should panic
+        db.insert_many_announcements(&announcements_with_sk_nonces)
+            .await
+            .unwrap();
     }
 }
 
