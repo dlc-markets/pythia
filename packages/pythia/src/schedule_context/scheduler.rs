@@ -4,7 +4,7 @@ use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContextInner};
-use crate::{api::EventNotification, error::PythiaError};
+use crate::{api::EventNotification, error::PythiaError, oracle::error::OracleError};
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler
 /// Its context also include the channel receiver endpoint to broadcast announcements/attestations
@@ -45,16 +45,12 @@ impl SchedulerContext {
 /// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), PythiaError> {
     let oracle_context = context.oracle_context;
-    let cloned_oracle_context_attestation = Arc::clone(&oracle_context);
-    let cloned_oracle_context_announcement = Arc::clone(&oracle_context);
+    let attestation_oracle_context = Arc::clone(&oracle_context);
     let event_tx = context.channel_sender;
 
     // Channel to communicate errors from spawned tasks back to the main thread
     // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-    let error_chan = Rc::new(Cell::new(Ok::<
-        std::vec::Vec<std::vec::Vec<chrono::DateTime<chrono::Utc>>>,
-        PythiaContextError,
-    >(Vec::new())));
+    let error_chan = Rc::new(Cell::new(Ok::<(), OracleError>(())));
 
     // TODO: add doc
     let mut pending_maturations = Vec::new();
@@ -72,9 +68,13 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
 
     let announcement_thread = async move {
         for next_time in announcement_scheduled_dates {
-            // Initialize the error channel with an empty success result
-            // This will be updated by spawned tasks if they encounter errors
-            error_chan.replace(Ok(Vec::new()))?;
+            // Check for errors from previous tasks and reset the channel
+            // If previous tasks encountered an error, propagate it
+            let previous_result = error_chan.replace(Ok(()));
+            if let Err(e) = previous_result {
+                error!("Previous maturation processing failed: {}", e);
+                return Err(e.into());
+            }
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -86,7 +86,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     next_time + context.offset_duration
                 );
 
-                let cloned_oracle_context_announcement = cloned_oracle_context_announcement.clone();
+                let oracle_context_processor = oracle_context.clone();
                 if !pending_maturations.is_empty() {
                     info!(
                         "Pending maybe_std_durations size: {:?}",
@@ -96,33 +96,35 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     actix::spawn(async move {
                         // Create a stream that processes pending maturations in chunks
                         let stream = stream::try_unfold(
-                            (pending_maturations, cloned_oracle_context_announcement),
-                            |mut state| async move {
+                            (pending_maturations, oracle_context_processor),
+                            |(mut remaining_maturations, oracle_announcer)| async move {
                                 // Handle the final batch if smaller than CHUNK_SIZE
-                                if state.0.len() < CHUNK_SIZE {
-                                    for oracle in state.1.oracles.values() {
-                                        let _ = oracle.create_many_announcements(&state.0).await;
+                                if remaining_maturations.len() < CHUNK_SIZE {
+                                    for oracle in oracle_announcer.oracles.values() {
+                                        let _ = oracle
+                                            .create_many_announcements(&remaining_maturations)
+                                            .await;
                                     }
                                     Ok(None)
                                 } else {
                                     // Process a full chunk of maturations
                                     // Take the last CHUNK_SIZE elements (quicker than taking first CHUNK_SIZE elements)
-                                    let yielded = state
-                                        .0
-                                        .drain((state.0.len() - CHUNK_SIZE)..)
+                                    let yielded = remaining_maturations
+                                        .drain((remaining_maturations.len() - CHUNK_SIZE)..)
                                         .collect::<Vec<_>>();
-                                    for oracle in state.1.oracles.values() {
-                                        let _ = oracle.create_many_announcements(&yielded).await;
+                                    for oracle in oracle_announcer.oracles.values() {
+                                        oracle.create_many_announcements(&yielded).await?;
                                     }
 
-                                    let next_state = state;
+                                    let next_state = (remaining_maturations, oracle_announcer);
                                     Ok(Some((yielded, next_state)))
                                 }
                             },
                         );
 
-                        // Collect all processed chunks and store any errors in the error channel
-                        let result = stream.try_collect::<Vec<_>>().await;
+                        // Process all chunks sequentially, propagating any errors
+                        // We don't need to collect results since we only care about successful completion
+                        let result = stream.try_for_each(|_| async { Ok(()) }).await;
                         error_chan.set(result);
                     });
 
@@ -161,7 +163,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 sleep(duration).await;
             };
 
-            for (_, oracle) in cloned_oracle_context_attestation.oracles.iter() {
+            for (_, oracle) in attestation_oracle_context.oracles.iter() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 
