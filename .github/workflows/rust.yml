@@ -37,7 +37,9 @@ jobs:
 
       - run: cargo clippy
 
-      - run: cargo sqlx prepare --workspace --check
+      - run: |
+          cargo install sqlx-cli --no-default-features --features native-tls,postgres
+          cargo sqlx prepare --workspace --check
   
   # https://docs.docker.com/build/ci/github-actions/multi-platform/
   # https://github.com/crazy-max/docker-osxcross/blob/main/.github/workflows/build.yml
