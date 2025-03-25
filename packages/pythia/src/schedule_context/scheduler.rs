@@ -110,21 +110,21 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                                     // Process a full chunk of maturations
                                     // Take the last CHUNK_SIZE elements (quicker than taking first CHUNK_SIZE elements)
                                     let yielded = remaining_maturations
-                                        .drain((remaining_maturations.len() - CHUNK_SIZE)..)
-                                        .collect::<Vec<_>>();
+                                        .drain((remaining_maturations.len() - CHUNK_SIZE)..);
                                     for oracle in oracle_announcer.oracles.values() {
-                                        oracle.create_many_announcements(&yielded).await?;
+                                        oracle
+                                            .create_many_announcements(yielded.as_slice())
+                                            .await?;
                                     }
-
+                                    drop(yielded);
                                     let next_state = (remaining_maturations, oracle_announcer);
-                                    Ok(Some((yielded, next_state)))
+                                    Ok(Some(((), next_state)))
                                 }
                             },
                         );
 
-                        // Process all chunks sequentially, propagating any errors
-                        // We don't need to collect results since we only care about successful completion
-                        let result = stream.try_for_each(|_| async { Ok(()) }).await;
+                        // Collect all processed chunks and store any errors in the error channel
+                        let result = stream.try_collect().await;
                         error_chan.set(result);
                     });
 
