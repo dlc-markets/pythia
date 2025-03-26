@@ -5,7 +5,7 @@ use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
 use futures::{stream, TryStreamExt};
-use futures_buffered::BufferedTryStreamExt;
+use futures_buffered::BufferedStreamExt;
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     hashes::{sha256, Hash},
@@ -158,38 +158,35 @@ impl Oracle {
 
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
-        // The Ok wrapper is needed because try_buffer_unordered expects a Result type
         let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
-            |processing_mats| {
+            async |processing_mats| {
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
-                Ok(async move {
-                    // The announcements are already sorted because processing_mats is a chunk
-                    // of the already sorted by postgres non_existing_sorted_maturations vector
-                    // and prepare_announcements return announcements in the same order as maturities
-                    self.db
-                        .insert_many_announcements(&announcements_with_sk_nonces)
-                        .await?;
+                // The announcements are already sorted because processing_mats is a chunk
+                // of the already sorted by postgres non_existing_sorted_maturations vector
+                // and prepare_announcements return announcements in the same order as maturities
+                self.db
+                    .insert_many_announcements(&announcements_with_sk_nonces)
+                    .await?;
 
-                    debug!(
-                        "created oracle announcements with maturation {:?}",
-                        maturations
-                    );
-                    trace!(
-                        "announcements {:#?}",
-                        &announcements_with_sk_nonces
-                            .into_iter()
-                            .map(|(announcement, _)| announcement)
-                            .collect::<Vec<_>>()
-                    );
-                    Ok(())
-                })
+                debug!(
+                    "created oracle announcements with maturation {:?}",
+                    maturations
+                );
+                trace!(
+                    "announcements {:#?}",
+                    &announcements_with_sk_nonces
+                        .into_iter()
+                        .map(|(announcement, _)| announcement)
+                        .collect::<Vec<_>>()
+                );
+                Ok(())
             },
         ));
 
         // Process chunks concurrently with a maximum of 2 chunks being processed at once
         // This helps prevent database connection pool exhaustion while maintaining throughput
         // try_buffer_unordered does not guarantee ordering of results but allows more efficient concurrent processing
-        let processing_stream = chunks_stream.try_buffered_unordered(2);
+        let processing_stream = chunks_stream.buffered_unordered(2);
 
         // Collect all processed chunks and return any error
         processing_stream.try_collect().await
