@@ -28,7 +28,7 @@ use error::{OracleError, Result};
 use postgres::*;
 /// Number of maturations to process in each batch to prevent database connection pool exhaustion
 /// and maintain optimal performance while processing backlogged announcements
-pub const CHUNK_SIZE: usize = 200;
+pub const CHUNK_SIZE: usize = 100;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
