@@ -137,10 +137,9 @@ impl Oracle {
         Ok(announcement)
     }
 
-    pub async fn create_many_announcements(
+    pub async fn create_many_announcements<const CHUNK_SIZE: usize>(
         &self,
         maturations: &[DateTime<Utc>],
-        chunk_size: usize,
     ) -> Result<()> {
         // Get the maturities that were not announced
         let non_existing_sorted_maturations = self
@@ -160,7 +159,7 @@ impl Oracle {
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
         // The Ok wrapper is needed because try_buffer_unordered expects a Result type
-        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(chunk_size).map(
+        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
             |processing_mats| {
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
                 Ok(async move {

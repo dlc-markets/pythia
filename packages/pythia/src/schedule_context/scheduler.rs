@@ -97,7 +97,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         for oracle in oracle_context_processor.oracles.values() {
                             // Collect all processed chunks and store any errors in the error channel
                             if let result @ Err(_) = oracle
-                                .create_many_announcements(&pending_maturations, CHUNK_SIZE)
+                                .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
                                 .await
                             {
                                 error_chan.set(result)
