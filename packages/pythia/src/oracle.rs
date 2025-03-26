@@ -96,6 +96,7 @@ impl Oracle {
         Ok((announcement, sk_nonces))
     }
 
+    /// Prepare announcements for a list of maturities and return them in the same order
     fn prepare_announcements(
         &self,
         maturations: &[DateTime<Utc>],
@@ -141,15 +142,17 @@ impl Oracle {
         maturations: &[DateTime<Utc>],
         chunk_size: usize,
     ) -> Result<()> {
-        // Check if all the events were already announced
+        // Get the maturities that were not announced
         let non_existing_sorted_maturations = self
             .db
             .get_non_existing_sorted_maturity(maturations)
             .await?;
+
+        // Check if all the events were already announced
         if non_existing_sorted_maturations.is_empty() {
             info!(
-                "All events of these maturations: {:?} are already announced",
-                maturations
+                "The {} maturations are already announced",
+                maturations.len()
             );
             return Ok(());
         }
@@ -159,9 +162,11 @@ impl Oracle {
         // The Ok wrapper is needed because try_buffer_unordered expects a Result type
         let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(chunk_size).map(
             |processing_mats| {
-                // Get the maturities that were not announced
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
                 Ok(async move {
+                    // The announcements are already sorted because processing_mats is a chunk
+                    // of the already sorted by postgres non_existing_sorted_maturations vector
+                    // and prepare_announcements return announcements in the same order as maturities
                     self.db
                         .insert_many_announcements(&announcements_with_sk_nonces)
                         .await?;
@@ -184,10 +189,10 @@ impl Oracle {
 
         // Process chunks concurrently with a maximum of 2 chunks being processed at once
         // This helps prevent database connection pool exhaustion while maintaining throughput
-        // try_buffer_unordered maintains ordering of results but allows concurrent processing
+        // try_buffer_unordered does not guarantee ordering of results but allows more efficient concurrent processing
         let processing_stream = chunks_stream.try_buffered_unordered(2);
 
-        // Collect all processed chunks and store any errors in the error channel
+        // Collect all processed chunks and return any error
         processing_stream.try_collect().await
     }
 

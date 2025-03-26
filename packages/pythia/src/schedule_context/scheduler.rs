@@ -44,17 +44,8 @@ impl SchedulerContext {
 /// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), PythiaError> {
     let oracle_context = context.oracle_context;
-    let attestation_oracle_context = Arc::clone(&oracle_context);
+    let cloned_oracle_context = Arc::clone(&oracle_context);
     let event_tx = context.channel_sender;
-
-    // Channel to communicate errors from spawned tasks back to the main thread
-    // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-    let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
-
-    // Vector to store maturation dates that need to be processed in batches
-    // Used to accumulate announcements when events have already matured or are imminent
-    // This batching approach improves performance by reducing database operations
-    let mut pending_maturations = Vec::new();
 
     // start event creation task
     info!("creating oracle events and schedules");
@@ -68,12 +59,21 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         .map(move |date| date - context.offset_duration);
 
     let announcement_thread = async move {
+        // Vector to store maturation dates that need to be processed in batches
+        // Used to accumulate announcements when events have already matured or are imminent
+        // This batching approach improves performance by reducing database operations
+        let mut pending_maturations = Vec::new();
+
+        // Channel to communicate errors from spawned tasks back to the main thread
+        // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
+        let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
+
         for next_time in announcement_scheduled_dates {
             // Check for errors from previous tasks and reset the channel
             // If previous tasks encountered an error, propagate it
             error_state
                 .replace(Ok(()))
-                .inspect_err(|e| error!("Error in announcement thread: {}", &e))?;
+                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -85,24 +85,28 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     next_time + context.offset_duration
                 );
 
-                let oracle_context_processor = oracle_context.clone();
                 if !pending_maturations.is_empty() {
                     info!(
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
+                    let oracle_context_processor = oracle_context.clone();
                     let error_chan = error_state.clone();
+                    // We spawn a detached task to process missed announcements in the background
                     actix::spawn(async move {
                         for oracle in oracle_context_processor.oracles.values() {
-                            let result = oracle
-                                .create_many_announcements(&pending_maturations, CHUNK_SIZE)
-                                .await;
-
                             // Collect all processed chunks and store any errors in the error channel
-                            error_chan.set(result);
+                            if let result @ Err(_) = oracle
+                                .create_many_announcements(&pending_maturations, CHUNK_SIZE)
+                                .await
+                            {
+                                error_chan.set(result)
+                            };
                         }
+                        info!("Oracle announcements are in sync");
                     });
 
+                    // Reinitialize the pending maturations vector to avoid borrowing issues
                     pending_maturations = Vec::new();
                 }
 
@@ -138,7 +142,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 sleep(duration).await;
             };
 
-            for (_, oracle) in attestation_oracle_context.oracles.iter() {
+            for oracle in cloned_oracle_context.oracles.values() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 

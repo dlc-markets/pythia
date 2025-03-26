@@ -126,7 +126,7 @@ impl DBconnection {
                 .iter()
                 .map(|x| x.serialize().to_vec())
                 .collect::<Vec<Vec<u8>>>(),
-            sk_nonces.as_slice(),
+            sk_nonces.as_slice()
         )
         .execute(&self.0)
         .await?;
@@ -148,8 +148,9 @@ impl DBconnection {
         Ok(())
     }
 
-    // TODO: document this function, make sure announcements_with_sk_nonces is sort in ascending
-    // order
+    /// Insert many announcements in postgres DB.
+    /// The announcements must be sorted by event id,
+    /// otherwise it panics before the insert
     pub(super) async fn insert_many_announcements(
         &self,
         announcements_with_sk_nonces_sorted_by_id: &[OracleAnnouncementWithSkNonces],
@@ -158,7 +159,8 @@ impl DBconnection {
             return Ok(());
         }
 
-        // Check that announcements are sorted
+        // Sanity check that announcements are sorted
+        // if not we panic to not corrupt the database
         assert!(
             announcements_with_sk_nonces_sorted_by_id.is_sorted_by(|a, b| a
                 .0
