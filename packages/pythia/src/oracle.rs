@@ -170,7 +170,7 @@ impl Oracle {
 
                 debug!(
                     "created oracle announcements with maturation {:?}",
-                    maturations
+                    processing_mats
                 );
                 trace!(
                     "announcements {:#?}",
@@ -183,13 +183,10 @@ impl Oracle {
             },
         ));
 
-        // Process chunks concurrently with a maximum of 2 chunks being processed at once
-        // This helps prevent database connection pool exhaustion while maintaining throughput
-        // try_buffer_unordered does not guarantee ordering of results but allows more efficient concurrent processing
-        let processing_stream = chunks_stream.buffered_unordered(2);
-
-        // Collect all processed chunks and return any error
-        processing_stream.try_collect().await
+        // buffer_unordered allows a maximum of 2 chunks being processed concurrently.
+        // This helps prevent database connection pool exhaustion while maintaining throughput.
+        // Process all chunks in any order and return any error.
+        chunks_stream.buffered_unordered(2).try_collect().await
     }
 
     /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
