@@ -51,7 +51,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
 
     // Channel to communicate errors from spawned tasks back to the main thread
     // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-    let error_chan = Rc::new(Cell::new(Ok::<(), OracleError>(())));
+    let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
 
     // Vector to store maturation dates that need to be processed in batches
     // Used to accumulate announcements when events have already matured or are imminent
@@ -73,11 +73,9 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         for next_time in announcement_scheduled_dates {
             // Check for errors from previous tasks and reset the channel
             // If previous tasks encountered an error, propagate it
-            let previous_result = error_chan.replace(Ok(()));
-            if let Err(e) = previous_result {
-                error!("Previous maturation processing failed: {}", e);
-                return Err(e.into());
-            }
+            error_state
+                .replace(Ok(()))
+                .inspect_err(|e| error!("Error in announcement thread: {}", &e))?;
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -95,10 +93,8 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
-                    let error_chan = error_chan.clone();
+                    let error_chan = error_state.clone();
                     actix::spawn(async move {
-                        // TODO: comment
-                        pending_maturations.sort();
                         // Create a stream that divides pending maturations into chunks
                         // Each chunk is mapped to an async operation that processes the maturations with all oracles
                         // The Ok wrapper is needed because try_buffer_unordered expects a Result type
