@@ -48,7 +48,7 @@ fn create_test_oracle_with_digits(db: &DBconnection, nb_digit: u16) -> Result<Or
     Ok(oracle)
 }
 
-mod test_get_non_existing_maturity {
+mod test_get_non_existing_sorted_maturity {
     use super::*;
     async fn insert_test_events(db: &DBconnection, maturities: &[DateTime<Utc>]) {
         // Create a dummy signature for announcements
@@ -71,7 +71,7 @@ mod test_get_non_existing_maturity {
     }
 
     #[sqlx::test]
-    async fn test_get_non_existing_maturity(pool: PgPool) -> Result<()> {
+    async fn test_get_non_existing_sorted_maturity(pool: PgPool) -> Result<()> {
         // Create a DB connection
         let db = DBconnection(pool);
 
@@ -94,7 +94,9 @@ mod test_get_non_existing_maturity {
         ];
 
         // Call the function
-        let result = db.get_non_existing_maturity(&test_maturities).await?;
+        let result = db
+            .get_non_existing_sorted_maturity(&test_maturities)
+            .await?;
 
         // Verify the result contains only the non-existing maturities
         assert_eq!(result.len(), 2);
@@ -135,10 +137,10 @@ mod test_get_non_existing_maturity {
     }
 
     #[sqlx::test]
-    async fn test_get_non_existing_maturity_empty_input(pool: PgPool) -> Result<()> {
+    async fn test_get_non_existing_sorted_maturity_empty_input(pool: PgPool) -> Result<()> {
         // Create a DB connection
         let db = DBconnection(pool);
-        let result = db.get_non_existing_maturity(&[]).await?;
+        let result = db.get_non_existing_sorted_maturity(&[]).await?;
         assert!(
             result.is_empty(),
             "non_existing_maturities: {:?} should be empty",
@@ -148,7 +150,7 @@ mod test_get_non_existing_maturity {
     }
 
     #[sqlx::test]
-    async fn test_get_non_existing_maturity_all_maturity_exist(pool: PgPool) -> Result<()> {
+    async fn test_get_non_existing_sorted_maturity_all_maturity_exist(pool: PgPool) -> Result<()> {
         // Create a DB connection
         let db = DBconnection(pool);
         // Create and insert test maturity dates
@@ -156,7 +158,9 @@ mod test_get_non_existing_maturity {
         let existing_maturities = [now, now + Duration::hours(1)];
         insert_test_events(&db, &existing_maturities).await;
         // Test with only existing maturity dates
-        let result = db.get_non_existing_maturity(&existing_maturities).await?;
+        let result = db
+            .get_non_existing_sorted_maturity(&existing_maturities)
+            .await?;
         assert!(
             result.is_empty(),
             "non_existing_maturities: {:?} should be empty",
@@ -166,7 +170,7 @@ mod test_get_non_existing_maturity {
     }
 
     #[sqlx::test]
-    async fn test_get_non_existing_maturity_none_exist(pool: PgPool) -> Result<()> {
+    async fn test_get_non_existing_sorted_maturity_none_exist(pool: PgPool) -> Result<()> {
         // Create a DB connection
         let db = DBconnection(pool);
         // Create test dates that don't exist in DB
@@ -175,7 +179,7 @@ mod test_get_non_existing_maturity {
 
         // Test with only non-existing maturity dates (insert_test_events is not called)
         let result = db
-            .get_non_existing_maturity(&non_existing_maturities)
+            .get_non_existing_sorted_maturity(&non_existing_maturities)
             .await?;
 
         // All should be returned

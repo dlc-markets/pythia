@@ -133,7 +133,10 @@ impl Oracle {
 
     pub async fn create_many_announcements(&self, maturations: &[DateTime<Utc>]) -> Result<()> {
         // Check if all the events were already announced
-        let non_existing_maturations = self.db.get_non_existing_maturity(maturations).await?;
+        let non_existing_maturations = self
+            .db
+            .get_non_existing_sorted_maturity(maturations)
+            .await?;
         if non_existing_maturations.is_empty() {
             info!(
                 "All events of these maturations: {:?} are already announced",

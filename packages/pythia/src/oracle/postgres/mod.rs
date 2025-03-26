@@ -491,7 +491,7 @@ impl DBconnection {
         ))
     }
 
-    pub(super) async fn get_non_existing_maturity(
+    pub(super) async fn get_non_existing_sorted_maturity(
         &self,
         maturities: &[DateTime<Utc>],
     ) -> Result<Vec<DateTime<Utc>>> {
