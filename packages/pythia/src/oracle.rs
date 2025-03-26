@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
+use futures::{stream, TryStreamExt};
+use futures_buffered::BufferedTryStreamExt;
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     hashes::{sha256, Hash},
@@ -24,6 +26,9 @@ mod test;
 use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
 use error::{OracleError, Result};
 use postgres::*;
+/// Number of maturations to process in each batch to prevent database connection pool exhaustion
+/// and maintain optimal performance while processing backlogged announcements
+const CHUNK_SIZE: usize = 200;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
@@ -133,11 +138,11 @@ impl Oracle {
 
     pub async fn create_many_announcements(&self, maturations: &[DateTime<Utc>]) -> Result<()> {
         // Check if all the events were already announced
-        let non_existing_maturations = self
+        let non_existing_sorted_maturations = self
             .db
             .get_non_existing_sorted_maturity(maturations)
             .await?;
-        if non_existing_maturations.is_empty() {
+        if non_existing_sorted_maturations.is_empty() {
             info!(
                 "All events of these maturations: {:?} are already announced",
                 maturations
@@ -145,24 +150,41 @@ impl Oracle {
             return Ok(());
         }
 
-        // Get the maturities that were not announced
-        let announcements_with_sk_nonces = self.prepare_announcements(&non_existing_maturations)?;
-        self.db
-            .insert_many_announcements(&announcements_with_sk_nonces)
-            .await?;
-        debug!(
-            "created oracle announcements with maturation {:?}",
-            maturations
-        );
-        trace!(
-            "announcements {:#?}",
-            &announcements_with_sk_nonces
-                .into_iter()
-                .map(|(announcement, _)| announcement)
-                .collect::<Vec<_>>()
-        );
+        // Create a stream that divides pending maturations into chunks
+        // Each chunk is mapped to an async operation that processes the maturations with all oracles
+        // The Ok wrapper is needed because try_buffer_unordered expects a Result type
+        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
+            |processing_mats| {
+                // Get the maturities that were not announced
+                let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
+                Ok(async move {
+                    self.db
+                        .insert_many_announcements(&announcements_with_sk_nonces)
+                        .await?;
 
-        Ok(())
+                    debug!(
+                        "created oracle announcements with maturation {:?}",
+                        maturations
+                    );
+                    trace!(
+                        "announcements {:#?}",
+                        &announcements_with_sk_nonces
+                            .into_iter()
+                            .map(|(announcement, _)| announcement)
+                            .collect::<Vec<_>>()
+                    );
+                    Ok(())
+                })
+            },
+        ));
+
+        // Process chunks concurrently with a maximum of 2 chunks being processed at once
+        // This helps prevent database connection pool exhaustion while maintaining throughput
+        // try_buffer_unordered maintains ordering of results but allows concurrent processing
+        let processing_stream = chunks_stream.try_buffered_unordered(2);
+
+        // Collect all processed chunks and store any errors in the error channel
+        processing_stream.try_collect().await
     }
 
     /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.

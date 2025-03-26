@@ -1,6 +1,4 @@
 use chrono::{Duration as ChronoDuration, Utc};
-use futures::{stream, TryStreamExt};
-use futures_buffered::BufferedTryStreamExt;
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
@@ -14,10 +12,6 @@ pub(crate) struct SchedulerContext {
     offset_duration: Duration,
     channel_sender: Sender<EventNotification>,
 }
-
-/// Number of maturations to process in each batch to prevent database connection pool exhaustion
-/// and maintain optimal performance while processing backlogged announcements
-const CHUNK_SIZE: usize = 200;
 
 impl SchedulerContext {
     pub(super) fn new(
@@ -95,31 +89,13 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     );
                     let error_chan = error_state.clone();
                     actix::spawn(async move {
-                        // Create a stream that divides pending maturations into chunks
-                        // Each chunk is mapped to an async operation that processes the maturations with all oracles
-                        // The Ok wrapper is needed because try_buffer_unordered expects a Result type
-                        // TODO: move all this stream into create_many_announcements,
-                        let chunks_stream =
-                            stream::iter(pending_maturations.chunks(CHUNK_SIZE).map(
-                                |processing_mats| {
-                                    let oracle_context = oracle_context_processor.clone();
-                                    Ok(async move {
-                                        for oracle in oracle_context.oracles.values() {
-                                            oracle
-                                                .create_many_announcements(processing_mats)
-                                                .await?;
-                                        }
-                                        Ok(())
-                                    })
-                                },
-                            ));
-                        // Process chunks concurrently with a maximum of 2 chunks being processed at once
-                        // This helps prevent database connection pool exhaustion while maintaining throughput
-                        // try_buffer_unordered maintains ordering of results but allows concurrent processing
-                        let processing_stream = chunks_stream.try_buffered_unordered(2);
+                        for oracle in oracle_context_processor.oracles.values() {
+                            let result =
+                                oracle.create_many_announcements(&pending_maturations).await;
 
-                        // Collect all processed chunks and store any errors in the error channel
-                        error_chan.set(processing_stream.try_collect().await);
+                            // Collect all processed chunks and store any errors in the error channel
+                            error_chan.set(result);
+                        }
                     });
 
                     pending_maturations = Vec::new();

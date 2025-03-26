@@ -54,7 +54,7 @@ services:
       pythia
       --pair '{"pricefeed":"lnmarkets","assetPair":"btc_usd","eventDescriptor":{"base":2,"isSigned":false,"unit":"usd/btc","precision":0,"nbDigits":20}}'
       --schedule '0 */1 * * * * *'
-      --offset '2months'
+      --offset '2min'
     ports:
       - 8000:8000
     depends_on:
