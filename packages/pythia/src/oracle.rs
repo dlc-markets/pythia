@@ -28,7 +28,7 @@ use error::{OracleError, Result};
 use postgres::*;
 /// Number of maturations to process in each batch to prevent database connection pool exhaustion
 /// and maintain optimal performance while processing backlogged announcements
-const CHUNK_SIZE: usize = 200;
+pub const CHUNK_SIZE: usize = 200;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
@@ -136,7 +136,11 @@ impl Oracle {
         Ok(announcement)
     }
 
-    pub async fn create_many_announcements(&self, maturations: &[DateTime<Utc>]) -> Result<()> {
+    pub async fn create_many_announcements(
+        &self,
+        maturations: &[DateTime<Utc>],
+        chunk_size: usize,
+    ) -> Result<()> {
         // Check if all the events were already announced
         let non_existing_sorted_maturations = self
             .db
@@ -153,7 +157,7 @@ impl Oracle {
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
         // The Ok wrapper is needed because try_buffer_unordered expects a Result type
-        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
+        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(chunk_size).map(
             |processing_mats| {
                 // Get the maturities that were not announced
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;

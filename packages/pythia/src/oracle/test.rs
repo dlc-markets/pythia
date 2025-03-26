@@ -633,6 +633,7 @@ mod unittest {
 
     mod test_create_many_announcements {
         use super::*;
+        use crate::oracle::CHUNK_SIZE;
 
         #[sqlx::test]
         async fn test_create_many_announcements_new(pool: PgPool) -> Result<()> {
@@ -648,7 +649,9 @@ mod unittest {
                 now + Duration::hours(3),
             ];
 
-            oracle.create_many_announcements(&maturations).await?;
+            oracle
+                .create_many_announcements(&maturations, CHUNK_SIZE)
+                .await?;
 
             // Verify that all announcements were created
             for maturation in maturations.iter() {
@@ -705,7 +708,9 @@ mod unittest {
             let now = Utc::now();
             let maturations = [now + Duration::hours(1), now + Duration::hours(2)];
 
-            oracle.create_many_announcements(&maturations).await?;
+            oracle
+                .create_many_announcements(&maturations, CHUNK_SIZE)
+                .await?;
 
             // Record the event IDs and nonces
             let mut event_ids = Vec::new();
@@ -721,7 +726,9 @@ mod unittest {
             }
 
             // Try creating announcements again
-            oracle.create_many_announcements(&maturations).await?;
+            oracle
+                .create_many_announcements(&maturations, CHUNK_SIZE)
+                .await?;
 
             // Verify nothing changed
             for (i, event_id) in event_ids.iter().enumerate() {
@@ -745,7 +752,7 @@ mod unittest {
             let now = Utc::now();
             let existing_maturations = [now + Duration::hours(1), now + Duration::hours(3)];
             oracle
-                .create_many_announcements(&existing_maturations)
+                .create_many_announcements(&existing_maturations, CHUNK_SIZE)
                 .await?;
 
             // Now try with a mix of existing and new maturations
@@ -757,7 +764,9 @@ mod unittest {
             ];
 
             // Create announcements
-            oracle.create_many_announcements(&mixed_maturations).await?;
+            oracle
+                .create_many_announcements(&mixed_maturations, CHUNK_SIZE)
+                .await?;
 
             // Verify all announcements exist
             for maturation in &mixed_maturations {
@@ -786,7 +795,7 @@ mod unittest {
             let oracle = create_test_oracle(&db)?;
 
             // Try with empty array
-            let result = oracle.create_many_announcements(&[]).await;
+            let result = oracle.create_many_announcements(&[], CHUNK_SIZE).await;
 
             // Should succeed with no issues
             assert!(result.is_ok());
@@ -811,9 +820,11 @@ mod unittest {
 
             // Create announcements with both oracles
             oracle20
-                .create_many_announcements(&maturations_even)
+                .create_many_announcements(&maturations_even, CHUNK_SIZE)
                 .await?;
-            oracle10.create_many_announcements(&maturations_odd).await?;
+            oracle10
+                .create_many_announcements(&maturations_odd, CHUNK_SIZE)
+                .await?;
 
             // Verify announcements have correct digit counts
             for maturation in &maturations_even {
@@ -1072,6 +1083,62 @@ mod unittest {
             );
 
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod benchmarks {
+    use super::*;
+    use std::time::Instant;
+
+    type Error = Box<dyn std::error::Error>;
+    type Result<T> = std::result::Result<T, Error>;
+
+    async fn clear_events(db: &DBconnection) -> Result<()> {
+        sqlx::query!("DELETE FROM oracle.digits")
+            .execute(&db.0)
+            .await?;
+        sqlx::query!("DELETE FROM oracle.events")
+            .execute(&db.0)
+            .await?;
+        Ok(())
+    }
+
+    #[sqlx::test]
+    #[ignore]
+    async fn benchmark_create_many_announcements(tbd: PgPool) {
+        let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
+        let now = Utc::now();
+
+        // Create test data with 1000 maturations
+        let maturations: Vec<DateTime<Utc>> = (0..1000)
+            .map(|i| now + Duration::new(i * 3600, 0))
+            .collect();
+
+        // Test different chunk sizes
+        let chunk_sizes = [10, 30, 40, 50, 80, 100, 120, 140, 300, 400, 500];
+
+        println!("\nBenchmarking create_many_announcements with different chunk sizes:");
+        println!("================================================================");
+
+        for &chunk_size in &chunk_sizes {
+            // Clear the database before each test
+            clear_events(&oracle.db).await.unwrap();
+
+            let start = Instant::now();
+            oracle
+                .create_many_announcements(&maturations, chunk_size)
+                .await
+                .unwrap();
+            let duration = start.elapsed();
+
+            println!(
+                "Chunk size: {:4} | Time: {:?} | Throughput: {:.2} announcements/sec",
+                chunk_size,
+                duration,
+                1000.0 / duration.as_secs_f64()
+            );
         }
     }
 }

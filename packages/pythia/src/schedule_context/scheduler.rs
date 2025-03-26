@@ -3,7 +3,11 @@ use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContextInner};
-use crate::{api::EventNotification, error::PythiaError, oracle::error::OracleError};
+use crate::{
+    api::EventNotification,
+    error::PythiaError,
+    oracle::{error::OracleError, CHUNK_SIZE},
+};
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler
 /// Its context also include the channel receiver endpoint to broadcast announcements/attestations
@@ -90,8 +94,9 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     let error_chan = error_state.clone();
                     actix::spawn(async move {
                         for oracle in oracle_context_processor.oracles.values() {
-                            let result =
-                                oracle.create_many_announcements(&pending_maturations).await;
+                            let result = oracle
+                                .create_many_announcements(&pending_maturations, CHUNK_SIZE)
+                                .await;
 
                             // Collect all processed chunks and store any errors in the error channel
                             error_chan.set(result);
