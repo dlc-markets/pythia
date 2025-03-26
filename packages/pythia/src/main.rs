@@ -77,7 +77,7 @@ async fn main() -> Result<(), PythiaError> {
 
     select! {
         e = spawn(schedule_context::scheduler::start_schedule(scheduler_context)) => {
-            e?.map_err(PythiaError::from)
+            e?
         },
         e = spawn(api::run_api_v1(api_context, port, debug_mode)) => {
             e?.map_err(PythiaError::from)

@@ -226,12 +226,12 @@ pub(super) mod test {
         // Convert into nonce and scalar
 
         let oracle_sig = OracleSignature::from(sig_secp);
-        let OracleSignature { nonce, scalar } = oracle_sig.into();
+        let OracleSignature { nonce, scalar } = oracle_sig;
 
         // If secret nonce is given, check that it match public one in signature
 
-        match nonce_secret_str {
-            Some(secret_str) => assert_eq!(
+        if let Some(secret_str) = nonce_secret_str {
+            assert_eq!(
                 &NoncePoint(
                     Keypair::from_seckey_str(secp, secret_str)
                         .unwrap()
@@ -239,9 +239,8 @@ pub(super) mod test {
                         .0
                 ),
                 &nonce
-            ),
-            None => {}
-        }
+            )
+        };
 
         // Aggregate back into a signature
         let oracle_sig = OracleSignature { nonce, scalar };

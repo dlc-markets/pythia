@@ -53,7 +53,7 @@ async fn setup_oracle(
     let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
     let keypair = Keypair::from_secret_key(&secp, &secret_key);
     let db = DBconnection(tbd);
-    return Oracle::new(asset_pair_info, db, keypair);
+    Oracle::new(asset_pair_info, db, keypair)
 }
 
 #[sqlx::test]
@@ -108,7 +108,7 @@ async fn announcements_tests(tbd: PgPool) {
 }
 
 async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
-    let oracle_announcement = oracle.create_announcement(date.clone()).await.unwrap();
+    let oracle_announcement = oracle.create_announcement(date).await.unwrap();
     let now = Utc::now();
     let oracle_attestation = match oracle
         .try_attest_event(&oracle_announcement.oracle_event.event_id)
@@ -195,7 +195,7 @@ fn check_test_vec(attestation_test_vec: OracleAttestation) {
         .zip(&attestation_test_vec.outcomes)
         .map(|(sig, dig)| {
             (
-                sig.clone(),
+                sig,
                 check_signature_with_nonce(
                     &secp,
                     &attestation_test_vec.oracle_public_key,
@@ -434,7 +434,7 @@ fn check_test_vec_dlc_specs(attestation_test_vec: OracleAttestation) {
         .zip(attestation_test_vec.outcomes)
         .map(|(sig, dig)| {
             (
-                sig.clone(),
+                sig,
                 check_signature_with_tag(
                     &secp,
                     &attestation_test_vec.oracle_public_key,
@@ -572,4 +572,587 @@ fn tests_vector_attestation_suredbits() {
         };
 
     check_test_vec_dlc_specs(attestation_test_vec);
+}
+mod unittest {
+
+    use chrono::{Duration, Utc};
+    use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
+    use secp256k1_zkp::{Keypair, SecretKey};
+    use sqlx::PgPool;
+    use std::str::FromStr;
+
+    use crate::{
+        oracle::{Oracle, ScalarsRecords},
+        pricefeeds::ImplementedPriceFeed,
+        AssetPair, AssetPairInfo, DBconnection, SECP,
+    };
+    type Error = Box<dyn std::error::Error>;
+    type Result<T> = std::result::Result<T, Error>;
+
+    fn create_test_oracle(db: &DBconnection) -> Result<Oracle> {
+        // Create a test oracle
+        let asset_pair_info = AssetPairInfo {
+            pricefeed: ImplementedPriceFeed::Lnmarkets,
+            asset_pair: AssetPair::default(),
+            event_descriptor: DigitDecompositionEventDescriptor {
+                base: 2,
+                is_signed: false,
+                unit: "usd".to_owned(),
+                precision: 0,
+                nb_digits: 20,
+            },
+        };
+        let secret_key = SecretKey::from_str(
+            "d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a",
+        )?;
+        let keypair = Keypair::from_secret_key(&SECP, &secret_key);
+        let oracle = Oracle::new(asset_pair_info.clone(), db.clone(), keypair);
+        Ok(oracle)
+    }
+
+    fn create_test_oracle_with_digits(db: &DBconnection, nb_digit: u16) -> Result<Oracle> {
+        // Create a test oracle
+        let asset_pair_info = AssetPairInfo {
+            pricefeed: ImplementedPriceFeed::Lnmarkets,
+            asset_pair: AssetPair::default(),
+            event_descriptor: DigitDecompositionEventDescriptor {
+                base: 2,
+                is_signed: false,
+                unit: "usd".to_owned(),
+                precision: 0,
+                nb_digits: nb_digit,
+            },
+        };
+        let secret_key = SecretKey::from_str(
+            "d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a",
+        )?;
+        let keypair = Keypair::from_secret_key(&SECP, &secret_key);
+        let oracle = Oracle::new(asset_pair_info.clone(), db.clone(), keypair);
+        Ok(oracle)
+    }
+
+    mod test_create_many_announcements {
+        use super::*;
+        use crate::oracle::CHUNK_SIZE;
+
+        #[sqlx::test]
+        async fn test_create_many_announcements_new(pool: PgPool) -> Result<()> {
+            let db = DBconnection(pool);
+
+            // Create a test oracle
+            let oracle = create_test_oracle(&db)?;
+
+            let now = Utc::now();
+            let maturations = [
+                now + Duration::hours(1),
+                now + Duration::hours(2),
+                now + Duration::hours(3),
+            ];
+
+            oracle
+                .create_many_announcements::<CHUNK_SIZE>(&maturations)
+                .await?;
+
+            // Verify that all announcements were created
+            for maturation in maturations.iter() {
+                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                let event = db.get_event(&event_id).await?;
+                assert!(
+                    event.is_some(),
+                    "event: {} should exist for maturation: {}",
+                    event_id,
+                    maturation
+                );
+
+                let event = event.expect("Event should exist");
+                assert_eq!(
+                    event.digits, oracle.asset_pair_info.event_descriptor.nb_digits,
+                    "Event should have the correct number of digits"
+                );
+                assert_eq!(
+                    event.precision as i32, oracle.asset_pair_info.event_descriptor.precision,
+                    "Event should have the correct precision"
+                );
+                assert_eq!(
+                    event.maturity.timestamp(),
+                    maturation.timestamp(),
+                    "Event should have the correct maturity"
+                );
+
+                // Verify it has nonces
+                assert_eq!(
+                    event.nonce_public.len() as u16,
+                    oracle.asset_pair_info.event_descriptor.nb_digits,
+                    "Event should have the correct number of nonces"
+                );
+
+                // Verify it's not attested yet
+                match event.scalars_records {
+                    ScalarsRecords::DigitsSkNonce(_) => {}
+                    ScalarsRecords::DigitsAttestations(_, _) => {
+                        panic!("Event should not be attested")
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn test_create_many_announcements_already_exist(pool: PgPool) -> Result<()> {
+            // Create a DB connection
+            let db = DBconnection(pool);
+
+            // Create maturations
+            let oracle = create_test_oracle(&db)?;
+            let now = Utc::now();
+            let maturations = [now + Duration::hours(1), now + Duration::hours(2)];
+
+            oracle
+                .create_many_announcements::<CHUNK_SIZE>(&maturations)
+                .await?;
+
+            // Record the event IDs and nonces
+            let mut event_ids = Vec::new();
+            let mut original_nonces = Vec::new();
+
+            for maturation in &maturations {
+                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                event_ids.push(event_id.clone());
+
+                let event = db.get_event(&event_id).await?.unwrap();
+                original_nonces.push(event.nonce_public.clone());
+            }
+
+            // Try creating announcements again
+            oracle
+                .create_many_announcements::<CHUNK_SIZE>(&maturations)
+                .await?;
+
+            // Verify nothing changed
+            for (i, event_id) in event_ids.iter().enumerate() {
+                let event = db.get_event(event_id).await?.unwrap();
+                assert_eq!(
+                    event.nonce_public, original_nonces[i],
+                    "Nonces should not change when announcement already exists"
+                );
+            }
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn test_create_many_announcements_mixed(pool: PgPool) -> Result<()> {
+            // Create a DB connection and oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Create some initial announcements
+            let now = Utc::now();
+            let existing_maturations = [now + Duration::hours(1), now + Duration::hours(3)];
+            oracle
+                .create_many_announcements::<CHUNK_SIZE>(&existing_maturations)
+                .await?;
+
+            // Now try with a mix of existing and new maturations
+            let mixed_maturations = [
+                now + Duration::hours(1), // Already exists
+                now + Duration::hours(2), // New
+                now + Duration::hours(3), // Already exists
+                now + Duration::hours(4), // New
+            ];
+
+            // Create announcements
+            oracle
+                .create_many_announcements::<CHUNK_SIZE>(&mixed_maturations)
+                .await?;
+
+            // Verify all announcements exist
+            for maturation in &mixed_maturations {
+                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                let event = db.get_event(&event_id).await?;
+                assert!(
+                    event.is_some(),
+                    "Event should exist for maturation {}",
+                    maturation
+                );
+                let events = db
+                    .get_many_events([event_id].to_vec())
+                    .await?
+                    .unwrap_or_default();
+                assert_eq!(events.len(), 1, "Event should be unique");
+            }
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn test_create_many_announcements_empty(pool: PgPool) -> Result<()> {
+            // Create a DB connection and oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Try with empty array
+            let result = oracle.create_many_announcements::<CHUNK_SIZE>(&[]).await;
+
+            // Should succeed with no issues
+            assert!(result.is_ok());
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        async fn test_create_many_announcements_different_digit_counts(pool: PgPool) -> Result<()> {
+            // Create a DB connection
+            let db = DBconnection(pool);
+
+            // Create two oracles with different digit counts
+            let oracle20 = create_test_oracle_with_digits(&db, 20)?;
+            let oracle10 = create_test_oracle_with_digits(&db, 10)?;
+
+            // Create maturations
+            // Note: There can't be 2 announcements with the same maturation time
+            let now = Utc::now();
+            let maturations_even = [now, now + Duration::hours(2), now + Duration::hours(4)];
+            let maturations_odd = [now + Duration::hours(1), now + Duration::hours(3)];
+
+            // Create announcements with both oracles
+            oracle20
+                .create_many_announcements::<CHUNK_SIZE>(&maturations_even)
+                .await?;
+            oracle10
+                .create_many_announcements::<CHUNK_SIZE>(&maturations_odd)
+                .await?;
+
+            // Verify announcements have correct digit counts
+            for maturation in &maturations_even {
+                // Check first oracle's announcement
+                let event_id1 = oracle20
+                    .asset_pair_info
+                    .asset_pair
+                    .to_string()
+                    .to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                let event1 = db.get_event(&event_id1).await?.unwrap();
+                assert_eq!(event1.digits, 20);
+                assert_eq!(event1.nonce_public.len(), 20);
+            }
+
+            for maturation in &maturations_odd {
+                // Check second oracle's announcement
+                let event_id2 = oracle10
+                    .asset_pair_info
+                    .asset_pair
+                    .to_string()
+                    .to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                let event2 = db.get_event(&event_id2).await?.unwrap();
+                assert_eq!(event2.digits, 10);
+                assert_eq!(event2.nonce_public.len(), 10);
+            }
+
+            Ok(())
+        }
+    }
+
+    mod test_prepare_announcement {
+        use super::*;
+        use bitcoin::hashes::{sha256, Hash};
+        use dlc_messages::oracle_msgs::EventDescriptor;
+        use lightning::util::ser::Writeable;
+        use secp256k1_zkp::{rand::thread_rng, Message, XOnlyPublicKey};
+
+        #[sqlx::test]
+        fn test_prepare_announcement_basic(pool: PgPool) -> Result<()> {
+            // Create a test oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Create a maturation time
+            let maturation = Utc::now() + Duration::hours(1);
+
+            // Prepare announcement
+            let (announcement, sk_nonces) =
+                oracle.prepare_announcement(maturation, &mut thread_rng())?;
+
+            // Verify event ID format (asset_pair + timestamp)
+            let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+                + maturation.timestamp().to_string().as_str();
+            assert_eq!(announcement.oracle_event.event_id, expected_id);
+
+            // Verify maturation time
+            assert_eq!(
+                announcement.oracle_event.event_maturity_epoch as i64,
+                maturation.timestamp()
+            );
+
+            // Verify event descriptor
+            match &announcement.oracle_event.event_descriptor {
+                EventDescriptor::DigitDecompositionEvent(desc) => {
+                    assert_eq!(
+                        desc.nb_digits,
+                        oracle.asset_pair_info.event_descriptor.nb_digits
+                    );
+                    assert_eq!(
+                        desc.precision,
+                        oracle.asset_pair_info.event_descriptor.precision
+                    );
+                    assert_eq!(desc.base, oracle.asset_pair_info.event_descriptor.base);
+                    assert_eq!(
+                        desc.is_signed,
+                        oracle.asset_pair_info.event_descriptor.is_signed
+                    );
+                }
+                _ => panic!("Expected DigitDecompositionEvent"),
+            }
+
+            // Verify oracle public key
+            assert_eq!(announcement.oracle_public_key, oracle.get_public_key());
+
+            // Verify nonce count
+            assert_eq!(
+                announcement.oracle_event.oracle_nonces.len(),
+                oracle.asset_pair_info.event_descriptor.nb_digits as usize
+            );
+
+            // Verify secret nonces length
+            assert_eq!(
+                sk_nonces.len(),
+                oracle.asset_pair_info.event_descriptor.nb_digits as usize
+            );
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        fn test_prepare_announcement_nonce_relationships(pool: PgPool) -> Result<()> {
+            // Create a test oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Create a maturation time
+            let maturation = Utc::now() + Duration::hours(1);
+
+            // Prepare announcement
+            let (announcement, sk_nonces) =
+                oracle.prepare_announcement(maturation, &mut thread_rng())?;
+
+            // Verify that public nonces match the secret nonces
+            for (i, sk_nonce) in sk_nonces.iter().enumerate() {
+                let oracle_r_kp =
+                    secp256k1_zkp::Keypair::from_seckey_slice(&SECP, sk_nonce).unwrap();
+                let expected_nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+                assert_eq!(
+                    announcement.oracle_event.oracle_nonces[i], expected_nonce,
+                    "Public nonce at index {} doesn't match derived nonce from secret",
+                    i
+                );
+            }
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        fn test_prepare_announcement_different_digit_counts(pool: PgPool) -> Result<()> {
+            // Create a DB connection
+            let db = DBconnection(pool);
+            // Test with different digit counts
+            let digit_counts = [1, 5, 10, 20, 32];
+            let maturation = Utc::now() + Duration::hours(1);
+            let mut rng = thread_rng();
+
+            for &digits in &digit_counts {
+                let oracle = create_test_oracle_with_digits(&db, digits)?;
+                let (announcement, sk_nonces) =
+                    oracle.prepare_announcement(maturation, &mut rng)?;
+
+                // Verify the nonce counts match the digit count
+                assert_eq!(
+                    announcement.oracle_event.oracle_nonces.len(),
+                    digits as usize,
+                    "Nonce count should match digit count of {}",
+                    digits
+                );
+                assert_eq!(
+                    sk_nonces.len(),
+                    digits as usize,
+                    "Secret nonce count should match digit count of {}",
+                    digits
+                );
+            }
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        fn test_prepare_announcement_variety_of_maturation_times(pool: PgPool) -> Result<()> {
+            // Create a test oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Test with different maturation times
+            let now = Utc::now();
+            let maturation_times = [
+                now,
+                now + Duration::hours(1),
+                now + Duration::days(1),
+                now + Duration::days(30),
+                now + Duration::days(365),
+            ];
+
+            for &maturation in &maturation_times {
+                let (announcement, _) =
+                    oracle.prepare_announcement(maturation, &mut thread_rng())?;
+
+                // Verify the maturation time is set correctly
+                assert_eq!(
+                    announcement.oracle_event.event_maturity_epoch as i64,
+                    maturation.timestamp(),
+                    "Maturation epoch should match timestamp {}",
+                    maturation
+                );
+
+                // Verify event ID includes the correct timestamp
+                let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+                    + maturation.timestamp().to_string().as_str();
+                assert_eq!(
+                    announcement.oracle_event.event_id,
+                    expected_id,
+                    "Event ID should include timestamp {}",
+                    maturation.timestamp()
+                );
+            }
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        fn test_prepare_announcement_signature_verification(pool: PgPool) -> Result<()> {
+            // Create a test oracle
+            let db = DBconnection(pool);
+            let oracle = create_test_oracle(&db)?;
+
+            // Create a maturation time
+            let maturation = Utc::now() + Duration::hours(1);
+
+            // Prepare announcement
+            let (announcement, _) = oracle.prepare_announcement(maturation, &mut thread_rng())?;
+
+            // Verify the signature
+            let message = Message::from_digest(
+                sha256::Hash::hash(&announcement.oracle_event.encode()).to_byte_array(),
+            );
+
+            // The signature should verify with the oracle's public key
+            SECP.verify_schnorr(
+                &announcement.announcement_signature,
+                &message,
+                &announcement.oracle_public_key,
+            )
+            .expect("Signature verification should succeed");
+
+            Ok(())
+        }
+
+        #[sqlx::test]
+        fn test_prepare_announcement_deterministic_event_id(pool: PgPool) -> Result<()> {
+            // Create a test oracle
+            let db = DBconnection(pool); // For test, we don't need a real DB
+            let oracle = create_test_oracle(&db)?;
+
+            // Create a maturation time
+            let maturation = Utc::now() + Duration::hours(1);
+
+            // Prepare two announcements with the same parameters
+            let mut rng = thread_rng();
+            let (announcement1, _) = oracle.prepare_announcement(maturation, &mut rng)?;
+            let (announcement2, _) = oracle.prepare_announcement(maturation, &mut rng)?;
+
+            // The event IDs should be identical
+            assert_eq!(
+                announcement1.oracle_event.event_id, announcement2.oracle_event.event_id,
+                "Event IDs should be deterministic for the same maturation time"
+            );
+
+            // But the nonces should be different (random)
+            assert_ne!(
+                announcement1.oracle_event.oracle_nonces, announcement2.oracle_event.oracle_nonces,
+                "Nonces should be random between announcements"
+            );
+
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod benchmarks {
+    use super::*;
+    use std::time::Instant;
+
+    type Error = Box<dyn std::error::Error>;
+    type Result<T> = std::result::Result<T, Error>;
+
+    async fn clear_events(db: &DBconnection) -> Result<()> {
+        sqlx::query!("DELETE FROM oracle.digits")
+            .execute(&db.0)
+            .await?;
+        sqlx::query!("DELETE FROM oracle.events")
+            .execute(&db.0)
+            .await?;
+        Ok(())
+    }
+
+    macro_rules! benchmark_all_chunks {
+    ($oracle:expr, $maturations:expr, $( $chunk_size:expr ),*) => {
+        println!("\nBenchmarking create_many_announcements with different chunk sizes:");
+        println!("================================================================");
+
+        $(
+            // Clear the database
+            clear_events(&$oracle.db).await.unwrap();
+
+            let start = Instant::now();
+            $oracle.create_many_announcements::<$chunk_size>($maturations).await.unwrap();
+            let duration = start.elapsed();
+
+            println!(
+                "Chunk size: {:4} | Time: {:?} | Throughput: {:.2} announcements/sec",
+                $chunk_size,
+                duration,
+                $maturations.len() as f64 / duration.as_secs_f64()
+            );
+        )*
+    }
+}
+    #[sqlx::test]
+    #[ignore]
+    async fn benchmark_create_many_announcements(tbd: PgPool) {
+        let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
+        let now = Utc::now();
+
+        // Create test data with 1000 maturations
+        let maturations: Vec<DateTime<Utc>> = (0..1000)
+            .map(|i| now + Duration::new(i * 3600, 0))
+            .collect();
+
+        // Run benchmarks with all chunk sizes
+        benchmark_all_chunks!(
+            oracle,
+            &maturations,
+            10,
+            30,
+            40,
+            50,
+            80,
+            100,
+            120,
+            140,
+            300,
+            400,
+            500
+        );
+    }
 }

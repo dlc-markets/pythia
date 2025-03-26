@@ -6,6 +6,8 @@ use sqlx::{
     Result,
 };
 
+use super::OracleAnnouncementWithSkNonces;
+
 struct EventResponse {
     digits: i32,
     precision: i32,
@@ -31,7 +33,7 @@ struct DigitAttestationResponse {
     signature: Option<Vec<u8>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum ScalarsRecords {
     DigitsSkNonce(Vec<[u8; 32]>),
     DigitsAttestations(f64, Vec<Scalar>),
@@ -42,7 +44,12 @@ struct BoolResponse {
     all_exist: Option<bool>,
 }
 
-#[derive(Clone)]
+#[derive(PartialEq, PartialOrd)]
+pub(super) struct MaturityResponse {
+    pub maturity: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct PostgresResponse {
     pub digits: u16,
     pub precision: u16,
@@ -138,6 +145,121 @@ impl DBconnection {
             }
         }
 
+        Ok(())
+    }
+
+    /// Insert many announcements in postgres DB.
+    /// The announcements must be sorted by event id,
+    /// otherwise it panics before the insert
+    pub(super) async fn insert_many_announcements(
+        &self,
+        announcements_with_sk_nonces_sorted_by_id: &[OracleAnnouncementWithSkNonces],
+    ) -> Result<()> {
+        if announcements_with_sk_nonces_sorted_by_id.is_empty() {
+            return Ok(());
+        }
+
+        // Sanity check that announcements are sorted
+        // if not we panic to not corrupt the database
+        assert!(
+            announcements_with_sk_nonces_sorted_by_id.is_sorted_by(|a, b| a
+                .0
+                .oracle_event
+                .event_id
+                .as_str()
+                <= b.0.oracle_event.event_id.as_str()),
+            "announcements_with_sk_nonces_sorted_by_id must be sorted in ascending order before inserting into database"
+        );
+
+        #[allow(clippy::type_complexity)]
+        let (
+            event_ids,
+            digits_counts,
+            precisions,
+            maturities,
+            announcement_signatures,
+            nonce_publics,
+            nonce_secrets,
+        ): (
+            Vec<String>,
+            Vec<i32>,
+            Vec<i32>,
+            Vec<DateTime<Utc>>,
+            Vec<Vec<u8>>,
+            Vec<_>,
+            Vec<_>,
+        ) = announcements_with_sk_nonces_sorted_by_id
+            .iter()
+            .map(|(announcement, outstanding_sk_nonces)| {
+                let EventDescriptor::DigitDecompositionEvent(ref digit) =
+                    announcement.oracle_event.event_descriptor
+                else {
+                    return Err(sqlx::Error::TypeNotFound {
+                        type_name: "Only DigitDecomposition event type is supported".to_string(),
+                    });
+                };
+                Ok((
+                    announcement.oracle_event.event_id.clone(),
+                    digit.nb_digits as i32,
+                    digit.precision,
+                    DateTime::from_timestamp(
+                        announcement.oracle_event.event_maturity_epoch.into(),
+                        0,
+                    )
+                    .unwrap(),
+                    announcement.announcement_signature.as_ref().to_vec(),
+                    announcement
+                        .oracle_event
+                        .oracle_nonces
+                        .iter()
+                        .map(|x| x.serialize().to_vec()),
+                    outstanding_sk_nonces.iter().map(|x| x.to_vec()),
+                ))
+            })
+            .collect::<Result<_>>()?;
+
+        let query_result = sqlx::query!(
+            "WITH events AS (
+                INSERT INTO oracle.events (id, digits, precision, maturity, announcement_signature) 
+                SELECT * FROM UNNEST($1::VARCHAR[], $2::INT[], $3::INT[], $4::TIMESTAMPTZ[], $5::BYTEA[])
+                ON CONFLICT DO NOTHING
+                RETURNING id, digits
+            ),
+            events_with_offset AS (
+                SELECT id, digits,
+                       SUM(digits) OVER (ORDER BY id) - digits as prev_sum
+                FROM events
+            ),
+            nonces_arrays AS (
+                SELECT array_agg(nonce_public) as nonce_publics,
+                       array_agg(nonce_secret) as nonce_secrets
+                FROM UNNEST($6::BYTEA[], $7::BYTEA[]) as t(nonce_public, nonce_secret)
+            )
+            INSERT INTO oracle.digits (event_id, digit_index, nonce_public, nonce_secret)
+            SELECT 
+                e.id,
+                g.digit_index,
+                (SELECT nonce_publics[e.prev_sum + g.digit_index + 1] FROM nonces_arrays),
+                (SELECT nonce_secrets[e.prev_sum + g.digit_index + 1] FROM nonces_arrays)
+            FROM events_with_offset e
+            CROSS JOIN LATERAL generate_series(0, e.digits - 1) as g(digit_index)
+            ON CONFLICT DO NOTHING
+            ",
+            &event_ids,
+            &digits_counts,
+            &precisions,
+            &maturities,
+            &announcement_signatures,
+            &nonce_publics.into_iter().flatten().collect::<Vec<_>>(),
+            &nonce_secrets.into_iter().flatten().collect::<Vec<_>>(),
+        ).execute(&self.0).await?;
+
+        let affected_raws_counts = query_result.rows_affected();
+
+        trace!(
+            "Rows affected count when inserting announcement: {}",
+            affected_raws_counts
+        );
         Ok(())
     }
 
@@ -370,4 +492,36 @@ impl DBconnection {
                 .collect(),
         ))
     }
+
+    pub(super) async fn get_non_existing_sorted_maturity(
+        &self,
+        maturities: &[DateTime<Utc>],
+    ) -> Result<Vec<DateTime<Utc>>> {
+        let maturity_response = sqlx::query_as!(
+            MaturityResponse,
+            r#"
+            WITH maturity_array AS (
+                SELECT maturity FROM UNNEST($1::TIMESTAMPTZ[]) as maturity
+            )
+            SELECT
+               maturity as "maturity!"
+            FROM
+                maturity_array
+            WHERE NOT EXISTS (
+                SELECT maturity
+                FROM oracle.events
+                WHERE oracle.events.maturity = maturity_array.maturity
+            )
+            ORDER BY maturity
+            ;"#,
+            &maturities
+        )
+        .fetch_all(&self.0)
+        .await?;
+        let maturity_array = maturity_response.into_iter().map(|x| x.maturity).collect();
+        Ok(maturity_array)
+    }
 }
+
+#[cfg(test)]
+mod test;

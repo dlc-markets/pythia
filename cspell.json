@@ -43,6 +43,7 @@
     "pricefeeds",
     "psql",
     "reqwest",
+    "rngs",
     "rustfmt",
     "rustls",
     "schnorrsig",

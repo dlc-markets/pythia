@@ -4,26 +4,31 @@ use chrono::{DateTime, Utc};
 use dlc_messages::oracle_msgs::{
     EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
 };
+use futures::{stream, TryStreamExt};
+use futures_buffered::BufferedStreamExt;
 use lightning::util::ser::Writeable;
 use secp256k1_zkp::{
     hashes::{sha256, Hash},
-    rand::{thread_rng, RngCore},
+    rand::{rngs::ThreadRng, thread_rng, RngCore},
     schnorr::Signature,
     Keypair, Message, XOnlyPublicKey,
 };
 
 use crate::SECP;
+type OracleAnnouncementWithSkNonces = (OracleAnnouncement, Vec<[u8; 32]>);
 
 mod crypto;
 pub(crate) mod error;
 pub(crate) mod postgres;
-
 #[cfg(test)]
 mod test;
 
 use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
 use error::{OracleError, Result};
 use postgres::*;
+/// Number of maturations to process in each batch to prevent database connection pool exhaustion
+/// and maintain optimal performance while processing backlogged announcements
+pub const CHUNK_SIZE: usize = 100;
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
@@ -52,38 +57,25 @@ impl Oracle {
         self.db.is_empty().await
     }
 
-    /// Create an oracle announcement that it will sign the price at given maturity instant
-    pub async fn create_announcement(
+    fn prepare_announcement(
         &self,
         maturation: DateTime<Utc>,
-    ) -> Result<OracleAnnouncement> {
+        rng: &mut ThreadRng,
+    ) -> Result<OracleAnnouncementWithSkNonces> {
         let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
             + maturation.timestamp().to_string().as_str();
-        if let Some(event) = self.db.get_event(&event_id).await? {
-            info!(
-                "Event {} already announced (should be possible only in debug mode or when restarted)",
-                &event_id
-            );
-            return Ok(compute_announcement(self, event));
-        }
         let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let mut sk_nonces = Vec::with_capacity(digits.into());
         let mut nonces = Vec::with_capacity(digits.into());
-        // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
-        '_rng_scope: {
-            let mut rng = thread_rng();
-            for _ in 0..digits {
-                let mut sk_nonce = [0u8; 32];
-                rng.fill_bytes(&mut sk_nonce);
-                let oracle_r_kp =
-                    secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
-                let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
-                sk_nonces.push(sk_nonce);
-                nonces.push(nonce);
-            }
-        } // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
-
+        for _ in 0..digits {
+            let mut sk_nonce = [0u8; 32];
+            rng.fill_bytes(&mut sk_nonce);
+            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
+            let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+            sk_nonces.push(sk_nonce);
+            nonces.push(nonce);
+        }
         let oracle_event = OracleEvent {
             oracle_nonces: nonces,
             event_maturity_epoch: maturation.timestamp() as u32,
@@ -101,14 +93,100 @@ impl Oracle {
             oracle_public_key: self.keypair.public_key().into(),
             oracle_event,
         };
+        Ok((announcement, sk_nonces))
+    }
+
+    /// Prepare announcements for a list of maturities and return them in the same order
+    fn prepare_announcements(
+        &self,
+        maturations: &[DateTime<Utc>],
+    ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
+        let mut rng = thread_rng();
+        maturations
+            .iter()
+            .map(|&maturity| self.prepare_announcement(maturity, &mut rng))
+            .collect()
+    }
+
+    /// Create an oracle announcement that it will sign the price at given maturity instant
+    pub async fn create_announcement(
+        &self,
+        maturation: DateTime<Utc>,
+    ) -> Result<OracleAnnouncement> {
+        // Check if the event was already announced
+        let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
+            + maturation.timestamp().to_string().as_str();
+        if let Some(event) = self.db.get_event(&event_id).await? {
+            info!(
+                "Event {} already announced (should be possible only in debug mode or when restarted)",
+                &event_id
+            );
+            return Ok(compute_announcement(self, event));
+        }
+
+        let (announcement, sk_nonces) = self.prepare_announcement(maturation, &mut thread_rng())?;
+
         self.db
             .insert_announcement(&announcement, sk_nonces)
             .await?;
+
         debug!("created oracle announcement with maturation {}", maturation);
 
         trace!("announcement {:#?}", &announcement);
 
         Ok(announcement)
+    }
+
+    pub async fn create_many_announcements<const CHUNK_SIZE: usize>(
+        &self,
+        maturations: &[DateTime<Utc>],
+    ) -> Result<()> {
+        // Get the maturities that were not announced
+        let non_existing_sorted_maturations = self
+            .db
+            .get_non_existing_sorted_maturity(maturations)
+            .await?;
+
+        // Check if all the events were already announced
+        if non_existing_sorted_maturations.is_empty() {
+            info!(
+                "The {} maturations are already announced",
+                maturations.len()
+            );
+            return Ok(());
+        }
+
+        // Create a stream that divides pending maturations into chunks
+        // Each chunk is mapped to an async operation that processes the maturations with all oracles
+        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
+            async |processing_mats| {
+                let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
+                // The announcements are already sorted because processing_mats is a chunk
+                // of the already sorted by postgres non_existing_sorted_maturations vector
+                // and prepare_announcements return announcements in the same order as maturities
+                self.db
+                    .insert_many_announcements(&announcements_with_sk_nonces)
+                    .await?;
+
+                debug!(
+                    "created oracle announcements with maturation {:?}",
+                    processing_mats
+                );
+                trace!(
+                    "announcements {:#?}",
+                    &announcements_with_sk_nonces
+                        .into_iter()
+                        .map(|(announcement, _)| announcement)
+                        .collect::<Vec<_>>()
+                );
+                Ok(())
+            },
+        ));
+
+        // buffer_unordered allows a maximum of 2 chunks being processed concurrently.
+        // This helps prevent database connection pool exhaustion while maintaining throughput.
+        // Process all chunks in any order and return any error.
+        chunks_stream.buffered_unordered(2).try_collect().await
     }
 
     /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.

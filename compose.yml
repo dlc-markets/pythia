@@ -6,7 +6,7 @@ x-defaults: &defaults
   environment: &environment
     POSTGRES_PASSWORD: postgres
     POSTGRES_USER: postgres
-    POSTGRES_DB: postgres
+    POSTGRES_DB: pythia
     POSTGRES_HOST: postgres
 
   logging:

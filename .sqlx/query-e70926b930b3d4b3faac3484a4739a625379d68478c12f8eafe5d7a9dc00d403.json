@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM oracle.digits",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "e70926b930b3d4b3faac3484a4739a625379d68478c12f8eafe5d7a9dc00d403"
+}

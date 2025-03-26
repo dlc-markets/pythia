@@ -45,9 +45,18 @@ cron = "0.12.0"
 serde_with = "3.4.0"
 actix-utils = "3.0.1"
 time = "0.3.36"
+futures = "0.3.31"
+futures-buffered = "0.2.11"
 
 [dev-dependencies]
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
     "serde",
 ] }
 strum = { version = "0.25.0", features = ["strum_macros", "derive"] }
+sqlx = { version = "0.7.3", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "macros",
+    "migrate",
+] }

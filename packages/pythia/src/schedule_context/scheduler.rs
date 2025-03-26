@@ -1,9 +1,13 @@
 use chrono::{Duration as ChronoDuration, Utc};
-use std::{sync::Arc, time::Duration};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContextInner};
-use crate::{api::EventNotification, error::PythiaError};
+use crate::{
+    api::EventNotification,
+    error::PythiaError,
+    oracle::{error::OracleError, CHUNK_SIZE},
+};
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler
 /// Its context also include the channel receiver endpoint to broadcast announcements/attestations
@@ -55,7 +59,21 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         .map(move |date| date - context.offset_duration);
 
     let announcement_thread = async move {
+        // Vector to store maturation dates that need to be processed in batches
+        // Used to accumulate announcements when events have already matured or are imminent
+        // This batching approach improves performance by reducing database operations
+        let mut pending_maturations = Vec::new();
+
+        // Channel to communicate errors from spawned tasks back to the main thread
+        // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
+        let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
+
         for next_time in announcement_scheduled_dates {
+            // Check for errors from previous tasks and reset the channel
+            // If previous tasks encountered an error, propagate it
+            error_state
+                .replace(Ok(()))
+                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -66,21 +84,53 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                     &duration,
                     next_time + context.offset_duration
                 );
+
+                if !pending_maturations.is_empty() {
+                    info!(
+                        "Pending maybe_std_durations size: {:?}",
+                        pending_maturations.len()
+                    );
+                    let oracle_context_processor = oracle_context.clone();
+                    let error_chan = error_state.clone();
+                    // We spawn a detached task to process missed announcements in the background
+                    actix::spawn(async move {
+                        for oracle in oracle_context_processor.oracles.values() {
+                            // Collect all processed chunks and store any errors in the error channel
+                            if let result @ Err(_) = oracle
+                                .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
+                                .await
+                            {
+                                error_chan.set(result)
+                            };
+                        }
+                        info!("Oracle announcements are in sync");
+                    });
+
+                    // Reinitialize the pending maturations vector to avoid borrowing issues
+                    pending_maturations = Vec::new();
+                }
+
                 sleep(duration).await;
-            };
 
-            for (_, oracle) in oracle_context.oracles.iter() {
-                let perhaps_announcement = oracle
-                    .create_announcement(next_time + context.offset_duration)
-                    .await;
+                for oracle in oracle_context.oracles.values() {
+                    let perhaps_announcement = oracle
+                        .create_announcement(next_time + context.offset_duration)
+                        .await;
 
-                // To avoid flooding the websocket with announcements when starting we only broadcast the announcement if we had to sleep
-                if maybe_std_duration.is_ok() {
+                    // To avoid flooding the websocket with announcements when starting. We only broadcast the announcement created after the sleep function
                     cloned_event_tx
                         .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
                         .expect("usable channel");
                 }
-            }
+            } else {
+                // We accumulate announcements in a vector to avoid frequent individual database insertions.
+                // When (next_time - Utc::now()) is negative, it means the event has already matured or is
+                // imminent, so we continue accumulating announcements rather than inserting them immediately.
+                // Once (next_time - Utc::now()) becomes non-negative (future events), we perform a bulk
+                // insertion of all accumulated announcements into the PostgreSQL database with a single query
+                // for better performance.
+                pending_maturations.push(next_time + context.offset_duration);
+            };
         }
         unreachable!("Cron schedule can be consumed only after 2100")
     };
@@ -92,7 +142,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 sleep(duration).await;
             };
 
-            for (_, oracle) in cloned_oracle_context.oracles.iter() {
+            for oracle in cloned_oracle_context.oracles.values() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 
