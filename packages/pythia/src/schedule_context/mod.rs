@@ -36,11 +36,16 @@ pub(super) fn create_contexts(
     let channel_size = 2 * oracle_context.oracles.len();
     let (channel_sender, channel_receiver) = channel::<EventNotification>(channel_size);
     Ok((
-        SchedulerContext::new(oracle_context.clone(), offset_duration, channel_sender)?,
+        SchedulerContext::new(
+            oracle_context.clone(),
+            offset_duration,
+            channel_sender.clone(),
+        )?,
         ApiContext {
             oracle_context,
             offset_duration,
             channel_receiver,
+            channel_sender,
         },
     ))
 }

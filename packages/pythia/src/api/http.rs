@@ -204,6 +204,21 @@ pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Re
         .force_new_attest_with_price(timestamp.with_timezone(&Utc), price)
         .await
         .map_err(PythiaApiError::OracleFail)?;
+
+    let event_id: String = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
+        + timestamp.timestamp().to_string().as_str();
+
+    // Send event notification through the broadcast channel
+    let event_tx = context.channel_sender.clone();
+    let _ = event_tx.send(
+        (
+            oracle.asset_pair_info.asset_pair,
+            attestation.clone(),
+            event_id.into_boxed_str(),
+        )
+            .into(),
+    );
+
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
         attestation: AttestationResponse {
