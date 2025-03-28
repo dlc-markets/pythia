@@ -112,7 +112,7 @@ impl Actor for PythiaWebSocket {
         self.hb(ctx);
         // Attach the stream of event produced by the schedulers to the websocket
         ctx.add_stream(BroadcastStream::from(
-            self.api_context.channel_receiver.resubscribe(),
+            self.api_context.channel_sender.subscribe(),
         ));
     }
 }

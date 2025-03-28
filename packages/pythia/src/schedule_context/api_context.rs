@@ -7,7 +7,7 @@ use actix_web::{
 };
 use chrono::Duration;
 use cron::Schedule;
-use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::sync::broadcast::Sender;
 
 use crate::{api::EventNotification, oracle::Oracle};
 
@@ -19,7 +19,6 @@ use super::{AssetPair, OracleContextInner};
 pub(crate) struct ApiContext {
     pub(super) oracle_context: Arc<OracleContextInner>,
     pub(crate) offset_duration: Duration,
-    pub(crate) channel_receiver: Receiver<EventNotification>,
     pub(crate) channel_sender: Sender<EventNotification>,
 }
 
@@ -45,7 +44,6 @@ impl Clone for ApiContext {
         Self {
             oracle_context: Arc::clone(&self.oracle_context),
             offset_duration: self.offset_duration,
-            channel_receiver: self.channel_receiver.resubscribe(),
             channel_sender: self.channel_sender.clone(),
         }
     }

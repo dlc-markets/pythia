@@ -34,7 +34,7 @@ pub(super) fn create_contexts(
     // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
     // at the same time (if offset is a multiple of the attestation frequency schedule)
     let channel_size = 2 * oracle_context.oracles.len();
-    let (channel_sender, channel_receiver) = channel::<EventNotification>(channel_size);
+    let (channel_sender, _) = channel::<EventNotification>(channel_size);
     Ok((
         SchedulerContext::new(
             oracle_context.clone(),
@@ -44,7 +44,6 @@ pub(super) fn create_contexts(
         ApiContext {
             oracle_context,
             offset_duration,
-            channel_receiver,
             channel_sender,
         },
     ))
