@@ -209,15 +209,17 @@ pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Re
         + timestamp.timestamp().to_string().as_str();
 
     // Send event notification through the broadcast channel
-    let event_tx = context.channel_sender.clone();
-    let _ = event_tx.send(
-        (
-            oracle.asset_pair_info.asset_pair,
-            attestation.clone(),
-            event_id.into_boxed_str(),
+    context
+        .channel_sender
+        .send(
+            (
+                oracle.asset_pair_info.asset_pair,
+                attestation.clone(),
+                event_id.into_boxed_str(),
+            )
+                .into(),
         )
-            .into(),
-    );
+        .expect("no error as a receiver exists in ApiContext");
 
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
