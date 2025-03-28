@@ -161,7 +161,10 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                             )
                             .expect("usable channel");
                     }
-                    Ok(None) => debug!("Already attested: {}", event_id),
+                    Ok(None) => error!(
+                        "The oracle scheduler failed to attest: {}: no announcement found",
+                        event_id
+                    ),
                     Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
                 }
             }
