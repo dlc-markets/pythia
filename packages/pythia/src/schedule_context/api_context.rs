@@ -7,7 +7,7 @@ use actix_web::{
 };
 use chrono::Duration;
 use cron::Schedule;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::{Receiver, Sender};
 
 use crate::{api::EventNotification, oracle::Oracle};
 
@@ -15,10 +15,12 @@ use super::{AssetPair, OracleContextInner};
 
 /// The API has shared ownership of the running oracles and schedule configuration file with the scheduler.
 /// This context also includes the channel receiver endpoint to broadcast announcements/attestations
+/// and the channel sender to send events to the websocket (only used when forcing attestations in debug mode).
 pub(crate) struct ApiContext {
     pub(super) oracle_context: Arc<OracleContextInner>,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_receiver: Receiver<EventNotification>,
+    pub(crate) channel_sender: Sender<EventNotification>,
 }
 
 impl ApiContext {
@@ -44,6 +46,7 @@ impl Clone for ApiContext {
             oracle_context: Arc::clone(&self.oracle_context),
             offset_duration: self.offset_duration,
             channel_receiver: self.channel_receiver.resubscribe(),
+            channel_sender: self.channel_sender.clone(),
         }
     }
 }
