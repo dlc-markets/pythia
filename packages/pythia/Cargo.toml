@@ -27,7 +27,7 @@ reqwest = { version = "0.11.10", features = ["json"] }
 secp256k1-zkp = { version = "0.11.0", features = ["rand-std", "serde"] }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
-sqlx = { version = "0.7.3", features = [
+sqlx = { version = "0.8.3", features = [
     "runtime-tokio-rustls",
     "postgres",
     "chrono",
@@ -53,7 +53,7 @@ dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master
     "serde",
 ] }
 strum = { version = "0.25.0", features = ["strum_macros", "derive"] }
-sqlx = { version = "0.7.3", features = [
+sqlx = { version = "0.8.3", features = [
     "runtime-tokio-rustls",
     "postgres",
     "chrono",
