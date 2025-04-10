@@ -118,9 +118,11 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         .await;
 
                     // To avoid flooding the websocket with announcements when starting. We only broadcast the announcement created after the sleep function
-                    cloned_event_tx
-                        .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
-                        .expect("usable channel");
+                    if Sender::receiver_count(&cloned_event_tx) != 0 {
+                        cloned_event_tx
+                            .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
+                            .expect("usable channel");
+                    }
                 }
             } else {
                 // We accumulate announcements in a vector to avoid frequent individual database insertions.
@@ -150,16 +152,18 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
 
                 match perhaps_attestation {
                     Ok(Some(attestation)) => {
-                        event_tx
-                            .send(
-                                (
-                                    oracle.asset_pair_info.asset_pair,
-                                    attestation,
-                                    event_id.into_boxed_str(),
+                        if Sender::receiver_count(&event_tx) != 0 {
+                            event_tx
+                                .send(
+                                    (
+                                        oracle.asset_pair_info.asset_pair,
+                                        attestation,
+                                        event_id.into_boxed_str(),
+                                    )
+                                        .into(),
                                 )
-                                    .into(),
-                            )
-                            .expect("usable channel");
+                                .expect("usable channel");
+                        }
                     }
                     Ok(None) => error!(
                         "The oracle scheduler failed to attest: {}: no announcement found",
