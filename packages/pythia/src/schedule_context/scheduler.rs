@@ -1,5 +1,5 @@
 use chrono::{Duration as ChronoDuration, Utc};
-use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::Cell, rc::Rc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContextInner};
@@ -9,21 +9,21 @@ use crate::{
     oracle::{error::OracleError, CHUNK_SIZE},
 };
 
-/// The API has shared ownership of the running oracles and schedule configuration file with the scheduler
-/// Its context also include the channel receiver endpoint to broadcast announcements/attestations
+/// The Scheduler holds a static reference to the running oracles and schedule configuration file with the API
+/// Its context also includes the channel sender endpoint to broadcast announcements/attestations to websockets.
 pub(crate) struct SchedulerContext {
-    oracle_context: Arc<OracleContextInner>,
+    oracle_context: OracleContextInner<'static>,
     offset_duration: Duration,
     channel_sender: Sender<EventNotification>,
 }
 
 impl SchedulerContext {
     pub(super) fn new(
-        oracle_context: Arc<OracleContextInner>,
+        oracle_context: OracleContextInner<'static>,
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
     ) -> Result<Self, PythiaContextError> {
-        // This is to prevent an eventual UB produced in start_schedule by reaching "unreachable" marked code
+        // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
         // The configured cron schedule may not produce a value although it is correctly parsed
         // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
         oracle_context.schedule.upcoming(Utc).next().ok_or(
@@ -44,7 +44,6 @@ impl SchedulerContext {
 /// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), PythiaError> {
     let oracle_context = context.oracle_context;
-    let cloned_oracle_context = Arc::clone(&oracle_context);
     let event_tx = context.channel_sender;
 
     // start event creation task
@@ -90,11 +89,10 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
-                    let oracle_context_processor = oracle_context.clone();
                     let error_chan = error_state.clone();
                     // We spawn a detached task to process missed announcements in the background
                     actix::spawn(async move {
-                        for oracle in oracle_context_processor.oracles.values() {
+                        for oracle in oracle_context.oracles.values() {
                             // Collect all processed chunks and store any errors in the error channel
                             if let result @ Err(_) = oracle
                                 .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
@@ -144,7 +142,7 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
                 sleep(duration).await;
             };
 
-            for oracle in cloned_oracle_context.oracles.values() {
+            for oracle in oracle_context.oracles.values() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 
