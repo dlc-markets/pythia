@@ -34,7 +34,7 @@ impl ApiContext {
 
     /// Get the schedule
     pub(crate) fn schedule(&self) -> &Schedule {
-        &self.oracle_context.schedule
+        self.oracle_context.schedule
     }
 }
 
