@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use actix_utils::future::{err, ok, Ready};
 use actix_web::{
     error::{Error, ErrorInternalServerError},
@@ -13,11 +11,12 @@ use crate::{api::EventNotification, oracle::Oracle};
 
 use super::{AssetPair, OracleContextInner};
 
-/// The API has shared ownership of the running oracles and schedule configuration file with the scheduler.
+/// The API holds a static reference to the running oracles and schedule configuration file with the scheduler.
 /// This context also includes the channel receiver endpoint to broadcast announcements/attestations
 /// and the channel sender to send events to the websocket (only used when forcing attestations in debug mode).
+#[derive(Clone)]
 pub(crate) struct ApiContext {
-    pub(super) oracle_context: Arc<OracleContextInner>,
+    pub(super) oracle_context: OracleContextInner<'static>,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_sender: Sender<EventNotification>,
 }
@@ -35,17 +34,7 @@ impl ApiContext {
 
     /// Get the schedule
     pub(crate) fn schedule(&self) -> &Schedule {
-        &self.oracle_context.schedule
-    }
-}
-
-impl Clone for ApiContext {
-    fn clone(&self) -> Self {
-        Self {
-            oracle_context: Arc::clone(&self.oracle_context),
-            offset_duration: self.offset_duration,
-            channel_sender: self.channel_sender.clone(),
-        }
+        self.oracle_context.schedule
     }
 }
 

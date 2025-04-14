@@ -51,7 +51,7 @@ async fn main() -> Result<(), PythiaError> {
 
     // Setup one oracle for each asset pair found in configuration file
 
-    let oracles: HashMap<AssetPair, Oracle> = config
+    let oracles = config
         .iter()
         .map(|asset_pair_info| asset_pair_info.asset_pair)
         .zip(config.iter().cloned().map(|asset_pair_info| {
@@ -68,8 +68,12 @@ async fn main() -> Result<(), PythiaError> {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    let (scheduler_context, api_context) =
-        schedule_context::create_contexts(oracles, oracle_scheduler_config)?;
+    // We leak the oracles and scheduler config as they will be used
+    // until the end of the program by the API and Scheduler contexts.
+    let (scheduler_context, api_context) = schedule_context::create_contexts(
+        Box::leak(Box::new(oracles)),
+        Box::leak(Box::new(oracle_scheduler_config)),
+    )?;
 
     // Spawn oracle events scheduler (announcements/attestations) and API
     // using the channel receiver for websocket.
