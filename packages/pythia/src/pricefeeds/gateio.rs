@@ -37,6 +37,15 @@ impl PriceFeed for GateIo {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
-        Ok(res[0][5].as_str().unwrap().parse().unwrap())
+        Ok(res[0][5]
+            .as_str()
+            .ok_or(PriceFeedError::Server(format!(
+                "Failed to parse price from gate.io: expect a string, got {:#?}",
+                res[0][5]
+            )))?
+            .parse()
+            .map_err(|e| {
+                PriceFeedError::Server(format!("Failed to parse price from gate.io: {e}"))
+            })?)
     }
 }

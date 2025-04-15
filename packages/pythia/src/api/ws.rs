@@ -11,7 +11,7 @@ use super::{EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
     config::AssetPair,
-    oracle::Oracle,
+    oracle::{error::OracleError, Oracle},
     schedule_context::api_context::ApiContext,
 };
 
@@ -117,18 +117,23 @@ impl Actor for PythiaWebSocket {
     }
 }
 
-async fn future_oracle_state(oracle: Oracle, request: GetRequest) -> Option<EventData> {
-    let state = oracle.oracle_state(&request.event_id).await.unwrap();
-    match (request.asset_pair.ty, state) {
-        (EventType::Announcement, Some((announcement, _))) => {
-            Some(EventData::Announcement(announcement))
-        }
-        (EventType::Attestation, Some((_, Some(attestation)))) => Some(EventData::Attestation(
-            Some((request.event_id, attestation).into()),
-        )),
-        (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
-        (_, None) => None,
-    }
+async fn future_oracle_state(
+    oracle: Oracle,
+    request: GetRequest,
+) -> Result<Option<EventData>, OracleError> {
+    oracle
+        .oracle_state(&request.event_id)
+        .await
+        .map(|state| match (request.asset_pair.ty, state) {
+            (EventType::Announcement, Some((announcement, _))) => {
+                Some(EventData::Announcement(announcement))
+            }
+            (EventType::Attestation, Some((_, Some(attestation)))) => Some(EventData::Attestation(
+                Some((request.event_id, attestation).into()),
+            )),
+            (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
+            (_, None) => None,
+        })
 }
 
 /// Handler for `ws::Message`
@@ -209,13 +214,22 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket {
                 };
 
                 // https://stackoverflow.com/questions/72068485/how-use-postgres-deadpool-postgres-with-websocket-actix-actix-web-actors
-                let fut = wrap_future::<_, Self>(future_state);
-                let fut = fut.map(move |result, _actor, ctx| {
-                    ctx.text(
-                        to_string_pretty(&jsonrpc_event_response(&request, result))
-                            .expect("JSONRPC Response can always be parsed"),
+                let fut =
+                    wrap_future::<_, Self>(future_state).map(
+                        move |result, _actor, ctx| match result {
+                            Ok(result) => ctx.text(
+                                to_string_pretty(&jsonrpc_event_response(&request, result))
+                                    .expect("JSONRPC Response can always be parsed"),
+                            ),
+                            Err(e) => ctx.text(
+                                to_string_pretty(&jsonrpc_error_response(
+                                    &request,
+                                    Some(e.to_string()),
+                                ))
+                                .expect("JSONRPC Response can always be parsed"),
+                            ),
+                        },
                     );
-                });
                 ctx.spawn(fut);
                 // future_state.into_actor(self).spawn(ctx);
             }
@@ -296,11 +310,9 @@ fn jsonrpc_event_response(
 
 fn jsonrpc_error_response(
     request: &JRpcRequest,
-    error: Option<serde_json::error::Error>,
+    error: Option<String>,
 ) -> json_rpc_types::Response<Box<str>, Box<str>, Box<str>> {
-    let error = error
-        .map(|e| e.to_string())
-        .unwrap_or("method unknown or no oracle set for this asset pair".to_owned());
+    let error = error.unwrap_or("method unknown or no oracle set for this asset pair".to_owned());
     json_rpc_types::Response {
         jsonrpc: json_rpc_types::Version::V2,
         payload: Err(json_rpc_types::Error {

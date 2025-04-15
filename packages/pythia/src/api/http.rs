@@ -83,9 +83,12 @@ pub(super) async fn oracle_event_service(
         Some(val) => val,
     };
 
-    (!oracle.is_empty().await)
-        .then_some(())
-        .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
+    (!oracle
+        .is_empty()
+        .await
+        .map_err(PythiaApiError::OracleFail)?)
+    .then_some(())
+    .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
     let event_id = (oracle.asset_pair_info.asset_pair.to_string()
         + &timestamp.timestamp().to_string())
@@ -147,7 +150,11 @@ pub(super) async fn oracle_batch_announcements_service(
         .get_oracle(&asset_pair)
         .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
 
-    if oracle.is_empty().await {
+    if oracle
+        .is_empty()
+        .await
+        .map_err(PythiaApiError::OracleFail)?
+    {
         info!("no oracle events found");
         return Err(PythiaApiError::OracleEventNotFoundError(
             "Oracle did not announce anything".to_string(),
@@ -162,9 +169,12 @@ pub(super) async fn oracle_batch_announcements_service(
         .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
         .collect::<Vec<_>>();
 
-    (!oracle.is_empty().await)
-        .then_some(())
-        .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
+    (!oracle
+        .is_empty()
+        .await
+        .map_err(PythiaApiError::OracleFail)?)
+    .then_some(())
+    .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
     let announcements = oracle
         .oracle_many_announcements(events_ids)
