@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, Error, HttpResponse, Result};
+use actix_web::{web, Error, HttpResponse, Result};
 use chrono::{DateTime, FixedOffset, Utc};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, EventType},
     config::{AssetPair, ConfigResponse},
-    schedule_context::api_context::ApiContext,
+    schedule_context::{api_context::ApiContext, OracleContext},
 };
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct AssetPairFilters {
+pub(super) struct AssetPairFilters {
     asset_pair: AssetPair,
 }
 
@@ -31,9 +31,12 @@ struct ApiOraclePubKey {
 //     outcome: Option<u64>,
 // }
 
-#[get("/oracle/publickey")]
-pub(super) async fn pub_key(
-    context: ApiContext,
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[get("/oracle/publickey")]
+/// Get the public key of the oracle for the given asset pair
+/// with request: `GET /oracle/publickey`
+pub(super) async fn pub_key<Context: OracleContext>(
+    context: ApiContext<Context>,
     filters: web::Query<AssetPairFilters>,
 ) -> Result<HttpResponse> {
     info!("GET /oracle/publickey");
@@ -47,15 +50,23 @@ pub(super) async fn pub_key(
     Ok(HttpResponse::Ok().json(res))
 }
 
-#[get("/assets")]
-pub(super) async fn asset_return(context: ApiContext) -> Result<HttpResponse> {
-    info!("GET /oracle/assets");
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[get("/assets")]
+/// Get the list of asset pairs supported by the oracle
+/// with request: `GET /assets`
+pub(super) async fn asset_return<Context: OracleContext>(
+    context: ApiContext<Context>,
+) -> Result<HttpResponse> {
+    info!("GET /assets");
     Ok(HttpResponse::Ok().json(context.asset_pairs().collect::<Box<[_]>>()))
 }
 
-#[get("/asset/{asset_id}/config")]
-pub(super) async fn config(
-    context: ApiContext,
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[get("/asset/{asset_id}/config")]
+/// Get the configuration of the oracle for the given asset pair
+/// with request: `GET /asset/{asset_id}/config`
+pub(super) async fn config<Context: OracleContext>(
+    context: ApiContext<Context>,
     path: web::Path<AssetPair>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
@@ -70,9 +81,12 @@ pub(super) async fn config(
     }))
 }
 
-#[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
-pub(super) async fn oracle_event_service(
-    context: ApiContext,
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[get("/asset/{asset_pair}/{event_type}/{rfc3339_time}")]
+/// Get the announcement/attestation of the oracle for the given asset pair and timestamp
+/// with request: `GET /asset/{asset_pair}/{event_type}/{rfc3339_time}`
+pub(super) async fn oracle_event_service<Context: OracleContext>(
+    context: ApiContext<Context>,
     path: web::Path<(AssetPair, EventType, DateTime<FixedOffset>)>,
 ) -> Result<HttpResponse> {
     let (asset_pair, event_type, timestamp) = path.into_inner();
@@ -133,13 +147,18 @@ pub(super) async fn oracle_event_service(
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BatchAnnouncementsRequest {
+pub(super) struct BatchAnnouncementsRequest {
     maturities: Vec<DateTime<FixedOffset>>,
 }
 
-#[post("/asset/{asset_pair}/announcements/batch")]
-pub(super) async fn oracle_batch_announcements_service(
-    context: ApiContext,
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[post("/asset/{asset_pair}/announcements/batch")]
+/// Gets the announcements from the oracle for all timestamps of the given asset pair
+/// with request: `POST /asset/{asset_pair}/announcements/batch`
+/// Body must be a JSON with a field `maturities` that is an array of timestamps
+/// The response is a JSON array of announcements sorted by timestamp
+pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
+    context: ApiContext<Context>,
     path: web::Path<AssetPair>,
     data: web::Json<BatchAnnouncementsRequest>,
 ) -> Result<HttpResponse> {
@@ -185,20 +204,35 @@ pub(super) async fn oracle_batch_announcements_service(
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct ForceData {
+pub(super) struct ForceData {
     maturation: String,
     price: f64,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ForceResponse {
+pub(super) struct ForceResponse {
     announcement: OracleAnnouncement,
     attestation: AttestationResponse,
 }
 
-#[post("/force")]
-pub(super) async fn force(data: web::Json<ForceData>, context: ApiContext) -> Result<HttpResponse> {
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[post("/force")]
+/// Forces the oracle to attest a new value for the given asset pair
+/// with request: `POST /force`
+/// Body must be a JSON with the following fields:
+/// - `maturation`: the timestamp of the announcement
+/// - `price`: the price for the attestation
+///
+/// The response is a JSON with the following fields:
+/// - `announcement`: the produced announcement from the oracle
+/// - `attestation`: the produced attestation from the oracle
+///
+/// The response is also sent to currently connected WebSocket clients
+pub(super) async fn force<Context: OracleContext>(
+    data: web::Json<ForceData>,
+    context: ApiContext<Context>,
+) -> Result<HttpResponse> {
     info!("POST /force");
     let ForceData { maturation, price } = data.0;
 

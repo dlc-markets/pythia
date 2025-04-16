@@ -9,37 +9,37 @@ use tokio::sync::broadcast::Sender;
 
 use crate::{api::EventNotification, oracle::Oracle};
 
-use super::{AssetPair, OracleContextInner};
+use super::{AssetPair, OracleContext};
 
-/// The API holds a static reference to the running oracles and schedule configuration file with the scheduler.
-/// This context also includes the channel receiver endpoint to broadcast announcements/attestations
-/// and the channel sender to send events to the websocket (only used when forcing attestations in debug mode).
+/// The API holds a reference to the running oracles and schedule configuration file shared with the scheduler.
+/// This context also includes the channel receiver endpoint for broadcasting announcements/attestations,
+/// and the channel sender for sending events to websockets (only used when forcing attestations in debug mode).
 #[derive(Clone)]
-pub(crate) struct ApiContext {
-    pub(super) oracle_context: OracleContextInner<'static>,
+pub(crate) struct ApiContext<Context> {
+    pub(super) oracle_context: Context,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_sender: Sender<EventNotification>,
 }
 
-impl ApiContext {
+impl<Context: OracleContext> ApiContext<Context> {
     /// Get iterator over AssetPairs
     pub(crate) fn asset_pairs(&self) -> impl Iterator<Item = &AssetPair> {
-        self.oracle_context.oracles.keys()
+        self.oracle_context.borrow().oracles.keys()
     }
 
     /// Get the oracle for the given asset pair
     pub(crate) fn get_oracle(&self, asset_pair: &AssetPair) -> Option<&Oracle> {
-        self.oracle_context.oracles.get(asset_pair)
+        self.oracle_context.borrow().oracles.get(asset_pair)
     }
 
     /// Get the schedule
     pub(crate) fn schedule(&self) -> &Schedule {
-        self.oracle_context.schedule
+        &self.oracle_context.borrow().schedule
     }
 }
 
 /// The ApiContext must be made available when the app is responding to request
-impl FromRequest for ApiContext {
+impl<Context: OracleContext + Clone + 'static> FromRequest for ApiContext<Context> {
     type Error = Error;
 
     type Future = Ready<Result<Self, Error>>;
@@ -48,8 +48,8 @@ impl FromRequest for ApiContext {
         req: &actix_web::HttpRequest,
         _payload: &mut actix_web::dev::Payload,
     ) -> Self::Future {
-        if let Some(st) = req.app_data::<ApiContext>() {
-            ok(st.clone())
+        if let Some(st) = req.app_data::<ApiContext<Context>>() {
+            ok(st.to_owned())
         } else {
             log::info!(
                 "Failed to construct App-level Data extractor. \

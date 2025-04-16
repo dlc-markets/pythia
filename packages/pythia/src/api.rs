@@ -10,7 +10,10 @@ use error::PythiaApiError;
 mod http;
 mod ws;
 
-use crate::{config::AssetPair, schedule_context::api_context::ApiContext};
+use crate::{
+    config::AssetPair,
+    schedule_context::{api_context::ApiContext, OracleContext},
+};
 
 #[derive(PartialEq, Deserialize, Clone)]
 struct EventChannel {
@@ -47,29 +50,44 @@ pub(crate) enum EventNotification {
     Attestation(AssetPair, AttestationResponse),
 }
 
-/// Build the actix-web App from the context and serve oracle events on the chosen port. It has scope "/v1".
-/// It features an http server and a websocket that allow to subscribe to new announcements or attestations of an asset-pair.
-pub async fn run_api_v1(
-    context: ApiContext,
+/// Builds the actix-web App from the context and serves oracle events on the chosen port. It has scope "/v1".
+/// It features an HTTP server and a WebSocket that allows subscribing to new announcements or attestations of an asset pair.
+///
+/// Note that the `Context` is required to be `'static`, `Clone` and `Send`.
+/// Arc or leak it to satisfy the bounds without cloning the `Context`.
+pub async fn run_api_v1<Context>(
+    context: ApiContext<Context>,
     port: u16,
     debug_mode: bool,
-) -> Result<(), PythiaApiError> {
+) -> Result<(), PythiaApiError>
+where
+    Context: OracleContext + Clone + Send + Unpin + 'static,
+{
     HttpServer::new(move || {
         let mut factory = web::scope("/v1")
             // .service(announcements)
-            .service(http::oracle_event_service)
-            .service(http::config)
-            .service(http::pub_key)
-            .service(http::asset_return)
-            .service(http::oracle_batch_announcements_service)
-            .service(ws::websocket);
+            .route(
+                "/asset/{asset_pair}/{event_type}/{rfc3339_time}",
+                web::get().to(http::oracle_event_service::<Context>),
+            )
+            .route(
+                "/asset/{asset_id}/config",
+                web::get().to(http::config::<Context>),
+            )
+            .route("/oracle/publickey", web::get().to(http::pub_key::<Context>))
+            .route("/assets", web::get().to(http::asset_return::<Context>))
+            .route(
+                "/asset/{asset_pair}/announcements/batch",
+                web::post().to(http::oracle_batch_announcements_service::<Context>),
+            )
+            .route("/ws", web::get().to(ws::websocket::<Context>));
         if debug_mode {
-            factory = factory.service(http::force)
+            factory = factory.route("/force", web::post().to(http::force::<Context>));
         }
 
         App::new()
             .wrap(Cors::permissive())
-            .app_data(context.clone())
+            .app_data(context.to_owned())
             .service(factory)
     })
     .bind(("0.0.0.0", port))
