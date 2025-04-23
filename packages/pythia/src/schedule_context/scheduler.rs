@@ -70,9 +70,11 @@ pub(crate) async fn start_schedule(context: SchedulerContext) -> Result<(), Pyth
         for next_time in announcement_scheduled_dates {
             // Check for errors from previous tasks and reset the channel
             // If previous tasks encountered an error, propagate it
-            error_state
-                .replace(Ok(()))
-                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
+            drop(
+                error_state
+                    .replace(Ok(()))
+                    .inspect_err(|e| error!("Error in announcement thread: {}", e)),
+            );
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
