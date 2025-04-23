@@ -66,6 +66,20 @@ impl PriceFeed for Bitstamp {
             )));
         }
 
-        Ok(res.data.unwrap().ohlc[0].open.parse().unwrap())
+        Ok(res
+            .data
+            .ok_or(PriceFeedError::Server(
+                "Failed to parse price from bitstamp: no data field".to_string(),
+            ))?
+            .ohlc
+            .first()
+            .ok_or(PriceFeedError::Server(
+                "Failed to parse price from bitstamp: no ohlc found".to_string(),
+            ))?
+            .open
+            .parse()
+            .map_err(|e| {
+                PriceFeedError::Server(format!("Failed to parse price from bitstamp: {e}"))
+            })?)
     }
 }
