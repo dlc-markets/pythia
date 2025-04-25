@@ -7,11 +7,6 @@ if [[ -z "${REGISTRY}" ]]; then
   exit 1
 fi
 
-if [[ -z "${PROJECT}" ]]; then
-  echo "PROJECT is not set"
-  exit 1
-fi
-
 if [[ -z "${NAME}" ]]; then
   echo "NAME is not set"
   exit 1
@@ -20,7 +15,7 @@ fi
 BAKE_META_PATH=/tmp/bake-meta.json
 DIGESTS_FOLDER=/tmp/digests
 
-export SLUG=${REGISTRY}/${PROJECT}/${NAME}
+export SLUG=${REGISTRY}/${NAME}
 
 ls -la $DIGESTS_FOLDER
 

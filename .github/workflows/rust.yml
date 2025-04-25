@@ -15,11 +15,10 @@ permissions:
   contents: read
   packages: write
   actions: write
+  id-token: write
 
 env:
   SQLX_OFFLINE: 'true'
-  PROJECT: dlc-markets
-  NAME: pythia
 
 jobs:
   check:
@@ -40,13 +39,15 @@ jobs:
   # https://docs.docker.com/build/ci/github-actions/multi-platform/
   # https://github.com/crazy-max/docker-osxcross/blob/main/.github/workflows/build.yml
   prepare:
-    runs-on: [runs-on, runner=2cpu-linux-arm64]
+    runs-on: ubuntu-24.04
     needs: check
     steps:
       - uses: actions/checkout@v4
       
       - uses: aws-actions/configure-aws-credentials@v4
         with:
+          role-to-assume: arn:aws:iam::820242904191:role/pythia-ci-5d6b874
+          role-session-name: GitHubActionsECRPush-${{ github.run_id }}
           aws-region: eu-west-1
 
       - uses: aws-actions/amazon-ecr-login@v2
@@ -75,10 +76,7 @@ jobs:
           retention-days: 1
 
   bake:
-    runs-on: 
-      - runs-on
-      - runner=${{ matrix.platform }}
-      - run-id=${{ github.run_id }}
+    runs-on: ${{ matrix.platform }}
     needs: prepare
     strategy:
       fail-fast: false
@@ -104,6 +102,8 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
+          role-to-assume: arn:aws:iam::820242904191:role/pythia-ci-5d6b874
+          role-session-name: GitHubActionsECRPush-${{ github.run_id }}
           aws-region: eu-west-1
   
       - uses: aws-actions/amazon-ecr-login@v2
@@ -140,7 +140,7 @@ jobs:
           retention-days: 1
 
   merge:
-    runs-on: [runs-on, runner=2cpu-linux-arm64]
+    runs-on: ubuntu-24.04
     needs: bake
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +169,8 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
+          role-to-assume: arn:aws:iam::820242904191:role/pythia-ci-5d6b874
+          role-session-name: GitHubActionsECRPush-${{ github.run_id }}
           aws-region: eu-west-1
 
       - uses: aws-actions/amazon-ecr-login@v2
@@ -179,7 +181,9 @@ jobs:
       - run: ./scripts/merge-images.sh
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+          NAME: pythia
 
       - run: ./scripts/merge-images.sh
         env:
-          REGISTRY: ghcr.io
+          REGISTRY: ghcr.io/dlc-markets
+          NAME: pythia
