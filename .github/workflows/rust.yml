@@ -58,7 +58,7 @@ jobs:
         id: meta
         with:
           images: | 
-            ${{ steps.ecr.outputs.registry }}/dlc-markets/pythia
+            ${{ steps.ecr.outputs.registry }}/pythia
             ghcr.io/dlc-markets/pythia
           tags: |
             type=ref,event=pr
@@ -120,9 +120,9 @@ jobs:
           targets: ci
           set: |
             *.tags=
-            *.output=type=image,"name=${{ steps.ecr.outputs.registry }}/dlc-markets/pythia,ghcr.io/dlc-markets/pythia",push-by-digest=true,name-canonical=true,push=true
-            *.cache-from=type=registry,ref=${{ steps.ecr.outputs.registry }}/dlc-markets/pythia:cache${{ matrix.platform }}
-            *.cache-to=type=registry,image-manifest=true,oci-mediatypes=true,mode=max,ref=${{ steps.ecr.outputs.registry }}/dlc-markets/pythia:cache-${{ matrix.platform }}
+            *.output=type=image,"name=${{ steps.ecr.outputs.registry }}/pythia,ghcr.io/dlc-markets/pythia",push-by-digest=true,name-canonical=true,push=true
+            *.cache-from=type=registry,ref=${{ steps.ecr.outputs.registry }}/pythia:cache${{ matrix.platform }}
+            *.cache-to=type=registry,image-manifest=true,oci-mediatypes=true,mode=max,ref=${{ steps.ecr.outputs.registry }}/pythia:cache-${{ matrix.platform }}
 
       # Github actions does not support matrix outputs
       # https://github.com/actions/runner/pull/2477
