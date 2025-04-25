@@ -6,6 +6,8 @@ use sqlx::{
     Result,
 };
 
+use std::io::{Error, ErrorKind};
+
 use super::OracleAnnouncementWithSkNonces;
 
 struct EventResponse {
@@ -77,12 +79,11 @@ impl DBconnection {
         Ok(())
     }
 
-    pub(super) async fn is_empty(&self) -> bool {
-        sqlx::query_as!(EventResponse, "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1")
+    pub(super) async fn is_empty(&self) -> Result<bool> {
+        Ok(sqlx::query_as!(EventResponse, "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events LIMIT 1")
             .fetch_optional(&self.0)
-            .await
-            .unwrap()
-            .is_none()
+            .await?
+            .is_none())
     }
 
     /// Insert announcement data and meta-data in postgres DB
@@ -94,9 +95,10 @@ impl DBconnection {
         let EventDescriptor::DigitDecompositionEvent(ref digits) =
             announcement.oracle_event.event_descriptor
         else {
-            return Err(sqlx::Error::TypeNotFound {
-                type_name: "Only DigitDecomposition event type is supported".to_string(),
-            });
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "Only DigitDecomposition event type is supported",
+            ))?;
         };
 
         let sk_nonces = outstanding_sk_nonces
@@ -116,7 +118,10 @@ impl DBconnection {
             &(digits.nb_digits as i32),
             digits.precision,
             DateTime::from_timestamp(announcement.oracle_event.event_maturity_epoch.into(), 0)
-                .unwrap(),
+                .ok_or(Error::new(
+                    ErrorKind::InvalidInput,
+                    "Failed to convert timestamp to DateTime"
+                ))?,
             announcement.announcement_signature.as_ref(),
             &vec![announcement.oracle_event.event_id.to_owned(); digits.nb_digits as usize][..],
             &(0..digits.nb_digits as i32).collect::<Vec<i32>>(),
@@ -194,9 +199,10 @@ impl DBconnection {
                 let EventDescriptor::DigitDecompositionEvent(ref digit) =
                     announcement.oracle_event.event_descriptor
                 else {
-                    return Err(sqlx::Error::TypeNotFound {
-                        type_name: "Only DigitDecomposition event type is supported".to_string(),
-                    });
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Only DigitDecomposition event type is supported",
+                    ))?;
                 };
                 Ok((
                     announcement.oracle_event.event_id.clone(),
@@ -206,7 +212,10 @@ impl DBconnection {
                         announcement.oracle_event.event_maturity_epoch.into(),
                         0,
                     )
-                    .unwrap(),
+                    .ok_or(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Failed to convert timestamp to DateTime",
+                    ))?,
                     announcement.announcement_signature.as_ref().to_vec(),
                     announcement
                         .oracle_event
@@ -342,13 +351,14 @@ impl DBconnection {
                     .iter()
                     .map(|x| {
                         (
-                            XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                            XOnlyPublicKey::from_slice(&x.nonce_public)
+                                .expect("nonce_public must have valid length inserted by pythia"),
                             x.nonce_secret
                                 .as_ref()
-                                .unwrap()
+                                .expect("nonce_secret must be present in digits table if we did not get an attestation in events table")
                                 .as_slice()
                                 .try_into()
-                                .unwrap(),
+                                .expect("nonce_secret must have valid length inserted by pythia"),
                         )
                     })
                     .collect();
@@ -361,7 +371,7 @@ impl DBconnection {
                     announcement_signature: Signature::from_slice(
                         &event.announcement_signature[..],
                     )
-                    .unwrap(),
+                    .expect("announcement_signature must have valid length inserted by pythia"),
                     nonce_public,
                     scalars_records: ScalarsRecords::DigitsSkNonce(nonce_secret),
                 }))
@@ -379,11 +389,16 @@ impl DBconnection {
                     .iter()
                     .map(|x| {
                         (
-                            XOnlyPublicKey::from_slice(&x.nonce_public).unwrap(),
+                            XOnlyPublicKey::from_slice(&x.nonce_public)
+                                .expect("pythia must have inserted nonce of valid length"),
                             Scalar::from_be_bytes(
-                                x.signature.as_ref().unwrap().as_slice().try_into().unwrap(),
+                                x.signature
+                                    .as_deref()
+                                    .expect("signature must be present in digits table if we got an outcome in events table")
+                                    .try_into()
+                                    .expect("signature length inserted by pythia is correct"),
                             )
-                            .unwrap(),
+                            .expect("pythia inserted valid scalar values in digits table"),
                         )
                     })
                     .collect();
@@ -396,7 +411,7 @@ impl DBconnection {
                     announcement_signature: Signature::from_slice(
                         &event.announcement_signature[..],
                     )
-                    .unwrap(),
+                    .expect("announcement_signature must have valid length inserted by pythia"),
                     nonce_public,
                     scalars_records: ScalarsRecords::DigitsAttestations(outcome, sigs),
                 }))
@@ -480,10 +495,16 @@ impl DBconnection {
                             announcement_signature: Signature::from_slice(
                                 &announcement_signature[..],
                             )
-                            .unwrap(),
+                            .expect(
+                                "announcement_signature must have valid length inserted by pythia",
+                            ),
                             nonce_public: nonces_public
                                 .into_iter()
-                                .map(|ref s| XOnlyPublicKey::from_slice(s).unwrap())
+                                .map(|ref s| {
+                                    XOnlyPublicKey::from_slice(s).expect(
+                                        "nonce_public must have valid length inserted by pythia",
+                                    )
+                                })
                                 .collect(),
                             scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
                         }

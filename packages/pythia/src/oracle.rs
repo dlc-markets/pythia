@@ -53,8 +53,8 @@ impl Oracle {
         self.keypair.public_key().into()
     }
     /// Check if the oracle announced at least one event
-    pub async fn is_empty(&self) -> bool {
-        self.db.is_empty().await
+    pub async fn is_empty(&self) -> Result<bool> {
+        self.db.is_empty().await.map_err(OracleError::from)
     }
 
     fn prepare_announcement(
@@ -71,7 +71,8 @@ impl Oracle {
         for _ in 0..digits {
             let mut sk_nonce = [0u8; 32];
             rng.fill_bytes(&mut sk_nonce);
-            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
+            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce)
+                .expect("sk_nonce has the required length");
             let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
             sk_nonces.push(sk_nonce);
             nonces.push(nonce);
@@ -326,7 +327,8 @@ impl Oracle {
                         let mut sk_nonce = [0u8; 32];
                         rng.fill_bytes(&mut sk_nonce);
                         let oracle_r_kp =
-                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce).unwrap();
+                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce)
+                                .expect("sk_nonce has the required length");
                         let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
                         sk_nonces.push(sk_nonce);
                         nonces.push(nonce);

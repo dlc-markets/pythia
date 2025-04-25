@@ -53,6 +53,15 @@ impl PriceFeed for Kraken {
             .get(asset_pair_translation)
             .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
 
-        Ok(res[0][1].as_str().unwrap().parse().unwrap())
+        Ok(res[0][1]
+            .as_str()
+            .ok_or(PriceFeedError::Server(format!(
+                "Failed to parse price from kraken: expect a string, got {:#?}",
+                res[0][1]
+            )))?
+            .parse()
+            .map_err(|e| {
+                PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
+            })?)
     }
 }

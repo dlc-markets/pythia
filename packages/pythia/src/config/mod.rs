@@ -52,6 +52,7 @@ mod standard_duration {
     use chrono::Duration;
     use serde::{
         de::{self, Visitor},
+        ser::Error as _,
         Deserializer, Serializer,
     };
     use std::fmt;
@@ -62,7 +63,7 @@ mod standard_duration {
     {
         serializer.serialize_str(
             &humantime::format_duration(std::time::Duration::from_secs(
-                value.num_seconds().try_into().unwrap(),
+                value.num_seconds().try_into().map_err(S::Error::custom)?,
             ))
             .to_string(),
         )
@@ -90,7 +91,7 @@ mod standard_duration {
                         .map_err(E::custom)?
                         .as_nanos()
                         .try_into()
-                        .unwrap(),
+                        .map_err(E::custom)?,
                 ))
             }
         }
@@ -115,7 +116,10 @@ impl Display for OracleSchedulerConfig {
             "OracleSchedulerConfig {{\n\tcron_schedule: {},\n\tannouncement_offset: {}\n}}",
             self.schedule,
             humantime::format_duration(std::time::Duration::from_secs(
-                self.announcement_offset.num_seconds().try_into().unwrap()
+                self.announcement_offset
+                    .num_seconds()
+                    .try_into()
+                    .unwrap_or(0)
             ))
         )
     }

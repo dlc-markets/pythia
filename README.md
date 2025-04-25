@@ -1,12 +1,27 @@
 # Pythia
 
-![alt text](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg/2560px-Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg)
+![alt text](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg/2560px-Eug%C3%A8ne_Delacroix_-_Lycurgus_Consulting_the_Pythia_-_Google_Art_Project.jpg) _Eugene Delacroix: Lycurgus consulting the Pythia_
 
-A numeric (and extensible) oracle implementation for bitcoin forked from sibyls, the oracle of lava.xyz.
+A numeric (and extensible) oracle implementation forked from [sibyls](https://github.com/lava-xyz/sibyls), the oracle of lava.xyz.
+
+## Features:
+
+- Postgres database for persistence
+- Configurable announcement and attestation schedule using cron expressions and an offset
+- Support for multiple asset pairs in the same instance
+- Supports multiple price feeds (currently LN Markets by default)
+- Extensible architecture for adding new price feeds
+- Websocket API to be notified and receive announcements/attestations when created
+- REST API for querying historical data
+- Support for efficiently batched queries of announcements
+- Configurable via CLI arguments or environment variables
+- Debug mode for testing: allow to force an attestation at any date and price through API.
+
+Pythia chooses `eventId` of announcements and attestation to be of the form `{asset_pair_snake_case}{unix_maturity_timestamp_in_second}`. This has the advantage of allowing you to change the price feed for the same asset pair before attesting without issue but also means it will be inconvenient to run an instance of pythia which attests the same asset pair prices of several price feeds.
 
 ## Configuration
 
-You can configure Pythia with the CLI arguments with `pythia --help` or environment variables.
+You can configure Pythia with the CLI arguments documented at `pythia --help` or environment variables.
 
 Pythia will run an http server on port `8000` by default but you can change it with the `--port` argument or the `PORT` environment variable.
 
@@ -15,30 +30,42 @@ Pythia will run an http server on port `8000` by default but you can change it w
 - `POSTGRES_DB`: The name of the PostgreSQL database.
 - `POSTGRES_HOST`: The host address of the PostgreSQL server.
 - `POSTGRES_PORT`: The port on which the PostgreSQL server is running.
-- `PYTHIA_SECRET_KEY`: The secret key used for secure operations.
+- `PYTHIA_SECRET_KEY`: The secret key used for signing announcements and attestation.
 - `PYTHIA_DEBUG_MODE`: If set to `true`, the server will run in debug mode.
 - `PYTHIA_PORT`: The port on which the HTTP server will run.
-- `PYTHIA_NB_CONNECTION`: The number of connection to the database.
+- `PYTHIA_NB_CONNECTION`: The number of connection to the database (default to 10).
 - `RUST_LOG`: Log level for the application. See [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more.
 - `PORT`: The port on which the HTTP server will run.
 
-## API Description
+The schedule of attestations and announcements is specified with a CRON formatted string for attestations times. The announcements times are automatically deduced from the specified offset duration between the publication of an announcement and its maturity.
+
+The schedule must be given through the CLI with `--schedule` and `--offset` or a json config file which is assumed to be `config.json` by default but can be changed using CLI argument `--config-file`.
+
+Notice that a schedule that generate a lot of attestation for the duration of the offset will have to produce a lot of announcement at the first boot of the oracle. This may take several minutes for all normally already published announcements to be available through the API.
+
+## REST API usage
+
+### API-JS
+
+For more convenience, pythia ships with a typescript wrapper in a npm package which features all the endpoints below.
 
 ### Get supported assets
+
+To return all asset pairs supported of the running oracle instance in a array:
 
 ```sh
 curl -X GET http://localhost:8000/v1/assets
 ```
 
-This endpoint return all asset pairs supported of the running oracle instance in a array.
-
 ### Get configuration
+
+To get the [scheduler config](#configure) and pricefeed source for the asset pair specified with the asset_id that is returned by previous endpoint.
 
 ```sh
 curl -X GET http://localhost:8000/v1/{asset_id}/config
 ```
 
-This endpoint returns the [scheduler config](#configure) and pricefeed source for the asset pair specified with the asset_id that is returned by previous endpoint.
+Notice that the schedule of announcement/attestation publication is the the same for all asset pairs of a running oracle.
 
 Output example:
 
@@ -50,13 +77,20 @@ Output example:
 }
 ```
 
-### Get announcement
+### Get announcements
+
+The oracle announcements are returned as serialized json of the [`rust-dlc oracle announcement struct`](https://docs.rs/dlc-messages/latest/dlc_messages/oracle_msgs/struct.OracleAnnouncement.html).
+There are two API endpoints to get oracle announcements.
+
+#### Individual announcement:
+
+You can obtain the announcement for the specified asset at a give date using the following endpoint:
 
 ```sh
 curl -X GET http://localhost:8000/v1/asset/{asset_id}/announcement/{date_in_rfc3339_format}
 ```
 
-This endpoint returns the [`oracle announcement`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_announcement) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
+The asset pair is identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
 
 Request example:
 
@@ -91,13 +125,27 @@ Output:
 }
 ```
 
+#### Batch of announcements for an asset
+
+Using the `http://localhost:8000/v1/asset/{asset_pair}/announcements/batch` endpoint, you can ask for all announcements for an asset pair at maturities specified with a POST request in a JSON array with key `maturities`:
+
+```sh
+curl -X POST http://localhost:8000/v1/asset/btc_usd/announcements/batch -d '{"maturities": ["2025-04-10T14:49:00Z","2025-04-10T14:50:00Z","2025-04-10T14:51:00Z","2025-04-10T14:52:00Z","2025-04-10T14:53:00Z"]}' -H "Content-Type: application/json"
+```
+
+If an announcement exists for each maturity, all the announcements are returned in chronological order (not the same order as maturities given !) in a JSON array. Caution: if any maturity has no associated announcement the request fails.
+
 ### Get attestation
+
+There is generally no need to get more then one attestation of an asset pair to settle a DLC. So it is only possible to request attestation on at a time using the following endpoint:
 
 ```sh
 curl -X GET http://localhost:8000/v1/asset/{asset_id}/attestation/{date_in_rfc3339_format}
 ```
 
-This endpoint returns the [`oracle attestation`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#the-oracle_attestation-type) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
+It returns the [`oracle attestation`](https://docs.rs/dlc-messages/latest/dlc_messages/oracle_msgs/struct.OracleAttestation.html) for the asset pair identified through its `asset_id` (each component of the pair in `snake_case`) for the date formatted using RFC 3339.
+
+The attestation response is slightly different of the JSON serialisation of rust-dlc struct. It contains the eventId, the signatures as array of hex strings and the outcomes as array of string but with key `"values"`.
 
 Request example with the same event as announcement:
 
@@ -123,7 +171,7 @@ Output:
 
 ### Connection
 
-Pythia API features a websocket which can be used to receive announcement and attestation when they are created by Pythia's scheduler or to query them. The websocket is located as `/v1/ws`. Using `wscat` you can connect to it as such:
+Pythia API features a websocket which can be used to receive announcements and attestations when they are created by Pythia's scheduler or to query them. The websocket is located as `/v1/ws`. Using `wscat` you can connect to it as such:
 
 ```sh
 wscat --connect localhost:8000/v1/ws
@@ -158,11 +206,11 @@ Example of attestation received upon connecting to the websocket:
 
 ### Subscribe/Unsubscribe
 
-The websocket use [`JSON-RPC`](https://www.jsonrpc.org/specification). You can subscribe or unsubscribe to a channel using the corresponding JSON-RPC methods with channel asset-pair and event type as params.
+The websocket use [`JSON-RPC`](https://www.jsonrpc.org/specification) standard. You can subscribe or unsubscribe to a channel using the corresponding JSON-RPC methods with channel asset-pair and event type as params.
 
 Example:
 
-Opt-out to default subscription to `btc_usd_/attestation` using the following RPC:
+Opt-out to default subscription to `btc_usd/attestation` using the following RPC:
 
 ```json
 > {
@@ -187,7 +235,7 @@ Websocket response, no new attestations are received after it:
 }
 ```
 
-You can subscribe to the freshly prepared announcement using the following:
+You can subscribe to the freshly prepared announcements using the following:
 
 ```json
 > {
@@ -202,7 +250,7 @@ You can subscribe to the freshly prepared announcement using the following:
 }
 ```
 
-To which the websocket respond:
+To which the websocket responds:
 
 ```json
 < {
@@ -269,7 +317,7 @@ Websocket answer:
 
 ## Run Pythia
 
-To run, first clone the repository and build:
+To run pythia, first clone the repository and build:
 
 ```sh
 git clone https://github.com/ln-market/pythia.git
@@ -287,15 +335,13 @@ sqlx migrate run
 
 This will create a database oracle in your running postgres server by default. You can change this by editing the `DATABASE_URL` value in the .env file of the repo before running the migrations.
 
-Then, you can run pythia by executing:
-
-For optional logging, you can run the above commands with the `RUST_LOG` environment variable set (see [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more), for example:
+For optional logging, you can run pythia with the `RUST_LOG` environment variable set (see [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more):
 
 ```sh
 RUST_LOG=INFO ./target/release/pythia
 ```
 
-Currently, the only logging done is at the `INFO` and `DEBUG` levels.
+Currently, the only logging done is at the `INFO`, `DEBUG` and `TRACE` levels.
 
 ## Run with docker
 
@@ -308,20 +354,26 @@ docker compose up
 
 The API will run on port 8000.
 
-### Configure
+### Scheduler configuration
 
 Asset pair configs will be discussed in [Asset Pairs](#asset-pairs).
 
-There are three configurable parameters for the oracle:
+The schedule of announcement and attestation is defined by two configurable parameters:
 
-| name                  | type                                                                                                                                                                         | description                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `schedule`            | `0 */1 * * * * *`                                                                                                                                                            | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily                          |
-| `announcement_offset` | `(\d+(nsec\|ns\|usec\|us\|msec\|ms\|seconds\|second\|sec\|s\|minutes\|minute\|min\|m\|hours\|hour\|hr\|h\|days\|day\|d\|weeks\|week\|w\|months\|month\|M\|years\|year\|y))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h` |
+| name                  | type                | description                                                                                                                      |
+| --------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `schedule`            | `0 */1 * * * * *`   | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily (but you must add the second field) |
+| `announcement_offset` | `(\d+(humantime))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h`            |
+
+where `(humantime)` is any unit of duration in `(seconds|second|sec|s|minutes|minute|mi\|m|hours|hour|hr|h|days|day|d|weeks|week|w|months|month|M|years|year|y)`
+
+This is taken from `config.json` file if no other path is specified in CLI with `--config-file` and if CLI does not fully set these parameters.
 
 ## Extend
 
-This oracle implementation is extensible to using other pricefeeds, asset pairs, and (to come) event descriptors (for more information, see <https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor>) rather than just {Bitstamp, Kraken, Gate.io, LNmarkets.com}, BTCUSD.
+Disclaimer: most of this part of the documentation is similar to the original sibyls implementation.
+
+Like sibyls, this oracle implementation is extensible to using other pricefeeds and asset pairs rather than just {Bitstamp, Kraken, Gate.io, LNmarkets.com}, BTCUSD.
 
 ### Pricefeeds
 
