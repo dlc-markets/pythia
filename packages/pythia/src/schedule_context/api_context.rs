@@ -14,20 +14,11 @@ use super::{AssetPair, OracleContext};
 /// The API holds a reference to the running oracles and schedule configuration file shared with the scheduler.
 /// This context also includes the channel receiver endpoint for broadcasting announcements/attestations,
 /// and the channel sender for sending events to websockets (only used when forcing attestations in debug mode).
+#[derive(Clone)]
 pub(crate) struct ApiContext<Context> {
     pub(super) oracle_context: Context,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_sender: Sender<EventNotification>,
-}
-
-impl<Context: OracleContext + Clone> Clone for ApiContext<Context> {
-    fn clone(&self) -> Self {
-        Self {
-            oracle_context: Context::clone(&self.oracle_context),
-            offset_duration: self.offset_duration,
-            channel_sender: self.channel_sender.clone(),
-        }
-    }
 }
 
 impl<Context: OracleContext> ApiContext<Context> {
@@ -58,7 +49,7 @@ impl<Context: OracleContext + Clone + 'static> FromRequest for ApiContext<Contex
         _payload: &mut actix_web::dev::Payload,
     ) -> Self::Future {
         if let Some(st) = req.app_data::<ApiContext<Context>>() {
-            ok(st.clone())
+            ok(st.to_owned())
         } else {
             log::info!(
                 "Failed to construct App-level Data extractor. \
