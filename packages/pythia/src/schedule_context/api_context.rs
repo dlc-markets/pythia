@@ -33,17 +33,17 @@ impl<Context: OracleContext + Clone> Clone for ApiContext<Context> {
 impl<Context: OracleContext> ApiContext<Context> {
     /// Get iterator over AssetPairs
     pub(crate) fn asset_pairs(&self) -> impl Iterator<Item = &AssetPair> {
-        self.oracle_context.borrow().oracles.keys()
+        self.oracle_context.oracles().keys()
     }
 
     /// Get the oracle for the given asset pair
     pub(crate) fn get_oracle(&self, asset_pair: &AssetPair) -> Option<&Oracle> {
-        self.oracle_context.borrow().oracles.get(asset_pair)
+        self.oracle_context.oracles().get(asset_pair)
     }
 
     /// Get the schedule
     pub(crate) fn schedule(&self) -> &Schedule {
-        &self.oracle_context.borrow().schedule
+        self.oracle_context.schedule()
     }
 }
 
