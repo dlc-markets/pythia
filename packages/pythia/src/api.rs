@@ -87,7 +87,7 @@ where
 
         App::new()
             .wrap(Cors::permissive())
-            .app_data(context.clone())
+            .app_data(context.to_owned())
             .service(factory)
     })
     .bind(("0.0.0.0", port))
