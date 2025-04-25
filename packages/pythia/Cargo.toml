@@ -47,6 +47,7 @@ actix-utils = "3.0.1"
 time = "0.3.36"
 futures = "0.3.31"
 futures-buffered = "0.2.11"
+atomic-take = "1.1.0"
 
 [dev-dependencies]
 dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
