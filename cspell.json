@@ -1,8 +1,21 @@
 {
-  "dictionaries": ["bash", "docker", "node", "npm", "sql", "en-gb", "rust"],
+  "dictionaries": [
+    "bash",
+    "docker",
+    "node",
+    "npm",
+    "sql",
+    "en-gb",
+    "rust"
+  ],
   "language": "en",
-  "enableFiletypes": ["*"],
-  "ignorePaths": ["pnpm-lock.yaml", "Cargo.lock"],
+  "enableFiletypes": [
+    "*"
+  ],
+  "ignorePaths": [
+    "pnpm-lock.yaml",
+    "Cargo.lock"
+  ],
   "words": [
     "actix",
     "Afanassieff",
@@ -38,6 +51,7 @@
     "Michalakis",
     "nanos",
     "netcat",
+    "nocapture",
     "nsec",
     "oneshot",
     "Ohlc",
