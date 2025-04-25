@@ -1,5 +1,6 @@
+use atomic_take::AtomicTake;
 use chrono::{Duration as ChronoDuration, Utc};
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContext};
@@ -23,7 +24,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
     ) -> Result<Self, PythiaContextError> {
-        let oracle_context_inner = oracle_context.borrow();
+        let oracle_context_inner = oracle_context.inner();
         // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
         // The configured cron schedule may not produce a value although it is correctly parsed
         // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
@@ -47,7 +48,7 @@ pub(crate) async fn start_schedule<Context>(
     context: SchedulerContext<Context>,
 ) -> Result<(), PythiaError>
 where
-    Context: OracleContext + Clone + 'static,
+    Context: OracleContext + Clone + Send + Sync + 'static,
 {
     let oracle_context = Context::clone(&context.oracle_context);
     let event_tx = context.channel_sender;
@@ -57,29 +58,27 @@ where
 
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
-    let attestation_scheduled_dates = oracle_context.borrow().schedule.after_owned(start_time);
+    let attestation_scheduled_dates = oracle_context.schedule().after_owned(start_time);
     let announcement_scheduled_dates = oracle_context
-        .borrow()
-        .schedule
+        .schedule()
         .after_owned(start_time)
         .map(move |date| date - context.offset_duration);
 
     let announcement_thread = async move {
+        // Channel to communicate errors from spawned tasks back to the main thread
+        let (err_tx, mut err_rx) = tokio::sync::oneshot::channel::<Result<(), OracleError>>();
+        let atomic_err_tx = Arc::new(AtomicTake::new(err_tx));
+
         // Vector to store maturation dates that need to be processed in batches
         // Used to accumulate announcements when events have already matured or are imminent
         // This batching approach improves performance by reducing database operations
         let mut pending_maturations = Vec::new();
 
-        // Channel to communicate errors from spawned tasks back to the main thread
-        // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-        let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
-
         for next_time in announcement_scheduled_dates {
-            // Check for errors from previous tasks and reset the channel
-            // If previous tasks encountered an error, propagate it
-            error_state
-                .replace(Ok(()))
-                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
+            // Check if there was an error in the previous iteration
+            if let Ok(oracle_result) = err_rx.try_recv() {
+                oracle_result?
+            }
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -96,17 +95,22 @@ where
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
+
                     let oracle_context = Context::clone(&oracle_context);
-                    let error_chan = error_state.clone();
+                    let atomic_err_tx_ref = Arc::clone(&atomic_err_tx);
+
                     // We spawn a detached task to process missed announcements in the background
-                    actix::spawn(async move {
-                        for oracle in oracle_context.borrow().oracles.values() {
+                    tokio::spawn(async move {
+                        for oracle in oracle_context.oracles().values() {
                             // Collect all processed chunks and store any errors in the error channel
                             if let result @ Err(_) = oracle
                                 .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
                                 .await
                             {
-                                error_chan.set(result)
+                                let Some(err_tx) = atomic_err_tx_ref.take() else {
+                                    return;
+                                };
+                                drop(err_tx.send(result));
                             };
                         }
                         info!("Oracle announcements are in sync");
@@ -118,7 +122,7 @@ where
 
                 sleep(duration).await;
 
-                for oracle in oracle_context.borrow().oracles.values() {
+                for oracle in oracle_context.oracles().values() {
                     let perhaps_announcement = oracle
                         .create_announcement(next_time + context.offset_duration)
                         .await;
@@ -152,7 +156,7 @@ where
                 sleep(duration).await;
             };
 
-            for oracle in oracle_context.borrow().oracles.values() {
+            for oracle in oracle_context.oracles().values() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 

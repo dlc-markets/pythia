@@ -1,0 +1,33 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+[tasks.default]
+dependencies = ["test"]
+
+[tasks.sqlx-prepare]
+description = "Prepare sqlx database for tests"
+command = "pnpm"
+args = ["sqlx-prepare"]
+
+[tasks.test]
+description = "Run all regular tests (excluding ignored benchmarks)"
+dependencies = ["sqlx-prepare"]
+command = "cargo"
+args = ["test"]
+
+[tasks.test-benchmark]
+description = "Run only benchmark tests (which are marked as ignored)"
+dependencies = ["sqlx-prepare"]
+command = "cargo"
+args = ["test", "--", "--ignored", "--nocapture"]
+
+[tasks.test-all]
+description = "Run all tests including benchmarks"
+dependencies = ["sqlx-prepare"]
+command = "cargo"
+args = ["test", "--", "--include-ignored"]
+
+[tasks.clean]
+description = "Remove artifacts in target directory"
+command = "cargo"
+args = ["clean"]

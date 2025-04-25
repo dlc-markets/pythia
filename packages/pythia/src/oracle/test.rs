@@ -1112,10 +1112,10 @@ mod benchmarks {
 
         $(
             // Clear the database
-            clear_events(&$oracle.db).await.unwrap();
+            clear_events(&$oracle.db).await?;
 
             let start = Instant::now();
-            $oracle.create_many_announcements::<$chunk_size>($maturations).await.unwrap();
+            $oracle.create_many_announcements::<$chunk_size>($maturations).await?;
             let duration = start.elapsed();
 
             println!(
@@ -1129,7 +1129,7 @@ mod benchmarks {
 }
     #[sqlx::test]
     #[ignore]
-    async fn benchmark_create_many_announcements(tbd: PgPool) {
+    async fn benchmark_create_many_announcements(tbd: PgPool) -> Result<()> {
         let oracle = setup_oracle(tbd, 12, 32, Lnmarkets).await;
         let now = Utc::now();
 
@@ -1154,5 +1154,6 @@ mod benchmarks {
             400,
             500
         );
+        Ok(())
     }
 }
