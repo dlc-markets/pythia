@@ -35,7 +35,7 @@ where
 {
     // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
     // at the same time (if offset is a multiple of the attestation frequency schedule)
-    let channel_size = 2 * oracle_context.borrow().oracles_count();
+    let channel_size = 2 * oracle_context.oracles_count();
     // We do not need Receiver right now as we only use them to send events to websockets
     // so we use Sender::new to create a only half of the channel with the given size.
     let channel_sender = Sender::new(channel_size);
