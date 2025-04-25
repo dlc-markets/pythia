@@ -12,7 +12,7 @@ use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
     config::AssetPair,
     oracle::{error::OracleError, Oracle},
-    schedule_context::api_context::ApiContext,
+    schedule_context::{api_context::ApiContext, OracleContext},
 };
 
 #[derive(Clone, Serialize, Debug)]
