@@ -35,7 +35,7 @@ where
 {
     // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
     // at the same time (if offset is a multiple of the attestation frequency schedule)
-    let channel_size = 2 * oracle_context.borrow().oracles.len();
+    let channel_size = 2 * oracle_context.oracles().len();
     // We do not need Receiver right now as we only use them to send events to websockets
     // so we use Sender::new to create a only half of the channel with the given size.
     let channel_sender = Sender::new(channel_size);
@@ -53,7 +53,19 @@ where
     ))
 }
 
-/// A trait for types that can immutably borrow an `OracleContextInner`.
-pub(crate) trait OracleContext: Borrow<OracleContextInner> {}
+pub(crate) trait OracleContext {
+    fn oracles(&self) -> &HashMap<AssetPair, Oracle>;
+    fn schedule(&self) -> &Schedule;
+}
 
-impl<T: Borrow<OracleContextInner>> OracleContext for T {}
+impl<T> OracleContext for T
+where
+    T: Borrow<OracleContextInner>,
+{
+    fn oracles(&self) -> &HashMap<AssetPair, Oracle> {
+        &self.borrow().oracles
+    }
+    fn schedule(&self) -> &Schedule {
+        &self.borrow().schedule
+    }
+}

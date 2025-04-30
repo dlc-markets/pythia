@@ -23,12 +23,12 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
     ) -> Result<Self, PythiaContextError> {
-        let oracle_context_inner = oracle_context.borrow();
+        let oracle_context_schedule = oracle_context.schedule();
         // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
         // The configured cron schedule may not produce a value although it is correctly parsed
         // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
-        oracle_context_inner.schedule.upcoming(Utc).next().ok_or(
-            PythiaContextError::CronScheduleProduceNoValue(oracle_context_inner.schedule.clone()),
+        oracle_context_schedule.upcoming(Utc).next().ok_or(
+            PythiaContextError::CronScheduleProduceNoValue(oracle_context_schedule.clone()),
         )?;
 
         let offset_duration = offset_duration.to_std()?;
@@ -57,10 +57,9 @@ where
 
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
-    let attestation_scheduled_dates = oracle_context.borrow().schedule.after_owned(start_time);
+    let attestation_scheduled_dates = oracle_context.schedule().after_owned(start_time);
     let announcement_scheduled_dates = oracle_context
-        .borrow()
-        .schedule
+        .schedule()
         .after_owned(start_time)
         .map(move |date| date - context.offset_duration);
 
@@ -100,7 +99,7 @@ where
                     let error_chan = error_state.clone();
                     // We spawn a detached task to process missed announcements in the background
                     actix::spawn(async move {
-                        for oracle in oracle_context.borrow().oracles.values() {
+                        for oracle in oracle_context.oracles().values() {
                             // Collect all processed chunks and store any errors in the error channel
                             if let result @ Err(_) = oracle
                                 .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
@@ -118,7 +117,7 @@ where
 
                 sleep(duration).await;
 
-                for oracle in oracle_context.borrow().oracles.values() {
+                for oracle in oracle_context.oracles().values() {
                     let perhaps_announcement = oracle
                         .create_announcement(next_time + context.offset_duration)
                         .await;
@@ -152,7 +151,7 @@ where
                 sleep(duration).await;
             };
 
-            for oracle in oracle_context.borrow().oracles.values() {
+            for oracle in oracle_context.oracles().values() {
                 let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
                     + next_time.timestamp().to_string().as_str();
 
