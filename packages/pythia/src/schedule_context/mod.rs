@@ -1,14 +1,20 @@
 use chrono::Duration;
 use cron::Schedule;
-use scheduler::SchedulerContext;
+use scheduler::{ErrorOneshotChannel, SchedulerContext};
 use std::{borrow::Borrow, collections::HashMap};
 use tokio::sync::broadcast::Sender;
 
-use crate::{config::AssetPair, oracle::Oracle};
+use crate::{
+    config::AssetPair,
+    oracle::{error::OracleError, Oracle},
+};
 
 pub(super) mod api_context;
 pub(super) mod error;
 pub(super) mod scheduler;
+
+#[cfg(test)]
+mod test;
 
 use api_context::ApiContext;
 use error::PythiaContextError;
@@ -39,11 +45,14 @@ where
     // We do not need Receiver right now as we only use them to send events to websockets
     // so we use Sender::new to create a only half of the channel with the given size.
     let channel_sender = Sender::new(channel_size);
+    let (error_sender, error_receiver) = tokio::sync::oneshot::channel::<Result<(), OracleError>>();
+
     Ok((
         SchedulerContext::new(
             Context::clone(&oracle_context),
             offset_duration,
             channel_sender.clone(),
+            ErrorOneshotChannel::new(error_sender, error_receiver),
         )?,
         ApiContext {
             oracle_context,
