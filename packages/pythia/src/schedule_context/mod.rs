@@ -13,16 +13,13 @@ pub(super) mod api_context;
 pub(super) mod error;
 pub(super) mod scheduler;
 
-#[cfg(test)]
-mod test;
-
 use api_context::ApiContext;
 use error::PythiaContextError;
 
 /// The inner context of the oracle. It contains the configuration
 /// settings for the oracle of each asset pair and the schedule.
 /// It is used to create the `ApiContext` and `SchedulerContext`.
-// #[derive(Clone)]
+#[derive(Clone)]
 pub(super) struct OracleContextInner {
     pub(super) oracles: HashMap<AssetPair, Oracle>,
     pub(super) schedule: Schedule,
