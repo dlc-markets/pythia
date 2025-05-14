@@ -342,7 +342,7 @@ cargo build --release
 For optional logging, you can run pythia with the `RUST_LOG` environment variable set (see [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more):
 
 ```sh
-RUST_LOG=INFO ./target/release/pythia --secret-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+RUST_LOG=INFO ./target/release/pythia -c sample-config.json --secret-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
 Currently, the only logging done is at the `INFO`, `DEBUG` and `TRACE` levels.
