@@ -4,7 +4,7 @@
 
 A numeric (and extensible) oracle implementation forked from [sibyls](https://github.com/lava-xyz/sibyls), the oracle of lava.xyz.
 
-## Features:
+## Features
 
 - Postgres database for persistence
 - Configurable announcement and attestation schedule using cron expressions and an offset
@@ -82,7 +82,7 @@ Output example:
 The oracle announcements are returned as serialized json of the [`rust-dlc oracle announcement struct`](https://docs.rs/dlc-messages/latest/dlc_messages/oracle_msgs/struct.OracleAnnouncement.html).
 There are two API endpoints to get oracle announcements.
 
-#### Individual announcement:
+#### Individual announcement
 
 You can obtain the announcement for the specified asset at a give date using the following endpoint:
 
@@ -317,28 +317,32 @@ Websocket answer:
 
 ## Run Pythia
 
-To run pythia, first clone the repository and build:
+To run pythia, first clone the repository:
 
 ```sh
 git clone https://github.com/ln-market/pythia.git
 cd pythia
-cargo build --release
 ```
 
 Pythia uses PostgreSQL as DB backend so make sure it is installed on your system. Then install and use sqlx to create a dedicated postgres DB for your oracle instance:
 
-```sh
+```bash
 cargo install sqlx-cli
-sqlx database create
-sqlx migrate run
+cd packages/pythia && sqlx database create && sqlx migrate run && cd -
 ```
 
 This will create a database oracle in your running postgres server by default. You can change this by editing the `DATABASE_URL` value in the .env file of the repo before running the migrations.
 
+To build Pythia:
+
+```bash
+cargo build --release
+```
+
 For optional logging, you can run pythia with the `RUST_LOG` environment variable set (see [`env_logger`](https://docs.rs/env_logger/0.9.0/env_logger/) for more):
 
 ```sh
-RUST_LOG=INFO ./target/release/pythia
+RUST_LOG=INFO ./target/release/pythia --secret-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
 Currently, the only logging done is at the `INFO`, `DEBUG` and `TRACE` levels.
