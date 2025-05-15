@@ -403,28 +403,26 @@ Asset pairs may also be added, although it is a bit more involved. To add a new 
 
 | name               | type                                                                                                          | description                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `pricefeed`        | `(lnmarkets\|bitstamp\|kraken\|gateio)`                                                                       | Source of the stream of price to attest |
+| `pricefeed`        | `(lnmarkets\|bitstamp\|kraken\|gateio\|deribit)`                                                              | Source of the stream of price to attest |
 | `asset_pair`       | `AssetPair` enum                                                                                              | asset pair                              |
 | `event_descriptor` | [`event_descriptor`](https://github.com/discreetlogcontracts/dlcspecs/blob/master/Oracle.md#event-descriptor) | event descriptor                        |
 
 For now, the only `event_descriptor` supported is `digit_decomposition_event_descriptor` because that is the most immediate use case (for bitcoin).
 
-An example of a valid addition in `config/asset_pair.json` is the following:
+An example of a valid addition to `pairs` array in `config.json` is the following:
 
 ```json
-[
-  {
-    "pricefeed": "bitstamp",
-    "asset_pair": "eth_btc",
-    "event_descriptor": {
-      "base": 2,
-      "is_signed": false,
-      "unit": "eth/btc",
-      "precision": 0,
-      "num_digits": 14
-    }
+{
+  "pricefeed": "bitstamp",
+  "assetPair": "eth_btc",
+  "eventDescriptor": {
+    "base": 2,
+    "isSigned": false,
+    "unit": "eth/btc",
+    "precision": 0,
+    "nbDigits": 14
   }
-]
+}
 ```
 
 Then, you must add a variant to `AssetPair` in `src/config/mod.rs`:
