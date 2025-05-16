@@ -1,5 +1,6 @@
+use atomic_take::AtomicTake;
 use chrono::{Duration as ChronoDuration, Utc};
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{sync::broadcast::Sender, time::sleep};
 
 use super::{error::PythiaContextError, OracleContext};
@@ -9,12 +10,30 @@ use crate::{
     oracle::{error::OracleError, CHUNK_SIZE},
 };
 
+pub(crate) struct ErrorOneshotChannel {
+    pub(super) error_sender: tokio::sync::oneshot::Sender<Result<(), OracleError>>,
+    pub(super) error_receiver: tokio::sync::oneshot::Receiver<Result<(), OracleError>>,
+}
+
+impl ErrorOneshotChannel {
+    pub(super) fn new(
+        error_sender: tokio::sync::oneshot::Sender<Result<(), OracleError>>,
+        error_receiver: tokio::sync::oneshot::Receiver<Result<(), OracleError>>,
+    ) -> Self {
+        Self {
+            error_sender,
+            error_receiver,
+        }
+    }
+}
+
 /// The Scheduler holds a static reference to the running oracles and schedule configuration file with the API
 /// Its context also includes the channel sender endpoint to broadcast announcements/attestations to websockets.
 pub(crate) struct SchedulerContext<Context: OracleContext> {
-    oracle_context: Context,
-    offset_duration: Duration,
-    channel_sender: Sender<EventNotification>,
+    pub(super) oracle_context: Context,
+    pub(super) offset_duration: Duration,
+    pub(super) channel_sender: Sender<EventNotification>,
+    pub(super) error_msg_channel: ErrorOneshotChannel,
 }
 
 impl<Context: OracleContext> SchedulerContext<Context> {
@@ -22,6 +41,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         oracle_context: Context,
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
+        error_msg_channel: ErrorOneshotChannel,
     ) -> Result<Self, PythiaContextError> {
         let oracle_context_schedule = oracle_context.schedule();
         // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
@@ -36,6 +56,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
             oracle_context,
             offset_duration,
             channel_sender,
+            error_msg_channel,
         })
     }
 }
@@ -47,10 +68,16 @@ pub(crate) async fn start_schedule<Context>(
     context: SchedulerContext<Context>,
 ) -> Result<(), PythiaError>
 where
-    Context: OracleContext + Clone + 'static,
+    Context: OracleContext + Clone + Send + Sync + 'static,
 {
     let oracle_context = Context::clone(&context.oracle_context);
     let event_tx = context.channel_sender;
+
+    // Channel to communicate errors from spawned tasks back to the main thread
+    let ErrorOneshotChannel {
+        error_sender,
+        mut error_receiver,
+    } = context.error_msg_channel;
 
     // start event creation task
     info!("creating oracle events and schedules");
@@ -64,21 +91,18 @@ where
         .map(move |date| date - context.offset_duration);
 
     let announcement_thread = async move {
+        let atomic_err_tx = Arc::new(AtomicTake::new(error_sender));
+
         // Vector to store maturation dates that need to be processed in batches
         // Used to accumulate announcements when events have already matured or are imminent
         // This batching approach improves performance by reducing database operations
         let mut pending_maturations = Vec::new();
 
-        // Channel to communicate errors from spawned tasks back to the main thread
-        // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-        let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
-
         for next_time in announcement_scheduled_dates {
-            // Check for errors from previous tasks and reset the channel
-            // If previous tasks encountered an error, propagate it
-            error_state
-                .replace(Ok(()))
-                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
+            // Check if there was an error in the previous iteration
+            if let Ok(oracle_result) = error_receiver.try_recv() {
+                oracle_result?
+            }
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -95,17 +119,22 @@ where
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
+
                     let oracle_context = Context::clone(&oracle_context);
-                    let error_chan = error_state.clone();
+                    let atomic_err_tx_ref = Arc::clone(&atomic_err_tx);
+
                     // We spawn a detached task to process missed announcements in the background
-                    actix::spawn(async move {
+                    tokio::spawn(async move {
                         for oracle in oracle_context.oracles().values() {
                             // Collect all processed chunks and store any errors in the error channel
                             if let result @ Err(_) = oracle
                                 .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
                                 .await
                             {
-                                error_chan.set(result)
+                                let Some(err_tx) = atomic_err_tx_ref.take() else {
+                                    return;
+                                };
+                                drop(err_tx.send(result));
                             };
                         }
                         info!("Oracle announcements are in sync");

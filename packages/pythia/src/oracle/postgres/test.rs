@@ -436,10 +436,10 @@ mod test_insert_many_announcements {
             // Check event properties
             assert_eq!(event.digits, nb_digits);
             assert_eq!(event.nonce_public.len(), nb_digits as usize);
-            println!(
-                "announcement: {:#?}, event: {event:#?}",
-                announcements_with_sk_nonces[idx]
-            );
+            // println!(
+            //     "announcement: {:#?}, event: {event:#?}",
+            //     announcements_with_sk_nonces[idx]
+            // );
 
             // Verify public nonces match what we generated
             for (i, nonce) in event.nonce_public.iter().enumerate() {
