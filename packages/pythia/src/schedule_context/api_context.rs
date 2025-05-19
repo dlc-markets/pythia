@@ -15,7 +15,7 @@ use super::{AssetPair, OracleContext};
 /// This context also includes the channel receiver endpoint for broadcasting announcements/attestations,
 /// and the channel sender for sending events to websockets (only used when forcing attestations in debug mode).
 pub(crate) struct ApiContext<Context> {
-    pub(super) oracle_context: Context,
+    pub(crate) oracle_context: Context,
     pub(crate) offset_duration: Duration,
     pub(crate) channel_sender: Sender<EventNotification>,
 }

@@ -9,6 +9,7 @@ dlc-messages = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch 
     "serde",
 ] }
 actix-web = "4.8.0"
+actix-ws = "0.3.0"
 async-trait = "0.1.53"
 bitcoin = { version = "0.32.2", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -61,3 +62,8 @@ sqlx = { version = "0.8.3", features = [
     "macros",
     "migrate",
 ] }
+actix-test = "0.1.5"
+futures-util = "0.3.31"
+awc = "3.6.0"
+actix-codec = "0.5.2"
+serial_test = "3.2.0"

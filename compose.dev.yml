@@ -1,0 +1,25 @@
+services:
+  postgres-test:
+    image: postgres:14
+    container_name: pythia-postgres-test
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=pythia_test
+    # No persistent volume for test database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pythia-network
+
+networks:
+  pythia-network:
+    driver: bridge
+
+volumes:
+  postgres-data:

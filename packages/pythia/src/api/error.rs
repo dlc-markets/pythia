@@ -26,6 +26,12 @@ pub enum PythiaApiError {
 
     /// could not start socket: {0}
     SocketUnavailable(#[from] io::Error),
+
+    /// JSON-RPC parsing error: {0}
+    JsonRpcParsingError(#[from] serde_json::Error),
+
+    /// WebSocket communication error: {0}
+    WebSocketError(String),
 }
 
 impl actix_web::error::ResponseError for PythiaApiError {
@@ -40,6 +46,22 @@ impl actix_web::error::ResponseError for PythiaApiError {
                 actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
             }
             PythiaApiError::OracleEmpty => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            PythiaApiError::JsonRpcParsingError(_) => {
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+            }
+            PythiaApiError::WebSocketError(_) => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
+    }
+}
+
+impl From<actix_ws::ProtocolError> for PythiaApiError {
+    fn from(err: actix_ws::ProtocolError) -> Self {
+        PythiaApiError::WebSocketError(err.to_string())
+    }
+}
+
+impl From<actix_ws::Closed> for PythiaApiError {
+    fn from(err: actix_ws::Closed) -> Self {
+        PythiaApiError::WebSocketError(format!("WebSocket closed: {}", err))
     }
 }

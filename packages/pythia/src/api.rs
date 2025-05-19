@@ -8,6 +8,8 @@ pub(crate) mod error;
 use error::PythiaApiError;
 
 mod http;
+#[cfg(test)]
+mod test;
 mod ws;
 
 use crate::{
@@ -15,14 +17,14 @@ use crate::{
     schedule_context::{api_context::ApiContext, OracleContext},
 };
 
-#[derive(PartialEq, Deserialize, Clone)]
+#[derive(PartialEq, Deserialize, Serialize, Clone)]
 struct EventChannel {
     #[serde(rename = "assetPair")]
     asset_pair: AssetPair,
     #[serde(rename = "type")]
     ty: EventType,
 }
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct GetRequest {
     #[serde(flatten)]
@@ -30,7 +32,7 @@ struct GetRequest {
     event_id: Box<str>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 enum EventType {
     Announcement,
@@ -80,6 +82,7 @@ where
                 "/asset/{asset_pair}/announcements/batch",
                 web::post().to(http::oracle_batch_announcements_service::<Context>),
             )
+            // .route("/ws", web::get().to(ws::websocket::<Context>))
             .route("/ws", web::get().to(ws::websocket::<Context>));
         if debug_mode {
             factory = factory.route("/force", web::post().to(http::force::<Context>));
