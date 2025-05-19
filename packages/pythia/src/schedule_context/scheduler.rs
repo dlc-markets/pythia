@@ -48,7 +48,9 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         // The configured cron schedule may not produce a value although it is correctly parsed
         // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
         oracle_context_schedule.upcoming(Utc).next().ok_or(
-            PythiaContextError::CronScheduleProduceNoValue(oracle_context_schedule.clone()),
+            PythiaContextError::CronScheduleProduceNoValue(Box::new(
+                oracle_context_schedule.clone(),
+            )),
         )?;
 
         let offset_duration = offset_duration.to_std()?;
