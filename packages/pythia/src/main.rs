@@ -4,7 +4,6 @@ extern crate log;
 use actix::spawn;
 use clap::Parser;
 use hex::ToHex;
-use schedule_context::OracleContextInner;
 use secp256k1_zkp::{All, Keypair, Secp256k1};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -69,19 +68,15 @@ async fn main() -> Result<(), PythiaError> {
         info!("!!! DEBUG MODE IS ON !!! DO NOT USE IN PRODUCTION !!!")
     };
 
-    let (context, offset_duration) = (
-        OracleContextInner {
-            oracles,
-            schedule: oracle_scheduler_config.schedule,
-        },
-        oracle_scheduler_config.announcement_offset,
-    );
-
     // We leak the context as it will be used
     // until the end of the program by the API
     // and Scheduler contexts.
-    let (scheduler_context, api_context) =
-        schedule_context::create_contexts(&*Box::leak(Box::new(context)), offset_duration)?;
+    let (scheduler_context, api_context) = schedule_context::create_contexts(
+        oracles,
+        oracle_scheduler_config.schedule,
+        oracle_scheduler_config.announcement_offset,
+        |context| &*Box::leak(Box::new(context)),
+    )?;
 
     // Spawn oracle events scheduler (announcements/attestations) and API
     // using the channel receiver for websocket.
