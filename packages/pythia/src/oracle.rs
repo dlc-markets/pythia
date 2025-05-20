@@ -160,7 +160,7 @@ impl Oracle {
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
         let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
-            type_hint(async |processing_mats: &[DateTime<Utc>]| {
+            type_hint(async |processing_mats| {
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
                 // The announcements are already sorted because processing_mats is a chunk
                 // of the already sorted by postgres non_existing_sorted_maturations vector
@@ -447,9 +447,10 @@ fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnou
 }
 
 /// Enforce the passed closure is generic over its lifetime
-fn type_hint<F>(f: F) -> F
+/// and Send for all lifetimes.
+fn type_hint<T: ?Sized, F>(f: F) -> F
 where
-    F: for<'a> AsyncFn(&'a [DateTime<Utc>]) -> Result<()> + Send,
+    F: for<'a> AsyncFn(&'a T) -> Result<()> + Send,
 {
     f
 }

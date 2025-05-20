@@ -91,3 +91,8 @@ where
         }
     }
 }
+
+/// Box then leak the input.
+pub(super) fn leaked<T>(context: T) -> &'static T {
+    &*Box::leak(Box::new(context))
+}

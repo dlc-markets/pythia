@@ -16,8 +16,7 @@ mod oracle;
 mod pricefeeds;
 mod schedule_context;
 
-use config::cli::PythiaArgs;
-use config::{AssetPair, AssetPairInfo};
+use config::{cli::PythiaArgs, AssetPair, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};
 
@@ -75,7 +74,7 @@ async fn main() -> Result<(), PythiaError> {
         oracles,
         oracle_scheduler_config.schedule,
         oracle_scheduler_config.announcement_offset,
-        |context| &*Box::leak(Box::new(context)),
+        schedule_context::leaked,
     )?;
 
     // Spawn oracle events scheduler (announcements/attestations) and API
