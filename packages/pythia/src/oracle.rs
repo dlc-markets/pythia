@@ -160,7 +160,7 @@ impl Oracle {
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
         let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
-            async |processing_mats| {
+            type_hint(async |processing_mats| {
                 let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
                 // The announcements are already sorted because processing_mats is a chunk
                 // of the already sorted by postgres non_existing_sorted_maturations vector
@@ -181,7 +181,7 @@ impl Oracle {
                         .collect::<Vec<_>>()
                 );
                 Ok(())
-            },
+            }),
         ));
 
         // buffer_unordered allows a maximum of 2 chunks being processed concurrently.
@@ -444,4 +444,13 @@ fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnou
         oracle_public_key: oracle.keypair.public_key().into(),
         oracle_event,
     }
+}
+
+/// Enforce the passed closure is generic over its lifetime
+/// and Send for all lifetimes.
+fn type_hint<T: ?Sized, F>(f: F) -> F
+where
+    F: for<'a> AsyncFn(&'a T) -> Result<()> + Send,
+{
+    f
 }

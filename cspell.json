@@ -39,6 +39,7 @@
     "nanos",
     "netcat",
     "nsec",
+    "oneshot",
     "Ohlc",
     "pricefeed",
     "pricefeeds",

@@ -1,6 +1,9 @@
 use chrono::{Duration as ChronoDuration, Utc};
-use std::{cell::Cell, rc::Rc, time::Duration};
-use tokio::{sync::broadcast::Sender, time::sleep};
+use std::time::Duration;
+use tokio::{
+    sync::{broadcast::Sender, oneshot::Receiver},
+    time::sleep,
+};
 
 use super::{error::PythiaContextError, OracleContext};
 use crate::{
@@ -12,9 +15,10 @@ use crate::{
 /// The Scheduler holds a static reference to the running oracles and schedule configuration file with the API
 /// Its context also includes the channel sender endpoint to broadcast announcements/attestations to websockets.
 pub(crate) struct SchedulerContext<Context: OracleContext> {
-    oracle_context: Context,
-    offset_duration: Duration,
-    channel_sender: Sender<EventNotification>,
+    pub(super) oracle_context: Context,
+    pub(super) offset_duration: Duration,
+    pub(super) channel_sender: Sender<EventNotification>,
+    pub(super) error_rx: Receiver<OracleError>,
 }
 
 impl<Context: OracleContext> SchedulerContext<Context> {
@@ -22,13 +26,16 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         oracle_context: Context,
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
+        error_rx: Receiver<OracleError>,
     ) -> Result<Self, PythiaContextError> {
         let oracle_context_schedule = oracle_context.schedule();
         // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
         // The configured cron schedule may not produce a value although it is correctly parsed
         // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
         oracle_context_schedule.upcoming(Utc).next().ok_or(
-            PythiaContextError::CronScheduleProduceNoValue(oracle_context_schedule.clone()),
+            PythiaContextError::CronScheduleProduceNoValue(Box::new(
+                oracle_context_schedule.clone(),
+            )),
         )?;
 
         let offset_duration = offset_duration.to_std()?;
@@ -36,6 +43,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
             oracle_context,
             offset_duration,
             channel_sender,
+            error_rx,
         })
     }
 }
@@ -44,10 +52,10 @@ impl<Context: OracleContext> SchedulerContext<Context> {
 /// It computes a date iterator from cron-like config and spawns a thread for each type of event.
 /// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule<Context>(
-    context: SchedulerContext<Context>,
+    mut context: SchedulerContext<Context>,
 ) -> Result<(), PythiaError>
 where
-    Context: OracleContext + Clone + 'static,
+    Context: OracleContext + Clone + Send + Sync + 'static,
 {
     let oracle_context = Context::clone(&context.oracle_context);
     let event_tx = context.channel_sender;
@@ -69,16 +77,11 @@ where
         // This batching approach improves performance by reducing database operations
         let mut pending_maturations = Vec::new();
 
-        // Channel to communicate errors from spawned tasks back to the main thread
-        // Uses Rc<Cell> since we're in a single-threaded async context and need interior mutability
-        let error_state = Rc::new(Cell::new(Ok::<(), OracleError>(())));
-
         for next_time in announcement_scheduled_dates {
-            // Check for errors from previous tasks and reset the channel
-            // If previous tasks encountered an error, propagate it
-            error_state
-                .replace(Ok(()))
-                .inspect_err(|e| error!("Error in announcement thread: {}", e))?;
+            // Check if there was an error in the previous iteration
+            if let Ok(oracle_result) = context.error_rx.try_recv() {
+                return Err(PythiaError::Oracle(oracle_result));
+            }
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
@@ -95,17 +98,18 @@ where
                         "Pending maybe_std_durations size: {:?}",
                         pending_maturations.len()
                     );
+
                     let oracle_context = Context::clone(&oracle_context);
-                    let error_chan = error_state.clone();
+
                     // We spawn a detached task to process missed announcements in the background
-                    actix::spawn(async move {
+                    tokio::spawn(async move {
                         for oracle in oracle_context.oracles().values() {
                             // Collect all processed chunks and store any errors in the error channel
-                            if let result @ Err(_) = oracle
+                            if let Err(error) = oracle
                                 .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
                                 .await
                             {
-                                error_chan.set(result)
+                                oracle_context.send_error(error);
                             };
                         }
                         info!("Oracle announcements are in sync");
