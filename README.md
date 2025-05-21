@@ -315,7 +315,7 @@ Websocket answer:
 }
 ```
 
-## Run Pythia
+## Run Pythia (without Docker)
 
 To run pythia, first clone the repository:
 
@@ -357,6 +357,30 @@ docker compose up
 ```
 
 The API will run on port 8000.
+
+## Run tests using docker
+
+Pythia uses `cargo make` to make it easy to compile Pythia, set postgres in docker and its database and finally run the tests:
+
+```sh
+# Required if cargo make and sqlx are not yet installed:
+pnpm rust-prepare
+
+# Run test:
+cargo make test
+```
+
+One test is a small benchmark to choose the size of chunks to process the creation of the initial announcements at the first startup of Pythia (the chunks' size is currently set to 100 in normal run). It is ignored in previous command but you can run this test benchmark specifically using:
+
+```sh
+cargo make test-benchmark
+```
+
+And you can clean produced artifacts using:
+
+```sh
+cargo make clean
+```
 
 ### Scheduler configuration
 
