@@ -1,19 +1,12 @@
-use crate::config::AssetPair;
-use crate::config::AssetPairInfo;
-use crate::oracle::error::OracleError;
-use crate::oracle::postgres::DBconnection;
-use crate::oracle::Oracle;
-use crate::pricefeeds::ImplementedPriceFeed;
-use crate::schedule_context::api_context::ApiContext;
-use crate::schedule_context::OracleContext;
+use std::{collections::HashMap, future, str::FromStr};
 
 use actix_codec::Framed;
 use actix_web::{web, App};
 use actix_ws::Message;
-use awc::ws::Codec;
-use awc::ws::Frame;
-use awc::BoxedSocket;
-use awc::Client;
+use awc::{
+    ws::{Codec, Frame},
+    BoxedSocket, Client,
+};
 use chrono::{Duration, Utc};
 use cron::Schedule;
 use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
@@ -22,16 +15,16 @@ use json_rpc_types::{Id, Request, Version};
 use secp256k1_zkp::rand;
 use secp256k1_zkp::{Keypair, Secp256k1};
 use sqlx::postgres::PgPoolOptions;
-use std::collections::HashMap;
-use std::future;
-use std::str::FromStr;
 use tokio::sync::broadcast;
 
-use super::error::PythiaApiError;
-use super::ws::RequestContent;
-use super::EventChannel;
-use super::EventType;
-use super::GetRequest;
+use crate::{
+    config::{AssetPair, AssetPairInfo},
+    oracle::{error::OracleError, postgres::DBconnection, Oracle},
+    pricefeeds::ImplementedPriceFeed,
+    schedule_context::{api_context::ApiContext, OracleContext},
+};
+
+use super::{error::PythiaApiError, ws::RequestContent, EventChannel, EventType, GetRequest};
 
 /// A mock implementation of OracleContext for testing
 #[derive(Clone)]
