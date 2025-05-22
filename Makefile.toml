@@ -30,14 +30,14 @@ args = ["sqlx-prepare-dev"]
 # Test
 [tasks.postgres-test-up]
 description = "Launch PostgreSQL database with Docker Compose in detach mode"
-dependencies = ["postgres-down"]
+dependencies = ["postgres-test-down"]
 command = "docker"
-args = ["compose", "-f", "compose.dev.yml", "up", "-d", "postgres-test"]
+args = ["compose", "-f", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/compose.dev.yml", "up", "-d", "postgres-test"]
 
 [tasks.postgres-test-down]
 description = "Stop PostgreSQL database container"
 command = "docker"
-args = ["compose", "-f", "compose.dev.yml", "down", "postgres-test"]
+args = ["compose", "-f", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/compose.dev.yml", "down", "postgres-test"]
 
 [tasks.test]
 description = "Run all regular tests (excluding ignored benchmarks)"
