@@ -2,31 +2,69 @@
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 [tasks.default]
-dependencies = ["test"]
+alias = "test"
 
+# Docker
+[tasks.docker-up]
+description = "Launch Docker Compose"
+dependencies = ["docker-down"]
+command = "docker"
+args = ["compose", "up", "--build", "-d"]
+
+[tasks.docker-down]
+description = "Stop Docker Compose"
+command = "docker"
+args = ["compose", "down"]
+
+# Sqlx
 [tasks.sqlx-prepare]
 description = "Prepare sqlx database for tests"
 command = "pnpm"
 args = ["sqlx-prepare"]
 
+[tasks.sqlx-prepare-dev]
+description = "Prepare sqlx database for tests"
+command = "pnpm"
+args = ["sqlx-prepare-dev"]
+
+# Test
+[tasks.postgres-test-up]
+description = "Launch PostgreSQL database with Docker Compose in detach mode"
+dependencies = ["postgres-test-down"]
+command = "docker"
+args = ["compose", "-f", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/compose.dev.yml", "up", "-d", "postgres-test"]
+
+[tasks.postgres-test-down]
+description = "Stop PostgreSQL database container"
+command = "docker"
+args = ["compose", "-f", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/compose.dev.yml", "down", "postgres-test"]
+
 [tasks.test]
 description = "Run all regular tests (excluding ignored benchmarks)"
-dependencies = ["sqlx-prepare"]
+dependencies = ["sqlx-prepare-dev"]
 command = "cargo"
 args = ["test"]
 
+[tasks.test-ws]
+description = "Run Test WebSocket"
+env = { "TEST_DATABASE_URL" = "postgres://postgres:postgres@127.0.0.1:5433/pythia_test" }
+dependencies = ["sqlx-prepare-dev"]
+command = "cargo"
+args = ["test", "test_ws", "--", "--nocapture"]
+
 [tasks.test-benchmark]
 description = "Run only benchmark tests (which are marked as ignored)"
-dependencies = ["sqlx-prepare"]
+dependencies = ["sqlx-prepare-dev"]
 command = "cargo"
 args = ["test", "--", "--ignored", "--nocapture"]
 
 [tasks.test-all]
 description = "Run all tests including benchmarks"
-dependencies = ["sqlx-prepare"]
+dependencies = ["sqlx-prepare-dev"]
 command = "cargo"
 args = ["test", "--", "--include-ignored"]
 
+# Cleaning
 [tasks.clean]
 description = "Remove artifacts in target directory"
 command = "cargo"

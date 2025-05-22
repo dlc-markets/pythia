@@ -14,7 +14,8 @@
     "bake": "./scripts/bake.sh",
     "prepare": "./scripts/prepare.sh",
     "sqlx-prepare": "./scripts/sqlx-prepare.sh",
-    "rust-prepare": "./scripts/rust-prepare.sh"
+    "sqlx-prepare-dev": "./scripts/sqlx-prepare.dev.sh",
+    "install-rust-tools": "./scripts/install-rust-tools.dev.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

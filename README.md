@@ -364,10 +364,10 @@ Pythia uses `cargo make` to make it easy to compile Pythia, set postgres in dock
 
 ```sh
 # Required if cargo make and sqlx are not yet installed:
-pnpm rust-prepare
+pnpm install-rust-tools
 
-# Run test:
-cargo make test
+# Run test by default:
+cargo make
 ```
 
 One test is a small benchmark to choose the size of chunks to process the creation of the initial announcements at the first startup of Pythia (the chunks' size is currently set to 100 in normal run). It is ignored in previous command but you can run this test benchmark specifically using:
@@ -381,6 +381,8 @@ And you can clean produced artifacts using:
 ```sh
 cargo make clean
 ```
+
+See the content of `Makefile.toml` for more commands to set up and shutdown a test server and postgres db in docker.
 
 ### Scheduler configuration
 

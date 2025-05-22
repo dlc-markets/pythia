@@ -1,13 +1,13 @@
-use actix::{fut::wrap_future, prelude::*};
 use actix_web::{web, HttpRequest, HttpResponse, Result};
-use actix_web_actors::ws;
+use actix_ws::{CloseCode, CloseReason, Message, MessageStream, Session};
 use dlc_messages::oracle_msgs::OracleAnnouncement;
+use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
 use std::time::{Duration, Instant};
-use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+use tokio::{select, time};
 
-use super::{EventNotification, EventType};
+use super::{error::PythiaApiError, EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
     config::AssetPair,
@@ -22,9 +22,9 @@ enum EventData {
     Attestation(Option<AttestationResponse>),
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
-enum RequestContent {
+pub(super) enum RequestContent {
     Get(GetRequest),
     Subscription(EventChannel),
 }
@@ -41,21 +41,6 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// websocket connection is long running connection, it easier
-/// to handle with an actor
-struct PythiaWebSocket<Context: OracleContext> {
-    /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
-    /// otherwise we drop connection.
-    hb: Instant,
-    /// The Oracles instances the websocket is allowed to interact with
-    /// and the stream of broadcasted event for the client
-    api_context: ApiContext<Context>,
-    /// Subscription options to channels
-    subscribed_to: Vec<EventChannel>,
-}
-
-// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
-// #[get("/ws")]
 /// Start the websocket connection
 /// with request: `GET /ws`
 pub async fn websocket<Context>(
@@ -66,235 +51,241 @@ pub async fn websocket<Context>(
 where
     Context: OracleContext + Unpin + 'static,
 {
-    ws::start(PythiaWebSocket::new(context), &req, stream)
+    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
+
+    // Instead of spawning a new task, we'll create a future and return the response
+    actix::spawn(handle_websocket_session(session, msg_stream, context));
+
+    Ok(response)
 }
 
-impl<Context: OracleContext> PythiaWebSocket<Context> {
-    fn new(api_context: ApiContext<Context>) -> Self {
-        let mut subscription_vec = Vec::with_capacity(2);
-        // A client is by default subscribing to the channel of btcusd attestation
-        // if such oracle is available
-        if api_context.get_oracle(&AssetPair::BtcUsd).is_some() {
-            subscription_vec.push(EventChannel {
-                asset_pair: AssetPair::BtcUsd,
-                ty: EventType::Attestation,
-            });
-        }
-        Self {
-            hb: Instant::now(),
-            api_context,
-            subscribed_to: subscription_vec,
+async fn handle_websocket_session<Context>(
+    mut session: Session,
+    mut msg_stream: MessageStream,
+    context: ApiContext<Context>,
+) where
+    Context: OracleContext + Unpin + 'static,
+{
+    // A client is by default subscribing to the channel of btcusd attestation
+    // if such oracle is available
+    let mut subscribed_to = Vec::with_capacity(2);
+    if context.get_oracle(&AssetPair::BtcUsd).is_some() {
+        subscribed_to.push(EventChannel {
+            asset_pair: AssetPair::BtcUsd,
+            ty: EventType::Attestation,
+        });
+    }
+
+    // Set up heartbeat and timeout tracking
+    let mut last_heartbeat = Instant::now();
+
+    // Create a stream from event broadcast
+    let mut channel_receiver = context.channel_sender.subscribe();
+
+    // Start the heartbeat interval
+    let mut heartbeat_interval = time::interval(HEARTBEAT_INTERVAL);
+    // Main event loop
+    loop {
+        select! {
+            // Handle heartbeat interval
+            _ = heartbeat_interval.tick() => {
+                // Check client heartbeats
+                if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
+                    // Heartbeat timed out
+                    println!("Websocket Client heartbeat failed, disconnecting!");
+                    break;
+                }
+
+                // Send ping
+                if session.ping(b"").await.is_err() {
+                    break;
+                }
+            }
+
+            // Handle incoming websocket messages
+            Some(payload) = msg_stream.recv() => {
+                let msg = match payload {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        error!("WS: closing connection on protocol error: {}", &e);
+                        let _ = session.close(Some(CloseReason {
+                            code: CloseCode::Protocol,
+                            description: Some(format!("Protocol error: {}", &e)),
+                        })).await;
+                        break;
+                    }
+                };
+
+                match msg {
+                    Message::Ping(msg) => {
+                        last_heartbeat = Instant::now();
+                        if session.pong(&msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Pong(_) => {
+                        last_heartbeat = Instant::now();
+                    }
+                    Message::Text(text) => {
+                        last_heartbeat = Instant::now();
+                        if handle_text_message(&text, &context, &mut session, &mut subscribed_to).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Binary(_) => {
+                        last_heartbeat = Instant::now();
+                    }
+                    Message::Close(reason) => {
+                        let _ = session.close(reason).await;
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+
+            // Handle events from broadcast
+            Ok(event) = channel_receiver.recv() => {
+                if handle_event_notification(event, &mut session, &subscribed_to).await.is_err() {
+                    break;
+                }
+            }
+
+            // All channels closed
+            else => break,
         }
     }
 }
-impl<Context> PythiaWebSocket<Context>
+
+// TODO: replace Box dyn
+async fn handle_text_message<Context>(
+    text: &str,
+    context: &ApiContext<Context>,
+    session: &mut Session,
+    subscribed_to: &mut Vec<EventChannel>,
+) -> Result<(), PythiaApiError>
 where
     Context: OracleContext + Unpin + 'static,
 {
-    /// helper method that sends ping to client every 5 seconds (HEARTBEAT_INTERVAL).
-    ///
-    /// also this method checks heartbeats from client
-    fn hb(&self, ctx: &mut <Self as Actor>::Context) {
-        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            // check client heartbeats
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                // heartbeat timed out
-                println!("Websocket Client heartbeat failed, disconnecting!");
+    let request: JRpcRequest = match from_str(text) {
+        Ok(request) => request,
+        Err(e) => {
+            info!("WS: received invalid JSONRPC request: {}", &e);
+            return Ok(session
+                .text(format!("Received invalid JSON-RPC request: {}", &e))
+                .await?);
+        }
+    };
 
-                // stop actor
-                ctx.stop();
+    let Some(params) = request.params.as_ref() else {
+        session
+            .text("JSON-RPC request must have parameters")
+            .await?;
+        return Ok(());
+    };
 
-                // don't try to send a ping
-                return;
+    match params {
+        RequestContent::Get(get_request) => {
+            let response = match context.get_oracle(&get_request.asset_pair.asset_pair) {
+                Some(oracle) => match future_oracle_state(oracle, get_request).await {
+                    Ok(result) => to_string_pretty(&jsonrpc_event_response(&request, result)),
+                    Err(e) => {
+                        to_string_pretty(&jsonrpc_error_response(&request, Some(e.to_string())))
+                    }
+                },
+                None => to_string_pretty(&jsonrpc_error_response(&request, None)),
+            };
+
+            session
+                .text(response.expect("JSONRPC Response can always be parsed"))
+                .await?;
+        }
+        RequestContent::Subscription(channel) => {
+            match request.method.as_str() {
+                "subscribe" => {
+                    if !subscribed_to.contains(channel) {
+                        subscribed_to.push(*channel)
+                    }
+                }
+                "unsubscribe" => {
+                    subscribed_to.retain(|c| c != channel);
+                }
+                _ => {
+                    session
+                        .text(
+                            to_string_pretty(&jsonrpc_error_response(&request, None))
+                                .expect("JSONRPC Response can always be parsed"),
+                        )
+                        .await?;
+                    return Ok(());
+                }
             }
 
-            ctx.ping(b"");
-        });
+            let channel = *channel;
+
+            let response = to_string_pretty(&jsonrpc_subscription_response(request, channel));
+
+            session
+                .text(response.expect("JSONRPC Response can always be parsed"))
+                .await?;
+        }
     }
+
+    Ok(())
 }
 
-impl<Context: OracleContext + 'static + Unpin> Actor for PythiaWebSocket<Context> {
-    type Context = ws::WebsocketContext<Self>;
-
-    /// Method is called on actor start. We start the heartbeat process and websocket here and attach the event stream from scheduler.
-    fn started(&mut self, ctx: &mut Self::Context) {
-        self.hb(ctx);
-        // Attach the stream of event produced by the schedulers to the websocket
-        ctx.add_stream(BroadcastStream::from(
-            self.api_context.channel_sender.subscribe(),
-        ));
+async fn handle_event_notification(
+    event: EventNotification,
+    session: &mut Session,
+    subscribed_to: &[EventChannel],
+) -> Result<(), PythiaApiError> {
+    match event {
+        EventNotification::Announcement(asset_pair, _) => {
+            if subscribed_to.contains(&EventChannel {
+                asset_pair,
+                ty: EventType::Announcement,
+            }) {
+                session
+                    .text(
+                        to_string_pretty(&EventBroadcast::from(event))
+                            .expect("serializable response"),
+                    )
+                    .await?;
+            }
+        }
+        EventNotification::Attestation(asset_pair, _) => {
+            if subscribed_to.contains(&EventChannel {
+                asset_pair,
+                ty: EventType::Attestation,
+            }) {
+                session
+                    .text(
+                        to_string_pretty(&EventBroadcast::from(event))
+                            .expect("serializable response"),
+                    )
+                    .await?;
+            }
+        }
     }
+
+    Ok(())
 }
 
 async fn future_oracle_state(
-    oracle: Oracle,
-    request: GetRequest,
+    oracle: &Oracle,
+    request: &GetRequest,
 ) -> Result<Option<EventData>, OracleError> {
-    oracle
-        .oracle_state(&request.event_id)
-        .await
-        .map(|state| match (request.asset_pair.ty, state) {
+    oracle.oracle_state(&request.event_id).await.map(|state| {
+        match (&request.asset_pair.ty, state) {
             (EventType::Announcement, Some((announcement, _))) => {
                 Some(EventData::Announcement(announcement))
             }
-            (EventType::Attestation, Some((_, Some(attestation)))) => Some(EventData::Attestation(
-                Some((request.event_id, attestation).into()),
-            )),
+            (EventType::Attestation, Some((_, Some(attestation)))) => {
+                Some(EventData::Attestation(Some(attestation.into())))
+            }
             (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
             (_, None) => None,
-        })
-}
-
-/// Handler for `ws::Message`
-impl<Context> StreamHandler<Result<ws::Message, ws::ProtocolError>> for PythiaWebSocket<Context>
-where
-    Context: OracleContext + 'static + Unpin,
-{
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Text(request)) => {
-                self.hb = Instant::now();
-                let request: Result<JRpcRequest, serde_json::Error> = from_str(request.as_ref());
-                let request = match request {
-                    Ok(serialized_request) => serialized_request,
-                    Err(e) => {
-                        info!("WS: received invalid JSONRPC request: {}", &e);
-                        ctx.text(format!("Received invalid JSON-RPC request: {}", &e));
-                        return;
-                    }
-                };
-
-                let Some(params) = request.params.clone() else {
-                    ctx.text("JSON-RPC request must have parameters");
-                    return;
-                };
-
-                let future_state = match params {
-                    RequestContent::Get(get_request) => {
-                        let asset_pair = match get_request.asset_pair {
-                            EventChannel {
-                                asset_pair,
-                                ty: EventType::Announcement,
-                            } => asset_pair,
-                            EventChannel {
-                                asset_pair,
-                                ty: EventType::Attestation,
-                            } => asset_pair,
-                        };
-                        match self.api_context.get_oracle(&asset_pair) {
-                            Some(oracle) => future_oracle_state(oracle.clone(), get_request),
-                            None => {
-                                ctx.text(
-                                    to_string_pretty(&jsonrpc_error_response(&request, None))
-                                        .expect("JSONRPC Response can always be parsed"),
-                                );
-                                return;
-                            }
-                        }
-                    }
-                    RequestContent::Subscription(channel) => {
-                        match request.method.as_str() {
-                            "subscribe" => {
-                                if !self.subscribed_to.contains(&channel) {
-                                    self.subscribed_to.push(channel.clone())
-                                }
-                            }
-                            "unsubscribe" => {
-                                self.subscribed_to.retain(|c| c != &channel);
-                            }
-                            _ => {
-                                ctx.text(
-                                    to_string_pretty(&jsonrpc_error_response(&request, None))
-                                        .expect("JSONRPC Response can always be parsed"),
-                                );
-                                return;
-                            }
-                        }
-                        ctx.text(
-                            to_string_pretty(&jsonrpc_subscription_response(&request, channel))
-                                .expect("JSONRPC Response can always be parsed"),
-                        );
-                        return;
-                    }
-                };
-
-                // https://stackoverflow.com/questions/72068485/how-use-postgres-deadpool-postgres-with-websocket-actix-actix-web-actors
-                let fut =
-                    wrap_future::<_, Self>(future_state).map(
-                        move |result, _actor, ctx| match result {
-                            Ok(result) => ctx.text(
-                                to_string_pretty(&jsonrpc_event_response(&request, result))
-                                    .expect("JSONRPC Response can always be parsed"),
-                            ),
-                            Err(e) => ctx.text(
-                                to_string_pretty(&jsonrpc_error_response(
-                                    &request,
-                                    Some(e.to_string()),
-                                ))
-                                .expect("JSONRPC Response can always be parsed"),
-                            ),
-                        },
-                    );
-                ctx.spawn(fut);
-                // future_state.into_actor(self).spawn(ctx);
-            }
-            Ok(ws::Message::Binary(_bin)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Close(reason)) => {
-                ctx.close(reason);
-                ctx.stop();
-            }
-            _ => ctx.stop(),
         }
-    }
-}
-
-/// Handle produced attestation and send them to clients
-impl<Context> StreamHandler<Result<EventNotification, BroadcastStreamRecvError>>
-    for PythiaWebSocket<Context>
-where
-    Context: OracleContext + 'static + Unpin,
-{
-    fn handle(
-        &mut self,
-        item: Result<EventNotification, BroadcastStreamRecvError>,
-        ctx: &mut Self::Context,
-    ) {
-        let event = item.expect("attestation are rare enough it should not lag behind");
-
-        match &event {
-            EventNotification::Announcement(asset_pair, _) => {
-                if self.subscribed_to.contains(&EventChannel {
-                    asset_pair: *asset_pair,
-                    ty: EventType::Announcement,
-                }) {
-                    ctx.text(
-                        to_string_pretty(&EventBroadcast::from(event))
-                            .expect("serializable response"),
-                    );
-                }
-            }
-            EventNotification::Attestation(asset_pair, _) => {
-                if self.subscribed_to.contains(&EventChannel {
-                    asset_pair: *asset_pair,
-                    ty: EventType::Attestation,
-                }) {
-                    ctx.text(
-                        to_string_pretty(&EventBroadcast::from(event))
-                            .expect("serializable response"),
-                    );
-                }
-            }
-        }
-    }
+    })
 }
 
 type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;
@@ -341,9 +332,9 @@ fn jsonrpc_error_response(
 }
 
 fn jsonrpc_subscription_response(
-    request: &JRpcRequest,
+    request: JRpcRequest,
     channel: EventChannel,
-) -> json_rpc_types::Response<String, &str> {
+) -> json_rpc_types::Response<String, &'static str> {
     match channel {
         EventChannel {
             asset_pair,
@@ -354,7 +345,7 @@ fn jsonrpc_subscription_response(
                 "Successfully {} for announcement of the {} pair",
                 request.method, asset_pair
             )),
-            id: request.id.clone(),
+            id: request.id,
         },
         EventChannel {
             asset_pair,
@@ -365,7 +356,7 @@ fn jsonrpc_subscription_response(
                 "Successfully {} for attestation of the {} pair",
                 request.method, asset_pair
             )),
-            id: request.id.clone(),
+            id: request.id,
         },
     }
 }

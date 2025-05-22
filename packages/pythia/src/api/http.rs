@@ -249,18 +249,10 @@ pub(super) async fn force<Context: OracleContext>(
         .await
         .map_err(PythiaApiError::OracleFail)?;
 
-    let event_id: String = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-        + timestamp.timestamp().to_string().as_str();
-
     // Send event notification through the broadcast channel
-    let _ = context.channel_sender.send(
-        (
-            oracle.asset_pair_info.asset_pair,
-            attestation.clone(),
-            event_id.into_boxed_str(),
-        )
-            .into(),
-    );
+    let _ = context
+        .channel_sender
+        .send((oracle.asset_pair_info.asset_pair, attestation.clone()).into());
 
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
