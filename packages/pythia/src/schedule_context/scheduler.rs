@@ -165,14 +165,7 @@ where
                     Ok(Some(attestation)) => {
                         if Sender::receiver_count(&event_tx) != 0 {
                             event_tx
-                                .send(
-                                    (
-                                        oracle.asset_pair_info.asset_pair,
-                                        attestation,
-                                        event_id.into_boxed_str(),
-                                    )
-                                        .into(),
-                                )
+                                .send((oracle.asset_pair_info.asset_pair, attestation).into())
                                 .expect("usable channel");
                         }
                     }

@@ -31,7 +31,12 @@ pub enum PythiaApiError {
     JsonRpcParsingError(#[from] serde_json::Error),
 
     /// WebSocket communication error: {0}
+    #[cfg(test)]
     WebSocketError(String),
+
+    #[cfg(not(test))]
+    /// WebSocket closed
+    WebSocketError(#[from] actix_ws::Closed),
 }
 
 impl actix_web::error::ResponseError for PythiaApiError {
@@ -46,20 +51,20 @@ impl actix_web::error::ResponseError for PythiaApiError {
                 actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
             }
             PythiaApiError::OracleEmpty => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-            PythiaApiError::JsonRpcParsingError(_) => {
-                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
-            }
+            PythiaApiError::JsonRpcParsingError(_) => actix_web::http::StatusCode::BAD_REQUEST,
             PythiaApiError::WebSocketError(_) => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
 
+#[cfg(test)]
 impl From<actix_ws::ProtocolError> for PythiaApiError {
     fn from(err: actix_ws::ProtocolError) -> Self {
         PythiaApiError::WebSocketError(err.to_string())
     }
 }
 
+#[cfg(test)]
 impl From<actix_ws::Closed> for PythiaApiError {
     fn from(err: actix_ws::Closed) -> Self {
         PythiaApiError::WebSocketError(format!("WebSocket closed: {}", err))

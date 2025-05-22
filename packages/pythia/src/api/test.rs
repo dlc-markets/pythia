@@ -1,10 +1,12 @@
 use crate::config::AssetPair;
 use crate::config::AssetPairInfo;
+use crate::oracle::error::OracleError;
 use crate::oracle::postgres::DBconnection;
 use crate::oracle::Oracle;
 use crate::pricefeeds::ImplementedPriceFeed;
 use crate::schedule_context::api_context::ApiContext;
-use crate::schedule_context::OracleContextInner;
+use crate::schedule_context::OracleContext;
+
 use actix_codec::Framed;
 use actix_web::{web, App};
 use actix_ws::Message;
@@ -20,7 +22,6 @@ use json_rpc_types::{Id, Request, Version};
 use secp256k1_zkp::rand;
 use secp256k1_zkp::{Keypair, Secp256k1};
 use sqlx::postgres::PgPoolOptions;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::future;
 use std::str::FromStr;
@@ -35,7 +36,20 @@ use super::GetRequest;
 /// A mock implementation of OracleContext for testing
 #[derive(Clone)]
 pub struct MockContext {
-    inner: OracleContextInner,
+    oracles: HashMap<AssetPair, Oracle>,
+    schedule: Schedule,
+}
+
+impl OracleContext for MockContext {
+    fn oracles(&self) -> &HashMap<AssetPair, Oracle> {
+        &self.oracles
+    }
+
+    fn schedule(&self) -> &Schedule {
+        &self.schedule
+    }
+
+    fn send_error(&self, _error: OracleError) {}
 }
 
 impl MockContext {
@@ -72,16 +86,8 @@ impl MockContext {
         // Add the oracle to our map (same as in main.rs)
         oracles.insert(AssetPair::BtcUsd, btc_usd_oracle);
 
-        // Create an inner context
-        let inner = OracleContextInner { oracles, schedule };
-
-        Self { inner }
-    }
-}
-
-impl Borrow<OracleContextInner> for MockContext {
-    fn borrow(&self) -> &OracleContextInner {
-        &self.inner
+        // Return mocked context
+        Self { oracles, schedule }
     }
 }
 
@@ -115,45 +121,6 @@ impl DBconnection {
     }
 }
 
-/// Create a MockContext with a test database connection
-pub async fn create_test_context() -> MockContext {
-    // Create a schedule for tests
-    let schedule = Schedule::from_str("0 */1 * * * * *").expect("Valid cron schedule");
-
-    // Create mock asset pair infos for testing
-    let mut oracles = HashMap::new();
-
-    // We'll simulate having a BTC/USD oracle similar to how it's done in main.rs
-    let btc_usd_asset_pair_info = AssetPairInfo {
-        pricefeed: ImplementedPriceFeed::Lnmarkets,
-        asset_pair: AssetPair::BtcUsd,
-        event_descriptor: DigitDecompositionEventDescriptor {
-            base: 2,
-            is_signed: false,
-            unit: "usd/btc".to_string(),
-            precision: 12,
-            nb_digits: 20,
-        },
-    };
-
-    let secp = Secp256k1::new();
-    let (secret_key, _) = secp.generate_keypair(&mut rand::thread_rng());
-    let keypair = Keypair::from_secret_key(&secp, &secret_key);
-
-    // Create a test DB connection
-    let db_connection = DBconnection::get_test_db_connection().await;
-
-    // Create an Oracle with our test DB connection
-    let btc_usd_oracle = Oracle::new(btc_usd_asset_pair_info, db_connection, keypair);
-
-    oracles.insert(AssetPair::BtcUsd, btc_usd_oracle);
-
-    // Create an inner context
-    let inner = OracleContextInner { oracles, schedule };
-
-    MockContext { inner }
-}
-
 /// Populates the database with announcement events for testing
 ///
 /// Creates a specified number of announcements with different maturity times
@@ -166,7 +133,6 @@ pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> V
 
     // Find the BTC/USD oracle
     let oracle = mock_context
-        .inner
         .oracles
         .get(&AssetPair::BtcUsd)
         .expect("BTC/USD oracle must exist");
@@ -183,36 +149,9 @@ pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> V
 
         // Store the event ID
         event_ids.push(announcement.oracle_event.event_id.to_string());
-
-        println!(
-            "Created test announcement: {}",
-            announcement.oracle_event.event_id
-        );
     }
 
     event_ids
-}
-
-/// Create a mock API context with populated test database
-///
-/// This creates a context and populates the test database with announcements
-async fn create_populated_test_api_context(
-    announcement_count: usize,
-) -> (ApiContext<MockContext>, Vec<String>) {
-    let (sender, _) = broadcast::channel(32);
-    let mut context = create_test_context().await;
-
-    // Populate the database with announcements
-    let event_ids = populate_test_db(&mut context, announcement_count).await;
-
-    (
-        ApiContext {
-            oracle_context: context,
-            offset_duration: chrono::Duration::minutes(2),
-            channel_sender: sender,
-        },
-        event_ids,
-    )
 }
 
 /// Create a test server with populated database
@@ -221,7 +160,17 @@ async fn create_populated_test_api_context(
 pub async fn get_populated_test_server(
     announcement_count: usize,
 ) -> (actix_test::TestServer, Vec<String>) {
-    let (api_context, event_ids) = create_populated_test_api_context(announcement_count).await;
+    let channel_sender = broadcast::Sender::new(32);
+    let mut oracle_context = MockContext::new().await;
+
+    // Populate the database with announcements
+    let event_ids = populate_test_db(&mut oracle_context, announcement_count).await;
+
+    let api_context = ApiContext {
+        oracle_context,
+        offset_duration: chrono::Duration::minutes(2),
+        channel_sender,
+    };
 
     (
         actix_test::start(move || {
@@ -236,25 +185,18 @@ pub async fn get_populated_test_server(
     )
 }
 
-/// Create a mock API context for testing
-///
-/// This sets up a broadcast channel and creates a default MockContext
-async fn create_test_api_context() -> ApiContext<MockContext> {
-    let (sender, _) = broadcast::channel(32);
-    let context = MockContext::new().await;
-
-    ApiContext {
-        oracle_context: context,
-        offset_duration: chrono::Duration::minutes(2),
-        channel_sender: sender,
-    }
-}
-
 /// Create a test server with the WebSocket endpoint
 ///
 /// This creates an Actix test server with our API context and WebSocket route
 pub async fn get_test_server() -> actix_test::TestServer {
-    let api_context = create_test_api_context().await;
+    let channel_sender = broadcast::Sender::new(32);
+    let context = MockContext::new().await;
+
+    let api_context = ApiContext {
+        oracle_context: context,
+        offset_duration: chrono::Duration::minutes(2),
+        channel_sender,
+    };
 
     actix_test::start(move || {
         let factory = web::scope("/v1").route(
@@ -266,33 +208,16 @@ pub async fn get_test_server() -> actix_test::TestServer {
     })
 }
 
-/// Create a JSON-RPC subscription request for testing
-///
-/// Creates a request to subscribe to BTC/USD announcements
-fn create_subscription_request() -> String {
-    let request = Request {
-        jsonrpc: Version::V2,
-        method: "subscribe".to_string(),
-        params: Some(RequestContent::Subscription(EventChannel {
-            asset_pair: AssetPair::BtcUsd,
-            ty: EventType::Announcement,
-        })),
-        id: Some(Id::Num(1)),
-    };
-
-    serde_json::to_string(&request).unwrap()
-}
-
 /// Create a JSON-RPC get request for testing
 ///
 /// Creates a request to get a BTC/USD attestation event using a real event ID
 /// from the database if available.
-fn create_get_request(event_id: String) -> String {
+fn create_get_request(event_id: Box<str>) -> String {
     let request = Request {
         jsonrpc: Version::V2,
         method: "get".to_string(),
         params: Some(RequestContent::Get(GetRequest {
-            event_id: event_id.into_boxed_str(),
+            event_id,
             asset_pair: EventChannel {
                 asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Announcement,
@@ -320,7 +245,7 @@ async fn receive_next_non_ping(
         Some(Ok(frame)) => Ok(frame),
         Some(Err(e)) => Err(PythiaApiError::WebSocketError(e.to_string())),
         None => Err(PythiaApiError::WebSocketError(
-            "WebSocket returns None".to_string(),
+            "WebSocket closed".to_string(),
         )),
     }
 }
@@ -337,7 +262,6 @@ async fn test_ws_connection() {
 
     // Verify we can connect to the WebSocket endpoint
     let ws = client.ws(srv.url("/v1/ws")).connect().await.unwrap();
-    println!("WebSocket connection status: {}", ws.0.status());
 
     // Status 101 "Switching Protocols" is the correct response for WebSocket upgrade
     assert_eq!(
@@ -402,7 +326,20 @@ async fn test_ws_subscription() -> Result<(), PythiaApiError> {
         .expect("Failed to connect to WebSocket");
 
     // Send a subscription request
-    let subscription_request = create_subscription_request();
+
+    let request_id = 1337;
+    let request = Request {
+        jsonrpc: Version::V2,
+        method: "subscribe".to_string(),
+        params: Some(RequestContent::Subscription(EventChannel {
+            asset_pair: AssetPair::BtcUsd,
+            ty: EventType::Announcement,
+        })),
+        id: Some(Id::Num(request_id)),
+    };
+
+    let subscription_request = serde_json::to_string(&request).unwrap();
+
     ws.send(Message::Text(subscription_request.into()))
         .await
         .expect("Failed to send subscription");
@@ -413,6 +350,11 @@ async fn test_ws_subscription() -> Result<(), PythiaApiError> {
     match resp {
         Frame::Text(text) => {
             let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
+
+            assert!(
+                response_text.contains(&format!("\"id\": {}", request_id)),
+                "Cannot find id of the sent request in response"
+            );
             assert!(
                 response_text.contains("Successfully subscribe"),
                 "Expected subscription confirmation, got: {}",
@@ -443,8 +385,7 @@ async fn test_ws_get_request_existed_event_id() -> Result<(), PythiaApiError> {
         .expect("Failed to connect to WebSocket");
 
     // Send a get request for an existed event
-    let get_request = create_get_request(event_ids[0].clone());
-    println!("Sending get request: {}", get_request);
+    let get_request = create_get_request(event_ids[0].as_str().into());
     ws.send(Message::Text(get_request.into()))
         .await
         .expect("Failed to send get request");
@@ -454,10 +395,10 @@ async fn test_ws_get_request_existed_event_id() -> Result<(), PythiaApiError> {
     match resp {
         Frame::Text(text) => {
             let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
-            println!("Get response: {}", response_text);
             assert!(
                 response_text.contains(&event_ids[0]),
-                "Expected error response, got: {}",
+                "Expected {} in response, got: {}",
+                event_ids[0],
                 response_text
             );
         }
@@ -484,7 +425,7 @@ async fn test_ws_get_request_not_existed_event_id() -> Result<(), PythiaApiError
         .expect("Failed to connect to WebSocket");
 
     // Send a get request
-    let get_request = create_get_request("btc_usd1746003000".to_string());
+    let get_request = create_get_request("btc_usd1746003000".into());
     ws.send(Message::Text(get_request.into()))
         .await
         .expect("Failed to send get request");

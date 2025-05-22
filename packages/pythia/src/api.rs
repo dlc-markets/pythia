@@ -17,7 +17,7 @@ use crate::{
     schedule_context::{api_context::ApiContext, OracleContext},
 };
 
-#[derive(PartialEq, Deserialize, Serialize, Clone)]
+#[derive(PartialEq, Deserialize, Serialize, Clone, Copy)]
 struct EventChannel {
     #[serde(rename = "assetPair")]
     asset_pair: AssetPair,
@@ -32,7 +32,7 @@ struct GetRequest {
     event_id: Box<str>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 enum EventType {
     Announcement,
@@ -100,22 +100,22 @@ where
     Ok(())
 }
 
-impl From<(Box<str>, OracleAttestation)> for AttestationResponse {
-    fn from(value: (Box<str>, OracleAttestation)) -> Self {
+impl From<OracleAttestation> for AttestationResponse {
+    fn from(value: OracleAttestation) -> Self {
         Self {
-            event_id: value.0,
-            signatures: value.1.signatures,
-            values: value.1.outcomes,
+            event_id: value.event_id.into_boxed_str(),
+            signatures: value.signatures,
+            values: value.outcomes,
         }
     }
 }
 
-impl From<(AssetPair, OracleAttestation, Box<str>)> for EventNotification {
-    fn from(value: (AssetPair, OracleAttestation, Box<str>)) -> Self {
+impl From<(AssetPair, OracleAttestation)> for EventNotification {
+    fn from(value: (AssetPair, OracleAttestation)) -> Self {
         EventNotification::Attestation(
             value.0,
             AttestationResponse {
-                event_id: value.2,
+                event_id: value.1.event_id.into_boxed_str(),
                 signatures: value.1.signatures,
                 values: value.1.outcomes,
             },

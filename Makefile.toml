@@ -50,7 +50,7 @@ description = "Run Test WebSocket"
 env = { "TEST_DATABASE_URL" = "postgres://postgres:postgres@127.0.0.1:5433/pythia_test" }
 dependencies = ["sqlx-prepare-dev"]
 command = "cargo"
-args = ["test", "test_ws_v2", "--", "--nocapture"]
+args = ["test", "test_ws", "--", "--nocapture"]
 
 [tasks.test-benchmark]
 description = "Run only benchmark tests (which are marked as ignored)"
