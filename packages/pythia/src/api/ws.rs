@@ -185,28 +185,19 @@ where
 
     match params {
         RequestContent::Get(get_request) => {
-            match context.get_oracle(&get_request.asset_pair.asset_pair) {
-                Some(oracle) => {
-                    let response = match future_oracle_state(oracle, get_request).await {
-                        Ok(result) => to_string_pretty(&jsonrpc_event_response(&request, result)),
-                        Err(e) => {
-                            to_string_pretty(&jsonrpc_error_response(&request, Some(e.to_string())))
-                        }
-                    };
+            let response = match context.get_oracle(&get_request.asset_pair.asset_pair) {
+                Some(oracle) => match future_oracle_state(oracle, get_request).await {
+                    Ok(result) => to_string_pretty(&jsonrpc_event_response(&request, result)),
+                    Err(e) => {
+                        to_string_pretty(&jsonrpc_error_response(&request, Some(e.to_string())))
+                    }
+                },
+                None => to_string_pretty(&jsonrpc_error_response(&request, None)),
+            };
 
-                    session
-                        .text(response.expect("JSONRPC Response can always be parsed"))
-                        .await?;
-                }
-                None => {
-                    session
-                        .text(
-                            to_string_pretty(&jsonrpc_error_response(&request, None))
-                                .expect("JSONRPC Response can always be parsed"),
-                        )
-                        .await?;
-                }
-            }
+            session
+                .text(response.expect("JSONRPC Response can always be parsed"))
+                .await?;
         }
         RequestContent::Subscription(channel) => {
             match request.method.as_str() {
