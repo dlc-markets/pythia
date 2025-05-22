@@ -17,20 +17,20 @@ use crate::{
 
 #[derive(Clone, Serialize, Debug)]
 #[serde(untagged)]
-pub(crate) enum EventData {
+enum EventData {
     Announcement(OracleAnnouncement),
     Attestation(Option<AttestationResponse>),
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
-pub(crate) enum RequestContent {
+pub(super) enum RequestContent {
     Get(GetRequest),
     Subscription(EventChannel),
 }
 
 #[derive(Serialize)]
-pub(crate) struct EventBroadcastContent {
+struct EventBroadcastContent {
     channel: Box<str>,
     data: EventData,
 }
