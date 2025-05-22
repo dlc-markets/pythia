@@ -2,7 +2,7 @@
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 [tasks.default]
-dependencies = ["test"]
+alias = "test"
 
 # Docker
 [tasks.docker-up]
