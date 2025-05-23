@@ -72,7 +72,7 @@ Output example:
 ```json
 {
   "pricefeed": "lnmarkets",
-  "schedule": "0 */30 * * * * *",
+  "schedule": "0 */30 * * * *",
   "announcement_offset": "1d"
 }
 ```
@@ -390,10 +390,10 @@ Asset pair configs will be discussed in [Asset Pairs](#asset-pairs).
 
 The schedule of announcement and attestation is defined by two configurable parameters:
 
-| name                  | type                | description                                                                                                                      |
-| --------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `schedule`            | `0 */1 * * * * *`   | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily (but you must add the second field) |
-| `announcement_offset` | `(\d+(humantime))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h`            |
+| name                  | type                | description                                                                                                           |
+| --------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `schedule`            | `0 */1 * * * *`     | attestation schedule using CRON syntax. You can use crontab.guru to edit the schedule easily                          |
+| `announcement_offset` | `(\d+(humantime))+` | offset from attestation for announcement, e.g. with an offset of `5h` announcements happen at `attestation_time - 5h` |
 
 where `(humantime)` is any unit of duration in `(seconds|second|sec|s|minutes|minute|mi\|m|hours|hour|hr|h|days|day|d|weeks|week|w|months|month|M|years|year|y)`
 
