@@ -1,6 +1,6 @@
-use chrono::Duration;
+use chrono::{Duration, Utc};
 use clap::Parser;
-use cron::Schedule;
+use croner::Cron;
 use secp256k1_zkp::SecretKey;
 use sqlx::postgres::PgConnectOptions;
 use std::{fs::File, io::Read, str::FromStr};
@@ -18,7 +18,7 @@ pub(crate) struct PythiaArgs {
 
     /// Attestation schedule in Cron notation, requires offset argument, use the config file if not provided
     #[clap(long, requires("offset"), value_name = "cron schedule")]
-    schedule: Option<Schedule>,
+    schedule: Option<Cron>,
 
     /// Announcement publication offset before attestation, requires schedule argument, use the config file if not provided
     #[clap(
@@ -97,7 +97,7 @@ impl PythiaArgs {
             .transpose()?
             .unzip();
 
-        let (asset_pair_infos, oracle_scheduler_config) = (
+        let (asset_pair_infos, mut oracle_scheduler_config) = (
             cli_pairs
                 .or(file_pairs)
                 .expect("file loaded if cli missing"),
@@ -105,6 +105,12 @@ impl PythiaArgs {
                 .or(file_schedule)
                 .expect("file loaded if cli missing"),
         );
+
+        oracle_scheduler_config
+            .schedule
+            .with_seconds_optional()
+            .parse()?
+            .find_next_occurrence(&Utc::now(), false)?;
 
         info!(
             "asset pair and oracle scheduler config successfully read: {:#?}\n{}",

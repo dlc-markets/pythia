@@ -1,6 +1,6 @@
 use atomic_take::AtomicTake;
-use chrono::Duration;
-use cron::Schedule;
+use chrono::{Duration, OutOfRangeError};
+use croner::Cron;
 use scheduler::SchedulerContext;
 use std::{borrow::Borrow, collections::HashMap};
 use tokio::sync::{broadcast, oneshot};
@@ -11,18 +11,16 @@ use crate::{
 };
 
 pub(super) mod api_context;
-pub(super) mod error;
 pub(super) mod scheduler;
 
 use api_context::ApiContext;
-use error::PythiaContextError;
 
 /// The inner context of the oracle. It contains the configuration
 /// settings for the oracle of each asset pair and the schedule.
 /// It is used to create the `ApiContext` and `SchedulerContext`.
 pub(super) struct OracleContextInner {
     oracles: HashMap<AssetPair, Oracle>,
-    schedule: Schedule,
+    schedule: Cron,
     error_sender: AtomicTake<oneshot::Sender<OracleError>>,
 }
 
@@ -32,10 +30,10 @@ pub(super) struct OracleContextInner {
 /// You will often need to use `Arc` or `Box::leak` on the `OracleContextInner` to satisfy all the bounds with a reference.
 pub(super) fn create_contexts<Context>(
     oracles: HashMap<AssetPair, Oracle>,
-    schedule: Schedule,
+    schedule: Cron,
     offset_duration: Duration,
     borrow_mod: impl FnOnce(OracleContextInner) -> Context,
-) -> Result<(SchedulerContext<Context>, ApiContext<Context>), PythiaContextError>
+) -> Result<(SchedulerContext<Context>, ApiContext<Context>), OutOfRangeError>
 where
     Context: OracleContext + Clone,
 {
@@ -71,7 +69,7 @@ where
 
 pub(crate) trait OracleContext {
     fn oracles(&self) -> &HashMap<AssetPair, Oracle>;
-    fn schedule(&self) -> &Schedule;
+    fn schedule(&self) -> &Cron;
     fn send_error(&self, error: OracleError);
 }
 
@@ -82,7 +80,7 @@ where
     fn oracles(&self) -> &HashMap<AssetPair, Oracle> {
         &self.borrow().oracles
     }
-    fn schedule(&self) -> &Schedule {
+    fn schedule(&self) -> &Cron {
         &self.borrow().schedule
     }
     fn send_error(&self, error: OracleError) {

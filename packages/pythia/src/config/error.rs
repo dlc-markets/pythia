@@ -1,5 +1,6 @@
 use std::num::ParseIntError;
 
+use croner::errors::CronError;
 use displaydoc::Display;
 use thiserror::Error;
 
@@ -21,4 +22,7 @@ pub(crate) enum PythiaConfigError {
 
     /// fail to parse config file with path {0}
     ConfigParsing(#[from] serde_json::Error),
+
+    /// cron schedule cannot produce value: {0}
+    CronSchedule(#[from] CronError),
 }

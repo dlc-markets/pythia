@@ -1,6 +1,6 @@
 use crate::pricefeeds::ImplementedPriceFeed;
 use chrono::Duration;
-use cron::Schedule;
+use croner::Cron;
 use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -104,7 +104,7 @@ mod standard_duration {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct OracleSchedulerConfig {
     #[serde_as(as = "DisplayFromStr")]
-    pub(super) schedule: Schedule,
+    pub(super) schedule: Cron,
     #[serde(with = "standard_duration")]
     pub(super) announcement_offset: Duration,
 }
@@ -140,5 +140,5 @@ pub(super) struct ConfigResponse {
     #[serde(with = "standard_duration")]
     pub(super) announcement_offset: Duration,
     #[serde_as(as = "DisplayFromStr")]
-    pub(super) schedule: Schedule,
+    pub(super) schedule: Cron,
 }

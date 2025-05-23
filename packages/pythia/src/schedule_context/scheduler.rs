@@ -1,11 +1,11 @@
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, OutOfRangeError, Utc};
 use std::time::Duration;
 use tokio::{
     sync::{broadcast::Sender, oneshot::Receiver},
     time::sleep,
 };
 
-use super::{error::PythiaContextError, OracleContext};
+use super::OracleContext;
 use crate::{
     api::EventNotification,
     error::PythiaError,
@@ -27,17 +27,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
         offset_duration: ChronoDuration,
         channel_sender: Sender<EventNotification>,
         error_rx: Receiver<OracleError>,
-    ) -> Result<Self, PythiaContextError> {
-        let oracle_context_schedule = oracle_context.schedule();
-        // This is to prevent a panic produced in start_schedule by reaching "unreachable" marked code
-        // The configured cron schedule may not produce a value although it is correctly parsed
-        // Using "59 59 23 31 11 * 2100" as cron schedule in config file trigger this error in current cron crate version
-        oracle_context_schedule.upcoming(Utc).next().ok_or(
-            PythiaContextError::CronScheduleProduceNoValue(Box::new(
-                oracle_context_schedule.clone(),
-            )),
-        )?;
-
+    ) -> Result<Self, OutOfRangeError> {
         let offset_duration = offset_duration.to_std()?;
         Ok(Self {
             oracle_context,
@@ -65,10 +55,10 @@ where
 
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
-    let attestation_scheduled_dates = oracle_context.schedule().after_owned(start_time);
+    let attestation_scheduled_dates = oracle_context.schedule().iter_after(start_time);
     let announcement_scheduled_dates = oracle_context
         .schedule()
-        .after_owned(start_time)
+        .iter_after(start_time)
         .map(move |date| date - context.offset_duration);
 
     let announcement_thread = async move {
