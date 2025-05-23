@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future, str::FromStr};
+use std::{collections::HashMap, future};
 
 use actix_codec::Framed;
 use actix_web::{web, App};
@@ -8,7 +8,7 @@ use awc::{
     BoxedSocket, Client,
 };
 use chrono::{Duration, Utc};
-use cron::Schedule;
+use croner::Cron;
 use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use futures_util::{SinkExt, StreamExt};
 use json_rpc_types::{Id, Request, Version};
@@ -30,7 +30,7 @@ use super::{error::PythiaApiError, ws::RequestContent, EventChannel, EventType, 
 #[derive(Clone)]
 pub struct MockContext {
     oracles: HashMap<AssetPair, Oracle>,
-    schedule: Schedule,
+    schedule: Cron,
 }
 
 impl OracleContext for MockContext {
@@ -38,7 +38,7 @@ impl OracleContext for MockContext {
         &self.oracles
     }
 
-    fn schedule(&self) -> &Schedule {
+    fn schedule(&self) -> &Cron {
         &self.schedule
     }
 
@@ -48,7 +48,10 @@ impl OracleContext for MockContext {
 impl MockContext {
     async fn new() -> Self {
         // Create a default hourly schedule for tests
-        let schedule = Schedule::from_str("0 */1 * * * * *").expect("Valid cron schedule");
+        let schedule = Cron::new("0 */1 * * * *")
+            .with_seconds_optional()
+            .parse()
+            .expect("Valid cron schedule");
 
         // Create mock asset pair infos for testing
         let mut oracles = HashMap::new();

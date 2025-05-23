@@ -4,7 +4,7 @@ use actix_web::{
     FromRequest,
 };
 use chrono::Duration;
-use cron::Schedule;
+use croner::Cron;
 use tokio::sync::broadcast::Sender;
 
 use crate::{api::EventNotification, oracle::Oracle};
@@ -42,7 +42,7 @@ impl<Context: OracleContext> ApiContext<Context> {
     }
 
     /// Get the schedule
-    pub(crate) fn schedule(&self) -> &Schedule {
+    pub(crate) fn schedule(&self) -> &Cron {
         self.oracle_context.schedule()
     }
 }

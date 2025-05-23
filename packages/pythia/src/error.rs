@@ -1,10 +1,10 @@
+use chrono::OutOfRangeError;
 use displaydoc::Display;
 use thiserror::Error;
 use tokio::task::JoinError;
 
 use crate::{
     api::error::PythiaApiError, config::error::PythiaConfigError, oracle::error::OracleError,
-    schedule_context::error::PythiaContextError,
 };
 
 #[derive(Display, Error)]
@@ -22,7 +22,7 @@ pub enum PythiaError {
     Postgres(#[from] sqlx::Error),
 
     /// Context Error: {0}
-    ContextSetup(#[from] PythiaContextError),
+    ContextSetup(#[from] OutOfRangeError),
 
     /// Pythia API or Scheduler panicked: {0}
     Panic(#[from] JoinError),
