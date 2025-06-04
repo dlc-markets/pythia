@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [
-	"./packages/pythia",
-]
+members = ["./packages/pythia"]
+
+[patch.crates-io]
+cron = { git = "https://github.com/Pantamis/cron.git", branch = "special_specifier" }
