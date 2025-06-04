@@ -3,7 +3,6 @@ use chrono::Duration;
 use cron::Schedule;
 use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
 use std::fmt::{self, Debug, Display, Formatter};
 
 #[cfg(test)]
@@ -100,10 +99,8 @@ mod standard_duration {
     }
 }
 
-#[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct OracleSchedulerConfig {
-    #[serde_as(as = "DisplayFromStr")]
     pub(super) schedule: Schedule,
     #[serde(with = "standard_duration")]
     pub(super) announcement_offset: Duration,
@@ -133,12 +130,10 @@ struct ConfigurationFile {
     oracle_scheduler_config: OracleSchedulerConfig,
 }
 
-#[serde_as]
 #[derive(Serialize)]
 pub(super) struct ConfigResponse {
     pub(super) pricefeed: ImplementedPriceFeed,
     #[serde(with = "standard_duration")]
     pub(super) announcement_offset: Duration,
-    #[serde_as(as = "DisplayFromStr")]
     pub(super) schedule: Schedule,
 }
