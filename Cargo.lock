@@ -4056,3 +4056,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "cron"
+version = "0.15.0"
+source = "git+https://github.com/Pantamis/cron.git?branch=special_specifier#fa734e7870acc0d8f1347eef00d118dd48adcbe4"
