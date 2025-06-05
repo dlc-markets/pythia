@@ -1,6 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::asset_pair::AssetPair;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -26,7 +25,6 @@ struct Ohlc {
     open: String,
 }
 
-#[async_trait]
 impl PriceFeed for Bitstamp {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
@@ -65,8 +63,7 @@ impl PriceFeed for Bitstamp {
             )));
         }
 
-        Ok(res
-            .data
+        res.data
             .ok_or(PriceFeedError::Server(
                 "Failed to parse price from bitstamp: no data field".to_string(),
             ))?
@@ -79,6 +76,6 @@ impl PriceFeed for Bitstamp {
             .parse()
             .map_err(|e| {
                 PriceFeedError::Server(format!("Failed to parse price from bitstamp: {e}"))
-            })?)
+            })
     }
 }

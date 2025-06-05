@@ -1,6 +1,5 @@
 use crate::data_models::asset_pair::AssetPair;
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -20,7 +19,6 @@ struct DeribitResponse {
     us_in: u64,
 }
 
-#[async_trait]
 impl PriceFeed for Deribit {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {

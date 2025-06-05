@@ -1,6 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::asset_pair::AssetPair;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -8,7 +7,6 @@ use serde_json::Value;
 
 pub(super) struct GateIo {}
 
-#[async_trait]
 impl PriceFeed for GateIo {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
@@ -37,15 +35,13 @@ impl PriceFeed for GateIo {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
-        Ok(res[0][5]
+        res[0][5]
             .as_str()
             .ok_or(PriceFeedError::Server(format!(
                 "Failed to parse price from gate.io: expect a string, got {:#?}",
                 res[0][5]
             )))?
             .parse()
-            .map_err(|e| {
-                PriceFeedError::Server(format!("Failed to parse price from gate.io: {e}"))
-            })?)
+            .map_err(|e| PriceFeedError::Server(format!("Failed to parse price from gate.io: {e}")))
     }
 }

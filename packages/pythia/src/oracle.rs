@@ -221,7 +221,6 @@ impl Oracle {
         let outcome = self
             .asset_pair_info
             .pricefeed
-            .get_pricefeed()
             .retrieve_price(self.asset_pair_info.asset_pair, event.maturity)
             .await?;
 

@@ -1,6 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::asset_pair::AssetPair;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -16,7 +15,6 @@ struct Response {
     result: HashMap<String, Value>,
 }
 
-#[async_trait]
 impl PriceFeed for Kraken {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
@@ -53,15 +51,13 @@ impl PriceFeed for Kraken {
             .get(asset_pair_translation)
             .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
 
-        Ok(res[0][1]
+        res[0][1]
             .as_str()
             .ok_or(PriceFeedError::Server(format!(
                 "Failed to parse price from kraken: expect a string, got {:#?}",
                 res[0][1]
             )))?
             .parse()
-            .map_err(|e| {
-                PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
-            })?)
+            .map_err(|e| PriceFeedError::Server(format!("Failed to parse price from kraken: {e}")))
     }
 }

@@ -9,7 +9,6 @@ actix-cors = "0.7.0"
 actix-web = "4.8.0"
 actix-ws = "0.3.0"
 arrayvec = { version = "0.7.6", features = ["serde"] }
-async-trait = "0.1.53"
 atomic-take = "1.1.0"
 bitcoin_hashes = "0.14.0"
 chrono = { version = "0.4", features = ["serde"] }

@@ -1,6 +1,5 @@
 use crate::data_models::asset_pair::AssetPair;
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
 use log::debug;
@@ -16,7 +15,6 @@ struct LnmarketsQuote {
     pub index: f64,
 }
 
-#[async_trait]
 impl PriceFeed for Lnmarkets {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
         match asset_pair {
