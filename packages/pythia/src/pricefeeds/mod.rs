@@ -55,6 +55,18 @@ impl ImplementedPriceFeed {
     }
 }
 
+impl Display for ImplementedPriceFeed {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Lnmarkets => write!(f, "lnmarkets"),
+            Self::Deribit => write!(f, "deribit"),
+            Self::Kraken => write!(f, "kraken"),
+            Self::GateIo => write!(f, "gateio"),
+            Self::Bitstamp => write!(f, "bitstamp"),
+        }
+    }
+}
+
 // Pricefeeds can be obtain by coding a pricefeed which simply aggregate other pricefeeds response
 
 #[cfg(test)]
