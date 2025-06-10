@@ -151,7 +151,6 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
                 (oracle
                     .asset_pair_info
                     .pricefeed
-                    .get_pricefeed()
                     .retrieve_price(AssetPair::BtcUsd, date)
                     .await
                     .unwrap()

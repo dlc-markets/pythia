@@ -1,5 +1,6 @@
+use std::fmt::{self, Display, Formatter};
+
 use crate::AssetPair;
-use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,6 @@ use error::Result;
 #[cfg(test)]
 use strum::EnumIter;
 
-#[async_trait]
 pub(crate) trait PriceFeed {
     fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
     async fn retrieve_price(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Result<f64>;
@@ -34,13 +34,37 @@ pub(crate) enum ImplementedPriceFeed {
 }
 
 impl ImplementedPriceFeed {
-    pub fn get_pricefeed(self) -> Box<dyn PriceFeed + Send + Sync> {
+    pub async fn retrieve_price(
+        &self,
+        asset_pair: AssetPair,
+        datetime: DateTime<Utc>,
+    ) -> Result<f64> {
         match self {
-            Self::Lnmarkets => Box::new(lnm::Lnmarkets {}),
-            Self::Deribit => Box::new(deribit::Deribit {}),
-            Self::Kraken => Box::new(kraken::Kraken {}),
-            Self::GateIo => Box::new(gateio::GateIo {}),
-            Self::Bitstamp => Box::new(bitstamp::Bitstamp {}),
+            Self::Lnmarkets => lnm::Lnmarkets {}.retrieve_price(asset_pair, datetime).await,
+            Self::Deribit => {
+                deribit::Deribit {}
+                    .retrieve_price(asset_pair, datetime)
+                    .await
+            }
+            Self::Kraken => kraken::Kraken {}.retrieve_price(asset_pair, datetime).await,
+            Self::GateIo => gateio::GateIo {}.retrieve_price(asset_pair, datetime).await,
+            Self::Bitstamp => {
+                bitstamp::Bitstamp {}
+                    .retrieve_price(asset_pair, datetime)
+                    .await
+            }
+        }
+    }
+}
+
+impl Display for ImplementedPriceFeed {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Lnmarkets => write!(f, "lnmarkets"),
+            Self::Deribit => write!(f, "deribit"),
+            Self::Kraken => write!(f, "kraken"),
+            Self::GateIo => write!(f, "gateio"),
+            Self::Bitstamp => write!(f, "bitstamp"),
         }
     }
 }
@@ -63,7 +87,6 @@ mod test {
         let now = Utc::now().trunc_subsecs(0);
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
-                .get_pricefeed()
                 .retrieve_price(AssetPair::BtcUsd, now)
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
