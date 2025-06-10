@@ -104,9 +104,9 @@ struct ConfigurationFile {
 }
 
 #[derive(Serialize)]
-pub(super) struct ConfigResponse {
-    pub(super) pricefeed: ImplementedPriceFeed,
+pub(super) struct ConfigResponse<'a> {
+    pub(super) pricefeed: &'a str,
     #[serde(with = "standard_duration")]
     pub(super) announcement_offset: Duration,
-    pub(super) schedule: Schedule,
+    pub(super) schedule: &'a Schedule,
 }

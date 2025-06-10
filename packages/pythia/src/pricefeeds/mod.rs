@@ -2,6 +2,7 @@ use crate::data_models::asset_pair::AssetPair;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::fmt::{self, Display, Formatter};
 
 pub(crate) mod error;
 use error::Result;
@@ -51,6 +52,18 @@ impl ImplementedPriceFeed {
                     .retrieve_price(asset_pair, datetime)
                     .await
             }
+        }
+    }
+}
+
+impl Display for ImplementedPriceFeed {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Lnmarkets => write!(f, "lnmarkets"),
+            Self::Deribit => write!(f, "deribit"),
+            Self::Kraken => write!(f, "kraken"),
+            Self::GateIo => write!(f, "gateio"),
+            Self::Bitstamp => write!(f, "bitstamp"),
         }
     }
 }

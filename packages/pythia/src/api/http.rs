@@ -75,9 +75,9 @@ pub(super) async fn config<Context: OracleContext>(
         .get_oracle(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse {
-        pricefeed: oracle.asset_pair_info.pricefeed,
+        pricefeed: &oracle.asset_pair_info.pricefeed.to_string(),
         announcement_offset: context.offset_duration,
-        schedule: context.schedule().clone(),
+        schedule: context.schedule(),
     }))
 }
 
