@@ -1,74 +1,45 @@
-use crate::data_models::asset_pair::AssetPair;
 use crate::data_models::event_ids::EventId;
+use crate::data_models::{asset_pair::AssetPair, expiries::Expiry};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
 use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
 
-pub(super) struct Deribit {}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-
-struct DeribitQuote {
-    index_price: f64,
+pub(super) enum Deribit {
+    NoForward,
+    OptionExpiries,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-struct DeribitResponse {
-    result: DeribitQuote,
-    us_in: u64,
-}
+mod forward_price;
+mod index_price;
 
 impl PriceFeed for Deribit {
+    fn compute_event_ids(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Vec<EventId> {
+        match self {
+            Deribit::NoForward => {
+                vec![EventId::spot_from_pair_and_timestamp(asset_pair, datetime)]
+            }
+            Deribit::OptionExpiries => {
+                let event_ids = forward_price::option_expiries_event_ids(asset_pair, datetime);
+                debug!("Forward event ids at {}: {:#?}", datetime, event_ids);
+                event_ids
+            }
+        }
+    }
+
     async fn retrieve_prices(
         &self,
         asset_pair: AssetPair,
         instant: DateTime<Utc>,
     ) -> Result<Vec<(EventId, Option<f64>)>> {
-        let client = Client::new();
-        let start_time = instant.timestamp();
-
-        let now = Utc::now().timestamp();
-        if now - start_time > 60 {
-            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
+        match self {
+            Deribit::NoForward => index_price::retrieve_index_price(asset_pair, instant).await,
+            Deribit::OptionExpiries => {
+                forward_price::retrieve_option_prices(asset_pair, instant).await
+            }
         }
-
-        let asset_pair_translation = match asset_pair {
-            AssetPair::BtcUsd => "btc_usd",
-        };
-
-        #[derive(serde::Serialize)]
-        struct DeribitQueryParams {
-            index_name: &'static str,
-        }
-
-        debug!("sending Deribit http request");
-        let res: DeribitResponse = client
-            .get("https://www.deribit.com/api/v2/public/get_index_price")
-            .query(&DeribitQueryParams {
-                index_name: asset_pair_translation,
-            })
-            .expect("can be serialized")
-            .send()
-            .await
-            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
-            .json()
-            .await
-            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
-        debug!("received response: {res:#?}");
-
-        // Deribit does not allow to retrieve past index price
-        // So we check that we are not asking for price more than a minute ago
-        // if we do then we return that price is not available to not attest anything
-        // A fallback pricefeed can be used instead in the future
-
-        if res.us_in / 1_000_000 - start_time as u64 > 60 {
-            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
-        }
-
-        let event_id = self.compute_event_ids(asset_pair, instant)[0];
-
-        Ok(vec![(event_id, Some(res.result.index_price))])
     }
 }
