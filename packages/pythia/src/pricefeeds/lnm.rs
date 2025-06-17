@@ -1,4 +1,4 @@
-use crate::data_models::asset_pair::AssetPair;
+use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
@@ -16,13 +16,11 @@ struct LnmarketsQuote {
 }
 
 impl PriceFeed for Lnmarkets {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, f64)>> {
         let client = Client::new();
 
         // LnMarket is only return price at minute o'clock
@@ -49,6 +47,8 @@ impl PriceFeed for Lnmarkets {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
+
         if res[0].time.and_utc().timestamp() != start_time {
             return Err(PriceFeedError::PriceNotAvailable(
                 asset_pair,
@@ -56,6 +56,6 @@ impl PriceFeed for Lnmarkets {
             ));
         }
 
-        Ok(res[0].index)
+        Ok(vec![(event_id, res[0].index)])
     }
 }

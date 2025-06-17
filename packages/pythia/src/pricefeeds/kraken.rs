@@ -1,5 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
-use crate::data_models::asset_pair::AssetPair;
+use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -16,15 +16,15 @@ struct Response {
 }
 
 impl PriceFeed for Kraken {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "XXBTZUSD",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, f64)>> {
         let client = Client::new();
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
+        let asset_pair_translation = match asset_pair {
+            AssetPair::BtcUsd => "XXBTZUSD",
+        };
         let start_time = instant.timestamp();
         debug!("sending kraken http request");
         let res: Response = client
@@ -46,18 +46,24 @@ impl PriceFeed for Kraken {
             )));
         }
 
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
+
         let res = res
             .result
             .get(asset_pair_translation)
             .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
 
-        res[0][1]
+        let response = res[0][1]
             .as_str()
             .ok_or(PriceFeedError::Server(format!(
                 "Failed to parse price from kraken: expect a string, got {:#?}",
                 res[0][1]
             )))?
             .parse()
-            .map_err(|e| PriceFeedError::Server(format!("Failed to parse price from kraken: {e}")))
+            .map_err(|e| {
+                PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
+            })?;
+
+        Ok(vec![(event_id, response)])
     }
 }

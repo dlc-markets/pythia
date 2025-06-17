@@ -8,7 +8,6 @@ use tokio::{
 use super::{error::PythiaContextError, OracleContext};
 use crate::{
     api::EventNotification,
-    data_models::event_ids::EventId,
     error::PythiaError,
     oracle::{error::OracleError, CHUNK_SIZE},
 };
@@ -124,14 +123,16 @@ where
 
                 for oracle in oracle_context.oracles().values() {
                     let perhaps_announcement = oracle
-                        .create_announcement(next_time + context.offset_duration)
-                        .await;
+                        .create_announcements_at_date(next_time + context.offset_duration)
+                        .await?;
 
                     // To avoid flooding the websocket with announcements when starting. We only broadcast the announcement created after the sleep function
                     if Sender::receiver_count(&cloned_event_tx) != 0 {
-                        cloned_event_tx
-                            .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
-                            .expect("usable channel");
+                        perhaps_announcement.into_iter().for_each(|announcement| {
+                            cloned_event_tx
+                                .send((oracle.asset_pair_info.asset_pair, announcement).into())
+                                .expect("usable channel");
+                        })
                     }
                 }
             } else {
@@ -157,25 +158,28 @@ where
             };
 
             for oracle in oracle_context.oracles().values() {
-                let event_id = EventId::spot_from_pair_and_timestamp(
-                    oracle.asset_pair_info.asset_pair,
-                    next_time,
-                );
-
-                let perhaps_attestation = oracle.try_attest_event(event_id).await;
+                let perhaps_attestation = oracle.attest_at_date(next_time).await;
 
                 match perhaps_attestation {
-                    Ok(Some(attestation)) => {
-                        if Sender::receiver_count(&event_tx) != 0 {
-                            event_tx
-                                .send((oracle.asset_pair_info.asset_pair, attestation).into())
-                                .expect("usable channel");
+                    Ok(attestations) => {
+                        for attestation in attestations {
+                            if let Some(attestation) = attestation {
+                                if Sender::receiver_count(&event_tx) != 0 {
+                                    event_tx
+                                        .send(
+                                            (oracle.asset_pair_info.asset_pair, attestation).into(),
+                                        )
+                                        .expect("usable channel");
+                                }
+                            } else {
+                                error!(
+                                    "The oracle scheduler failed to attest an event at date {}: missing announcement in DB",
+                                    next_time
+                                )
+                            }
                         }
                     }
-                    Ok(None) => error!(
-                        "The oracle scheduler failed to attest: {event_id}: no announcement found"
-                    ),
-                    Err(e) => error!("The oracle scheduler failed to attest: {e}"),
+                    Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
                 }
             }
         }

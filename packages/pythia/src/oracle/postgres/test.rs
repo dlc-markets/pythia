@@ -239,7 +239,10 @@ mod test_insert_many_announcements {
 
         // Create a test announcement from a secret_key
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -298,8 +301,8 @@ mod test_insert_many_announcements {
             now + Duration::hours(3),
             now + Duration::hours(5),
         ];
-        let events_to_insert20 = oracle20.prepare_events_to_insert(&maturations_20)?;
-        let events_to_insert8 = oracle8.prepare_events_to_insert(&maturations_8)?;
+        let events_to_insert20 = oracle20.prepare_events_to_insert(&maturations_20);
+        let events_to_insert8 = oracle8.prepare_events_to_insert(&maturations_8);
 
         // Get number of rows before inserting announcements (oracle with 20 digits)
         let mut rows_at_start =
@@ -354,7 +357,10 @@ mod test_insert_many_announcements {
 
         // Create a test announcement from a secret_key
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement twice
@@ -399,7 +405,7 @@ mod test_insert_many_announcements {
         }
 
         // Prepare all announcements
-        let events_to_insert = oracle.prepare_events_to_insert(&maturities)?;
+        let events_to_insert = oracle.prepare_events_to_insert(&maturities);
 
         // Count rows before insertion to calculate affected rows later
         let rows_before =
@@ -501,21 +507,26 @@ mod test_insert_many_announcements {
         let now = Utc::now();
         let mut rng = thread_rng();
         let events_to_insert = vec![
-            oracle_20
-                .prepare_event_to_insert(now + Duration::minutes(3), &mut rng)
-                .expect("test announcement 1 should be created"),
-            oracle_8
-                .prepare_event_to_insert(now + Duration::minutes(3), &mut rng)
-                .expect("test announcement 2 should be created"),
-            oracle_20
-                .prepare_event_to_insert(now, &mut rng)
-                .expect("test announcement 3 should be created"),
-            oracle_20
-                .prepare_event_to_insert(now + Duration::minutes(1), &mut rng)
-                .expect("test announcement 4 should be created"),
-            oracle_8
-                .prepare_event_to_insert(now + Duration::minutes(1), &mut rng)
-                .expect("test announcement 5 should be created"),
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now + Duration::minutes(3), &mut rng);
+                x.next().expect("test announcement 1 should be created")
+            },
+            {
+                let mut x = oracle_8.prepare_event_to_insert(now + Duration::minutes(3), &mut rng);
+                x.next().expect("test announcement 2 should be created")
+            },
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now, &mut rng);
+                x.next().expect("test announcement 3 should be created")
+            },
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now + Duration::minutes(1), &mut rng);
+                x.next().expect("test announcement 4 should be created")
+            },
+            {
+                let mut x = oracle_8.prepare_event_to_insert(now + Duration::minutes(1), &mut rng);
+                x.next().expect("test announcement 5 should be created")
+            },
         ];
 
         // Insert all announcements at once, this should panic
@@ -576,7 +587,10 @@ mod test_get_many_events {
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -616,8 +630,14 @@ mod test_get_many_events {
         let maturity1 = now + Duration::hours(1);
         let maturity2 = now + Duration::hours(2);
 
-        let event_to_insert1 = oracle20.prepare_event_to_insert(maturity1, &mut thread_rng())?;
-        let event_to_insert2 = oracle8.prepare_event_to_insert(maturity2, &mut thread_rng())?;
+        let event_to_insert1 = oracle20
+            .prepare_event_to_insert(maturity1, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
+        let event_to_insert2 = oracle8
+            .prepare_event_to_insert(maturity2, &mut thread_rng())
+            .next()
+            .expect("test announcement 2 should be created");
         let announcement1 = event_to_insert1.as_announcement(oracle20.get_public_key());
         let announcement2 = event_to_insert2.as_announcement(oracle8.get_public_key());
 
@@ -664,7 +684,10 @@ mod test_get_many_events {
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -697,7 +720,10 @@ mod test_get_many_events {
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -731,7 +757,10 @@ mod test_get_many_events {
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
         let event_id = announcement.oracle_event.event_id;
 
@@ -789,7 +818,10 @@ mod test_get_many_events {
 
         for i in 0..BATCH_SIZE {
             let maturity = now + Duration::minutes(i as i64);
-            let event_to_insert = oracle.prepare_event_to_insert(maturity, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturity, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
             event_ids.push(event_to_insert.event_id);
             events_to_insert.push(event_to_insert);
         }

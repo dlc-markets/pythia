@@ -138,8 +138,10 @@ pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> V
 
         // Create announcement
         let announcement = oracle
-            .create_announcement(maturity_time)
+            .create_announcements_at_date(maturity_time)
             .await
+            .expect("Failed to create announcement")
+            .pop()
             .expect("Failed to create announcement");
 
         // Store the event ID

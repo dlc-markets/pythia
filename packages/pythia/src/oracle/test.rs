@@ -68,7 +68,12 @@ async fn test_oracle_setup(tbd: PgPool) {
 }
 
 async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
-    let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+    let oracle_announcement = oracle
+        .create_announcements_at_date(date)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
 
     let db_oracle_announcement = oracle
         .oracle_state(
@@ -115,7 +120,12 @@ async fn announcements_tests(tbd: PgPool) {
 }
 
 async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
-    let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+    let oracle_announcement = oracle
+        .create_announcements_at_date(date)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
     let now = Utc::now();
     let oracle_attestation = match oracle
         .try_attest_event(oracle_announcement.oracle_event.event_id)
@@ -172,9 +182,12 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
                 (oracle
                     .asset_pair_info
                     .pricefeed
-                    .retrieve_price(AssetPair::BtcUsd, date)
+                    .retrieve_prices(AssetPair::BtcUsd, date)
                     .await
                     .unwrap()
+                    .pop()
+                    .unwrap()
+                    .1
                     - attestation
                         .outcomes
                         .iter()
@@ -905,7 +918,10 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let event_to_insert = oracle.prepare_event_to_insert(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
             let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify event ID format (asset_pair + timestamp)
@@ -966,7 +982,10 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let event_to_insert = oracle.prepare_event_to_insert(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
 
             let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
@@ -994,7 +1013,10 @@ mod unittest {
 
             for &digits in &digit_counts {
                 let oracle = create_test_oracle_with_digits(&db, digits)?;
-                let event_to_insert = oracle.prepare_event_to_insert(maturation, &mut rng)?;
+                let event_to_insert = oracle
+                    .prepare_event_to_insert(maturation, &mut rng)
+                    .next()
+                    .expect("test announcement 1 should be created");
                 let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
                 // Verify the nonce counts match the digit count
@@ -1032,8 +1054,10 @@ mod unittest {
             ];
 
             for &maturation in &maturation_times {
-                let event_to_insert =
-                    oracle.prepare_event_to_insert(maturation, &mut thread_rng())?;
+                let event_to_insert = oracle
+                    .prepare_event_to_insert(maturation, &mut thread_rng())
+                    .next()
+                    .expect("test announcement 1 should be created");
                 let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
                 // Verify the maturation time is set correctly
@@ -1070,7 +1094,10 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let event_to_insert = oracle.prepare_event_to_insert(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
             let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify the signature
@@ -1105,8 +1132,14 @@ mod unittest {
 
             // Prepare two announcements with the same parameters
             let mut rng = thread_rng();
-            let event_to_insert1 = oracle.prepare_event_to_insert(maturation, &mut rng)?;
-            let event_to_insert2 = oracle.prepare_event_to_insert(maturation, &mut rng)?;
+            let event_to_insert1 = oracle
+                .prepare_event_to_insert(maturation, &mut rng)
+                .next()
+                .expect("test announcement 1 should be created");
+            let event_to_insert2 = oracle
+                .prepare_event_to_insert(maturation, &mut rng)
+                .next()
+                .expect("test announcement 2 should be created");
             let announcement1 = event_to_insert1.as_announcement(oracle.get_public_key());
             let announcement2 = event_to_insert2.as_announcement(oracle.get_public_key());
 

@@ -1,5 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
-use crate::data_models::asset_pair::AssetPair;
+use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
 use chrono::{DateTime, Utc};
 use log::debug;
 use reqwest::Client;
@@ -26,15 +26,15 @@ struct Ohlc {
 }
 
 impl PriceFeed for Bitstamp {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "btcusd",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, f64)>> {
         let client = Client::new();
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
+        let asset_pair_translation = match asset_pair {
+            AssetPair::BtcUsd => "btcusd",
+        };
         let start_time = instant.timestamp();
         debug!("sending bitstamp http request");
         let res: Response = client
@@ -63,7 +63,10 @@ impl PriceFeed for Bitstamp {
             )));
         }
 
-        res.data
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
+
+        let response = res
+            .data
             .ok_or(PriceFeedError::Server(
                 "Failed to parse price from bitstamp: no data field".to_string(),
             ))?
@@ -76,6 +79,8 @@ impl PriceFeed for Bitstamp {
             .parse()
             .map_err(|e| {
                 PriceFeedError::Server(format!("Failed to parse price from bitstamp: {e}"))
-            })
+            })?;
+
+        Ok(vec![(event_id, response)])
     }
 }

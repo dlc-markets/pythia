@@ -1,4 +1,5 @@
 use crate::data_models::asset_pair::AssetPair;
+use crate::data_models::event_ids::EventId;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -11,8 +12,14 @@ use error::Result;
 use strum::EnumIter;
 
 pub(crate) trait PriceFeed {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str;
-    async fn retrieve_price(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Result<f64>;
+    fn compute_event_ids(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Vec<EventId> {
+        vec![EventId::spot_from_pair_and_timestamp(asset_pair, datetime)]
+    }
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        datetime: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, f64)>>;
 }
 
 mod bitstamp;
@@ -21,7 +28,7 @@ mod gateio;
 mod kraken;
 mod lnm;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(test, derive(EnumIter))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ImplementedPriceFeed {
@@ -33,26 +40,54 @@ pub(crate) enum ImplementedPriceFeed {
 }
 
 impl ImplementedPriceFeed {
-    pub async fn retrieve_price(
+    pub fn events_at_date(&self, asset_pair: AssetPair, date: DateTime<Utc>) -> Vec<EventId> {
+        match self {
+            Self::Lnmarkets => lnm::Lnmarkets {}.compute_event_ids(asset_pair, date),
+            Self::Deribit => deribit::Deribit {}.compute_event_ids(asset_pair, date),
+            Self::Kraken => kraken::Kraken {}.compute_event_ids(asset_pair, date),
+            Self::GateIo => gateio::GateIo {}.compute_event_ids(asset_pair, date),
+            Self::Bitstamp => bitstamp::Bitstamp {}.compute_event_ids(asset_pair, date),
+        }
+    }
+    pub async fn retrieve_prices(
         &self,
         asset_pair: AssetPair,
         datetime: DateTime<Utc>,
-    ) -> Result<f64> {
-        match self {
-            Self::Lnmarkets => lnm::Lnmarkets {}.retrieve_price(asset_pair, datetime).await,
+    ) -> Result<Vec<(EventId, f64)>> {
+        let prices = match self {
+            Self::Lnmarkets => {
+                lnm::Lnmarkets {}
+                    .retrieve_prices(asset_pair, datetime)
+                    .await
+            }
             Self::Deribit => {
                 deribit::Deribit {}
-                    .retrieve_price(asset_pair, datetime)
+                    .retrieve_prices(asset_pair, datetime)
                     .await
             }
-            Self::Kraken => kraken::Kraken {}.retrieve_price(asset_pair, datetime).await,
-            Self::GateIo => gateio::GateIo {}.retrieve_price(asset_pair, datetime).await,
+            Self::Kraken => {
+                kraken::Kraken {}
+                    .retrieve_prices(asset_pair, datetime)
+                    .await
+            }
+            Self::GateIo => {
+                gateio::GateIo {}
+                    .retrieve_prices(asset_pair, datetime)
+                    .await
+            }
             Self::Bitstamp => {
                 bitstamp::Bitstamp {}
-                    .retrieve_price(asset_pair, datetime)
+                    .retrieve_prices(asset_pair, datetime)
                     .await
             }
-        }
+        }?;
+
+        assert!(
+            prices.iter().is_sorted_by(|a, b| a.0 < b.0),
+            "The pricefeed must always return the list of price sorted by event id"
+        );
+
+        Ok(prices)
     }
 }
 
@@ -86,7 +121,7 @@ mod test {
         let now = Utc::now().trunc_subsecs(0);
         for pricefeed in ImplementedPriceFeed::iter() {
             let _ = pricefeed
-                .retrieve_price(AssetPair::BtcUsd, now)
+                .retrieve_prices(AssetPair::BtcUsd, now)
                 .await
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }
