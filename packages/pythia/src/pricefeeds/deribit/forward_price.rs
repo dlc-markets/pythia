@@ -1,0 +1,298 @@
+use std::sync::LazyLock;
+
+use super::Result;
+use crate::{
+    data_models::{asset_pair::AssetPair, event_ids::EventId, expiries::Expiry},
+    pricefeeds::error::PriceFeedError,
+};
+use chrono::{DateTime, Utc};
+use cron::Schedule;
+use log::debug;
+use reqwest::Client;
+
+mod custom_serde;
+
+use serde::{de::DeserializeSeed as _, Deserialize};
+use serde_json::Deserializer;
+
+#[cfg(test)]
+mod test;
+
+// A frequency class of deribit expiry along with the introduction to quotation schedule
+// and the number of expiries to expect in this frequency class.
+struct ForwardConfig {
+    expiry_schedule: LazyLock<Schedule>,
+    quotation_schedule: LazyLock<Schedule>,
+    nb_expiries: usize,
+}
+
+// Deribit quotes 4 type of expiries: 3 daily, 3 weekly, 3 monthly and 4 quarterly
+static DERIBIT_QUOTING_FORWARD_CONFIG: [ForwardConfig; 4] = [
+    ForwardConfig {
+        expiry_schedule: LazyLock::new(|| "0 0 8 * * * *".parse().expect("our valid schedule")),
+        quotation_schedule: LazyLock::new(|| "0 0 8 * * * *".parse().expect("our valid schedule")),
+        nb_expiries: 3,
+    },
+    ForwardConfig {
+        expiry_schedule: LazyLock::new(|| {
+            "0 0 8 * * FRIDAY *".parse().expect("our valid schedule")
+        }),
+        quotation_schedule: LazyLock::new(|| {
+            "0 0 8 * * THURSDAY *".parse().expect("our valid schedule")
+        }),
+        nb_expiries: 3,
+    },
+    ForwardConfig {
+        expiry_schedule: LazyLock::new(|| {
+            "0 0 8 * * FRIDAYL *".parse().expect("our valid schedule")
+        }),
+        quotation_schedule: LazyLock::new(|| {
+            "0 0 8 * * THURSDAYL *".parse().expect("our valid schedule")
+        }),
+        nb_expiries: 3,
+    },
+    ForwardConfig {
+        expiry_schedule: LazyLock::new(|| {
+            "0 0 8 * 3,6,9,12 FRIDAYL *"
+                .parse()
+                .expect("our valid schedule")
+        }),
+        quotation_schedule: LazyLock::new(|| {
+            "0 0 8 * 3,6,9,12 THURSDAYL *"
+                .parse()
+                .expect("our valid schedule")
+        }),
+        nb_expiries: 4,
+    },
+];
+
+pub fn option_expiries_event_ids(asset_pair: AssetPair, datetime: DateTime<Utc>) -> Vec<EventId> {
+    let mut event_ids = is_an_expiry_date(datetime)
+        .then_some(EventId::delivery_of_expiry_with_pair(
+            asset_pair,
+            Expiry::from(datetime),
+        ))
+        .into_iter()
+        .chain(get_all_quoting_forward_at_date(datetime).map(|expiry| {
+            EventId::forward_of_expiry_with_pair_at_timestamp(
+                asset_pair,
+                Expiry::from(expiry),
+                datetime,
+            )
+        }))
+        .collect::<Vec<_>>();
+
+    event_ids.sort_unstable();
+    event_ids.dedup();
+
+    event_ids
+}
+
+pub async fn retrieve_option_prices(
+    asset_pair: AssetPair,
+    instant: DateTime<Utc>,
+) -> Result<Vec<(EventId, Option<f64>)>> {
+    let client = Client::new();
+
+    let delivery_case = if is_an_expiry_date(instant) {
+        let delivery_price = get_delivery_price_for_expiry(&client, asset_pair, instant)
+            .await
+            .inspect_err(|e| warn!("Could not get delivery price for expiry: {}", e))
+            .ok();
+        Some((
+            EventId::delivery_of_expiry_with_pair(asset_pair, Expiry::from(instant)),
+            delivery_price,
+        ))
+    } else {
+        None
+    };
+
+    let mut expiries_iter = get_all_quoting_forward_at_date(instant);
+    let soonest_expiry = expiries_iter
+        .next()
+        .expect("Our schedules always produce a date");
+    let nb_expiries = expiries_iter.count() + 1;
+
+    let currency = match asset_pair {
+        AssetPair::BtcUsd => "BTC",
+    };
+
+    let all_options_index_response = client
+        .get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency")
+        .query(&[("kind", "option"), ("currency", currency)])
+        .send()
+        .await?
+        .bytes()
+        .await?;
+
+    // We are only interested in underlying future of each option expiry.
+    // Deribit returns a list of all their options with various strike that we do not care about.
+    // We use an optimized deserializer to extract the underlying future price for each expiry
+    // that avoid over allocating and ignore all objects once it has a response for the expected
+    // number of quoting expiries.
+    let mut de = Deserializer::from_slice(&all_options_index_response);
+    let deribit_response = custom_serde::DeribitResponseForwardDeserializer::new(
+        nb_expiries + delivery_case.is_some() as usize,
+    )
+    .deserialize(&mut de)
+    .inspect_err(|e| {
+        error!("Error deserializing Deribit response: {:#?}", e);
+    })
+    .map_err(|_| PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
+
+    debug!(
+        "Got these futures prices from deribit: {:#?}",
+        deribit_response
+    );
+
+    let soon_expiry_case = delivery_case.or_else(|| {
+        Some((
+            EventId::forward_of_expiry_with_pair_at_timestamp(
+                asset_pair,
+                Expiry::from(soonest_expiry),
+                instant,
+            ),
+            Some(*deribit_response.result.get("RY")?),
+        ))
+    });
+
+    let mut as_vec_expiries = soon_expiry_case
+        .into_iter()
+        .chain(
+            deribit_response
+                .result
+                .into_iter()
+                .filter(|(key, _)| (key.len() == 7) || (key.len() == 6))
+                .map(|(key, value)| {
+                    (
+                        EventId::forward_of_expiry_with_pair_at_timestamp(
+                            asset_pair,
+                            Expiry::try_from(key).expect("Deribit expiry is always valid"),
+                            instant,
+                        ),
+                        Some(value),
+                    )
+                }),
+        )
+        .collect::<Vec<_>>();
+
+    debug!(
+        "Returning these prices for event ids: {:?}",
+        as_vec_expiries
+    );
+
+    as_vec_expiries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(as_vec_expiries)
+}
+
+fn get_all_quoting_forward_at_date(date: DateTime<Utc>) -> impl Iterator<Item = DateTime<Utc>> {
+    DERIBIT_QUOTING_FORWARD_CONFIG.iter().flat_map(
+        move |&ForwardConfig {
+                  ref expiry_schedule,
+                  ref quotation_schedule,
+                  nb_expiries,
+              }| {
+            let mut expiries_iter = expiry_schedule.after(&date).peekable();
+
+            let next_expiry = expiries_iter
+                .peek()
+                .copied()
+                .expect("Our schedules always have a next date");
+
+            let next_quotation_introduction = quotation_schedule
+                .after(&date)
+                .next()
+                .expect("Our schedules always have a next date");
+
+            // If the next quotation introduction is after the next expiry, then a new expiry
+            // was introduced at date without another being expired yet.
+            // So we must consider one more expiry than specified by nb_expiries.
+            let quoting_expiries = if next_expiry < next_quotation_introduction {
+                nb_expiries + 1
+            } else {
+                nb_expiries
+            };
+
+            expiries_iter.take(quoting_expiries)
+        },
+    )
+}
+
+fn is_an_expiry_date(date: DateTime<Utc>) -> bool {
+    DERIBIT_QUOTING_FORWARD_CONFIG.iter().any(
+        |ForwardConfig {
+             expiry_schedule, ..
+         }| expiry_schedule.includes(date),
+    )
+}
+
+fn forward_event_id(asset_pair: AssetPair, expiry: &str, instant: DateTime<Utc>) -> Box<str> {
+    let zero_if_low_day = (expiry.len() != 7).then_some("0").unwrap_or_default();
+    (asset_pair.to_string()
+        + "_"
+        + zero_if_low_day
+        + expiry
+        + "f"
+        + &instant.timestamp().to_string())
+        .into_boxed_str()
+}
+
+#[derive(Debug, Deserialize)]
+struct DeribitDeliveryPriceResponse {
+    result: DeribitDeliveryPriceData,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeribitDeliveryPriceData {
+    data: Vec<DeribitDeliveryPrice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeribitDeliveryPrice {
+    delivery_price: f64,
+    date: String,
+}
+
+/// Query the Deribit API to get the delivery price for the given instant and index.
+///
+/// Returns Some(price) if available, None otherwise.
+pub async fn get_delivery_price_for_expiry(
+    client: &Client,
+    asset_pair: AssetPair,
+    instant: DateTime<Utc>,
+) -> Result<f64> {
+    let asset_pair_translation = match asset_pair {
+        AssetPair::BtcUsd => "btc_usd",
+    };
+
+    // Make the API request
+    let response = client
+        .get("https://www.deribit.com/api/v2/public/get_delivery_prices")
+        .query(&[("index_name", asset_pair_translation), ("count", "1")])
+        .send()
+        .await?
+        .json::<DeribitDeliveryPriceResponse>()
+        .await?;
+
+    debug!(
+        "Got this delivery price response from deribit: {:#?}",
+        response
+    );
+
+    // Search for matching price in results
+    response
+        .result
+        .data
+        .iter()
+        .find_map(|price| {
+            (price.date == instant.format("%Y-%m-%d").to_string()).then_some(price.delivery_price)
+        })
+        .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct DeribitQuoteForward {
+    underlying_price: f64,
+    creation_timestamp: u64,
+}

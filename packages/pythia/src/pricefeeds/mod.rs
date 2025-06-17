@@ -53,7 +53,9 @@ use test_import::*;
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ImplementedPriceFeed {
     Lnmarkets,
-    Deribit,
+    Deribit {
+        forwards: bool,
+    },
     Kraken,
     GateIo,
     Bitstamp,
@@ -75,7 +77,12 @@ impl ImplementedPriceFeed {
     pub fn events_at_date(&self, asset_pair: AssetPair, date: DateTime<Utc>) -> Vec<EventId> {
         match self {
             Self::Lnmarkets => lnm::Lnmarkets {}.compute_event_ids(asset_pair, date),
-            Self::Deribit => deribit::Deribit {}.compute_event_ids(asset_pair, date),
+            Self::Deribit { forwards: false } => {
+                deribit::Deribit::NoForward.compute_event_ids(asset_pair, date)
+            }
+            Self::Deribit { forwards: true } => {
+                deribit::Deribit::OptionExpiries.compute_event_ids(asset_pair, date)
+            }
             Self::Kraken => kraken::Kraken {}.compute_event_ids(asset_pair, date),
             Self::GateIo => gateio::GateIo {}.compute_event_ids(asset_pair, date),
             Self::Bitstamp => bitstamp::Bitstamp {}.compute_event_ids(asset_pair, date),
@@ -146,7 +153,8 @@ impl Display for ImplementedPriceFeed {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Lnmarkets => write!(f, "lnmarkets"),
-            Self::Deribit => write!(f, "deribit"),
+            Self::Deribit { forwards: false } => write!(f, "deribit (no forwards)"),
+            Self::Deribit { forwards: true } => write!(f, "deribit (forwards option expiries)"),
             Self::Kraken => write!(f, "kraken"),
             Self::GateIo => write!(f, "gateio"),
             Self::Bitstamp => write!(f, "bitstamp"),
@@ -155,5 +163,3 @@ impl Display for ImplementedPriceFeed {
         }
     }
 }
-
-// Pricefeeds can be obtain by coding a pricefeed which simply aggregate other pricefeeds response
