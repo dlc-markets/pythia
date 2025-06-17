@@ -15,4 +15,7 @@ pub(crate) enum OracleError {
 
     /// pricefeed error: {0}
     PriceFeedError(#[from] PriceFeedError),
+
+    /// Could not attest Event Id {0}
+    MissingEventId(String),
 }

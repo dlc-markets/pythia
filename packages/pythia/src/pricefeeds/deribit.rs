@@ -1,4 +1,5 @@
 use crate::data_models::asset_pair::AssetPair;
+use crate::data_models::event_ids::EventId;
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
 use chrono::{DateTime, Utc};
 use log::debug;
@@ -20,13 +21,11 @@ struct DeribitResponse {
 }
 
 impl PriceFeed for Deribit {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "btc_usd",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, f64)>> {
         let client = Client::new();
         let start_time = instant.timestamp();
 
@@ -35,7 +34,10 @@ impl PriceFeed for Deribit {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
+        let asset_pair_translation = match asset_pair {
+            AssetPair::BtcUsd => "btc_usd",
+        };
+
         debug!("sending Deribit http request");
         let res: DeribitResponse = client
             .get("https://www.deribit.com/api/v2/public/get_index_price")
@@ -55,6 +57,8 @@ impl PriceFeed for Deribit {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
 
-        Ok(res.result.index_price)
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
+
+        Ok(vec![(event_id, res.result.index_price)])
     }
 }
