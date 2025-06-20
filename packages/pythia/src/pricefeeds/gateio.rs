@@ -12,7 +12,7 @@ impl PriceFeed for GateIo {
         &self,
         asset_pair: AssetPair,
         instant: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>> {
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
         let start_time = instant.timestamp();
 
@@ -51,6 +51,6 @@ impl PriceFeed for GateIo {
                 PriceFeedError::Server(format!("Failed to parse price from gate.io: {e}"))
             })?;
 
-        Ok(vec![(event_id, response)])
+        Ok(vec![(event_id, Some(response))])
     }
 }

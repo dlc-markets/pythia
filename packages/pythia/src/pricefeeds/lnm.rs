@@ -20,7 +20,7 @@ impl PriceFeed for Lnmarkets {
         &self,
         asset_pair: AssetPair,
         instant: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>> {
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
 
         // LnMarket is only return price at minute o'clock
@@ -56,6 +56,6 @@ impl PriceFeed for Lnmarkets {
             ));
         }
 
-        Ok(vec![(event_id, res[0].index)])
+        Ok(vec![(event_id, Some(res[0].index))])
     }
 }
