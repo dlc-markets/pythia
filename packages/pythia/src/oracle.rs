@@ -241,10 +241,13 @@ impl Oracle {
             .retrieve_prices(self.asset_pair_info.asset_pair, event.maturity)
             .await?;
 
-        let outcome = prices[prices
+        let event_index = prices
             .binary_search_by(|(id, _)| id.cmp(&event_id))
-            .map_err(|_| OracleError::MissingEventId(event_id.to_string()))?]
-        .1;
+            .map_err(|_| OracleError::MissingEventId(event_id))?;
+
+        let outcome = prices[event_index]
+            .1
+            .ok_or(OracleError::MissingEventId(event_id))?;
 
         let outcomes = to_digit_decomposition_vec(outcome, event.digits, event.precision);
         let signatures = outcomes
@@ -277,7 +280,7 @@ impl Oracle {
 
     /// Attest or return attestations of all events at given date. Failing to attest an event will silently skip it.
     /// Store in DB and return its oracle attestation if an event is attested successfully.
-    pub async fn attest_at_date(&self, date: DateTime<Utc>) -> Result<Vec<Option<Attestation>>> {
+    pub async fn attest_at_date(&self, date: DateTime<Utc>) -> Result<Vec<Result<Attestation>>> {
         trace!(
             "retrieving prices feed for all attestations for date {}",
             date
@@ -291,22 +294,24 @@ impl Oracle {
 
         trace!("retrieved prices for events {:?}", prices);
 
-        let attestation_futures = prices.into_iter().map(async |(event_id, price)| {
+        let attestation_futures = prices.into_iter().map(async |(event_id, maybe_price)| {
+            let price = maybe_price.ok_or(OracleError::MissingEventId(event_id))?;
+
             let event = self
                 .db
                 .get_event(event_id)
                 .await
                 .inspect_err(|e| {
                     error!("Postgres error while getting event {}: {:?}", event_id, e);
-                })
-                .ok()??;
+                })?
+                .ok_or(OracleError::MissingAnnouncements)?;
 
             let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
                 info!(
                     "Event {} already attested (should be possible only in debug mode)",
                     event_id
                 );
-                return compute_attestation(self, event_id, event);
+                return Ok(compute_attestation(self, event_id, event).expect("is attested"));
             };
 
             let outcomes = to_digit_decomposition_vec(price, event.digits, event.precision);
@@ -339,10 +344,9 @@ impl Oracle {
                         "Postgres error while updating to attestation {}: {:?}",
                         event_id, e
                     );
-                })
-                .ok()?;
+                })?;
 
-            Some(attestation)
+            Ok(attestation)
         });
 
         Ok(attestation_futures

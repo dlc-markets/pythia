@@ -20,7 +20,7 @@ impl PriceFeed for Kraken {
         &self,
         asset_pair: AssetPair,
         instant: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>> {
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
         let asset_pair_translation = match asset_pair {
             AssetPair::BtcUsd => "XXBTZUSD",
@@ -64,6 +64,6 @@ impl PriceFeed for Kraken {
                 PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
             })?;
 
-        Ok(vec![(event_id, response)])
+        Ok(vec![(event_id, Some(response))])
     }
 }

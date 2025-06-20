@@ -188,6 +188,7 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
                     .pop()
                     .unwrap()
                     .1
+                    .unwrap()
                     - attestation
                         .outcomes
                         .iter()

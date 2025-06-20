@@ -25,7 +25,7 @@ impl PriceFeed for Deribit {
         &self,
         asset_pair: AssetPair,
         instant: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>> {
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
         let start_time = instant.timestamp();
 
@@ -59,6 +59,6 @@ impl PriceFeed for Deribit {
 
         let event_id = self.compute_event_ids(asset_pair, instant)[0];
 
-        Ok(vec![(event_id, res.result.index_price)])
+        Ok(vec![(event_id, Some(res.result.index_price))])
     }
 }

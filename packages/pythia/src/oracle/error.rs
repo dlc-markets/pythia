@@ -1,7 +1,7 @@
 use displaydoc::Display;
 use thiserror::Error;
 
-use crate::pricefeeds::error::PriceFeedError;
+use crate::{data_models::event_ids::EventId, pricefeeds::error::PriceFeedError};
 
 pub type Result<T> = std::result::Result<T, OracleError>;
 
@@ -17,5 +17,5 @@ pub(crate) enum OracleError {
     PriceFeedError(#[from] PriceFeedError),
 
     /// Could not attest Event Id {0}
-    MissingEventId(String),
+    MissingEventId(EventId),
 }

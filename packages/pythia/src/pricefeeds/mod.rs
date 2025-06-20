@@ -19,7 +19,7 @@ pub(crate) trait PriceFeed {
         &self,
         asset_pair: AssetPair,
         datetime: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>>;
+    ) -> Result<Vec<(EventId, Option<f64>)>>;
 }
 
 mod bitstamp;
@@ -53,7 +53,7 @@ impl ImplementedPriceFeed {
         &self,
         asset_pair: AssetPair,
         datetime: DateTime<Utc>,
-    ) -> Result<Vec<(EventId, f64)>> {
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let prices = match self {
             Self::Lnmarkets => {
                 lnm::Lnmarkets {}
