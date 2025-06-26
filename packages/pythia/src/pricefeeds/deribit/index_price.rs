@@ -1,7 +1,7 @@
 use super::Result;
 use crate::{
     data_models::{asset_pair::AssetPair, event_ids::EventId},
-    pricefeeds::error::PriceFeedError,
+    pricefeeds::{deribit::DeribitErrorObject, error::PriceFeedError},
 };
 use chrono::{DateTime, TimeDelta, Utc};
 use log::debug;
@@ -9,8 +9,10 @@ use reqwest::Client;
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct DeribitResponseIndex {
-    result: DeribitQuote,
+#[serde(untagged)]
+enum DeribitResponseIndex {
+    ResultResponse { result: DeribitQuote },
+    ErrorResponse { error: DeribitErrorObject },
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -42,9 +44,15 @@ pub async fn retrieve_index_price(
         .await?
         .json::<DeribitResponseIndex>()
         .await?;
-    debug!("received response: {:#?}", res);
+
+    let quote = match res {
+        DeribitResponseIndex::ResultResponse { result } => result.index_price,
+        DeribitResponseIndex::ErrorResponse { error } => {
+            return Err(PriceFeedError::Server(error.to_string()));
+        }
+    };
 
     let event_id = EventId::spot_from_pair_and_timestamp(asset_pair, instant);
 
-    Ok(vec![(event_id, Some(res.result.index_price))])
+    Ok(vec![(event_id, Some(quote))])
 }

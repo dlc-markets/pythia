@@ -4,11 +4,11 @@ use serde::{
 };
 use std::collections::{hash_map::Entry, HashMap};
 
-#[derive(Debug, Clone)]
-pub struct DeribitResponseForward<'a> {
-    pub result: HashMap<&'a str, f64>,
-}
+use super::{DeribitErrorObject, DeribitResponseForward};
 
+// A seed deserializer that knows how many unique values we must expect to get from the
+// Deribit API. This is used to avoid over-allocating and ignore all objects once it has a
+// response for the expected number of quoting expiries.
 struct UniquesCountDeserializer {
     nb_expiries: usize,
 }
@@ -20,6 +20,8 @@ impl<'de> DeserializeSeed<'de> for UniquesCountDeserializer {
     where
         D: Deserializer<'de>,
     {
+        // Visitor that will be used to deserialize the sequence of objects
+        // returned by the Deribit API using information provided by the seed.
         struct SeqVisitor {
             nb_expiries: usize,
         }
@@ -36,6 +38,7 @@ impl<'de> DeserializeSeed<'de> for UniquesCountDeserializer {
             where
                 A: SeqAccess<'de>,
             {
+                // Use the number in self to allocate the hashmap beforehand.
                 let mut values = HashMap::with_capacity(self.nb_expiries);
                 let mut count = 0;
 
@@ -45,7 +48,11 @@ impl<'de> DeserializeSeed<'de> for UniquesCountDeserializer {
                     underlying_price: f64,
                 }
 
+                // Deserialize each object until we find the expected number of unique values.
                 while let Some(quote) = access.next_element::<DeribitQuoteForwardResponse>()? {
+                    // `underlying_index` is always `BTC-[expiry]` with `expiry` being the expiry date in [DAY][MONTH][YEAR] format.
+                    // If the underlying future is synthetic it is prefixed with `SYN.`
+                    // We only need to keep the expiry date in the same format:
                     let expiry = if &quote.underlying_index[0..4] == "SYN." {
                         &quote.underlying_index[8..]
                     } else {
@@ -61,6 +68,7 @@ impl<'de> DeserializeSeed<'de> for UniquesCountDeserializer {
                     }
                 }
 
+                // Ignore all other objects once we got all we need.
                 while let Some(IgnoredAny) = access.next_element()? {
                     // ignore
                 }
@@ -73,11 +81,14 @@ impl<'de> DeserializeSeed<'de> for UniquesCountDeserializer {
             nb_expiries: self.nb_expiries,
         };
 
+        // Deserialize the sequence of objects using our visitor from the seed.
         deserializer.deserialize_seq(visitor)
     }
 }
 
-pub struct DeribitResponseForwardDeserializer {
+// The sequence of object is wrapped in JSON-RPC format, so we need to deserialize it
+// using a visitor that knows how many unique values we must expect in result field.
+pub(super) struct DeribitResponseForwardDeserializer {
     nb_expiries: usize,
 }
 
@@ -94,6 +105,8 @@ impl<'de> DeserializeSeed<'de> for DeribitResponseForwardDeserializer {
     where
         D: Deserializer<'de>,
     {
+        // Visitor that will be used to deserialize the JSON-RPC response and pass its info
+        // to the seed deserializer for the result field in successful case.
         struct ResultVisitor {
             nb_expiries: usize,
         }
@@ -113,10 +126,16 @@ impl<'de> DeserializeSeed<'de> for DeribitResponseForwardDeserializer {
                 while let Some(key) = access.next_key()? {
                     match key {
                         "result" => {
+                            // We got a successful response, so we can pass the number of
+                            // unique values we must expect to the deserializer of the result field.
                             let value = access.next_value_seed(UniquesCountDeserializer {
                                 nb_expiries: self.nb_expiries,
                             });
                             result = Some(value?);
+                        }
+                        "error" => {
+                            let value = access.next_value::<DeribitErrorObject>()?;
+                            return Ok(DeribitResponseForward::ErrorResponse { error: value });
                         }
                         _ => {
                             access.next_value::<IgnoredAny>()?;
@@ -125,7 +144,7 @@ impl<'de> DeserializeSeed<'de> for DeribitResponseForwardDeserializer {
                 }
 
                 match result {
-                    Some(result) => Ok(DeribitResponseForward { result }),
+                    Some(result) => Ok(DeribitResponseForward::ResultResponse { result }),
                     None => Err(Error::missing_field("result")),
                 }
             }
@@ -135,6 +154,7 @@ impl<'de> DeserializeSeed<'de> for DeribitResponseForwardDeserializer {
             nb_expiries: self.nb_expiries,
         };
 
+        // Use our seeded visitor to deserialize the JSON-RPC response:
         deserializer.deserialize_map(visitor)
     }
 }

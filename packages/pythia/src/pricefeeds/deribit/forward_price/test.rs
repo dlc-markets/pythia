@@ -74,6 +74,30 @@ fn test_get_quoting_forward_at_date() {
     assert_eq!(expiries, expected_dates);
 
     assert!(is_an_expiry_date(today));
+
+    let today = Utc.with_ymd_and_hms(2025, 6, 27, 8, 0, 0).unwrap();
+    let mut expiries = get_all_quoting_forward_at_date(today).collect::<Vec<_>>();
+    expiries.sort_unstable();
+    expiries.dedup();
+
+    let expected_dates = vec![
+        Utc.with_ymd_and_hms(2025, 06, 28, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 06, 29, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 06, 30, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 07, 04, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 07, 11, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 07, 18, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 07, 25, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 08, 29, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 09, 26, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2025, 12, 26, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2026, 03, 27, 8, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2026, 06, 26, 8, 0, 0).unwrap(),
+    ];
+
+    assert_eq!(expiries, expected_dates);
+
+    assert!(is_an_expiry_date(today));
 }
 
 #[actix::test]

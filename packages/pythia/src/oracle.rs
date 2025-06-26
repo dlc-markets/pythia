@@ -138,8 +138,6 @@ impl Oracle {
     fn prepare_events_to_insert(&self, maturations: &[DateTime<Utc>]) -> Vec<SignedEventToInsert> {
         let mut rng = thread_rng();
 
-        let mut buffer_result = Vec::with_capacity(maturations.len());
-
         let average_attestation_per_maturity = if self.asset_pair_info.pricefeed
             == (ImplementedPriceFeed::Deribit { forwards: true })
         {
@@ -211,22 +209,32 @@ impl Oracle {
             return Ok(());
         }
 
+        let average_announcement_per_maturity = if self.asset_pair_info.pricefeed
+            == (ImplementedPriceFeed::Deribit { forwards: true })
+        {
+            13
+        } else {
+            1
+        };
+
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
-        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
-            type_hint(async |processing_mats| {
-                let mut events_to_insert = self.prepare_events_to_insert(processing_mats);
+        let chunks_stream = stream::iter(
+            non_existing_sorted_maturations
+                .chunks(CHUNK_SIZE / average_announcement_per_maturity + 1)
+                .map(type_hint(async |processing_mats| {
+                    let mut events_to_insert = self.prepare_events_to_insert(processing_mats);
 
-                events_to_insert.sort_by(|a, b| a.event_id.cmp(&b.event_id));
-                // We just sorted the announcements by event_id, so we can insert them in DB
+                    events_to_insert.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+                    // We just sorted the announcements by event_id, so we can insert them in DB
 
-                self.db.insert_many_announcements(&events_to_insert).await?;
+                    self.db.insert_many_announcements(&events_to_insert).await?;
 
-                debug!("created oracle announcements with maturation {processing_mats:?}");
-                trace!("Inserted events: {events_to_insert:#?}");
-                Ok(())
-            }),
-        ));
+                    debug!("created oracle announcements with maturation {processing_mats:?}");
+                    trace!("Inserted events: {events_to_insert:#?}");
+                    Ok(())
+                })),
+        );
 
         // buffer_unordered with a maximum of 2 chunks being processed concurrently
         // helps prevent database connection pool exhaustion while maintaining throughput.

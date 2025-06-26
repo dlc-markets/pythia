@@ -24,7 +24,7 @@ impl PriceFeed for Deribit {
             }
             Deribit::OptionExpiries => {
                 let event_ids = forward_price::option_expiries_event_ids(asset_pair, datetime);
-                debug!("Forward event ids at {}: {:#?}", datetime, event_ids);
+                debug!("Forward event ids at {datetime}: {event_ids:#?}");
                 event_ids
             }
         }
@@ -41,5 +41,27 @@ impl PriceFeed for Deribit {
                 forward_price::retrieve_option_prices(asset_pair, instant).await
             }
         }
+    }
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub(super) struct DeribitErrorObject {
+    code: i32,
+    message: String,
+    data: Option<String>,
+}
+
+impl std::fmt::Display for DeribitErrorObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Deribit returned an error:\n code: {},\n message: {}{}",
+            self.code,
+            self.message,
+            self.data
+                .as_ref()
+                .map(|data| format!(",\ndata: {data}"))
+                .unwrap_or_default()
+        )
     }
 }
