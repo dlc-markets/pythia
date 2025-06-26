@@ -5,7 +5,6 @@ use crate::{
         oracle_msgs::{Announcement, Attestation, DigitDecompositionEventDesc, Event},
     },
     oracle::crypto::{sign_event, sign_outcome},
-    pricefeeds::ImplementedPriceFeed,
     AssetPairInfo,
 };
 
@@ -147,16 +146,6 @@ impl Oracle {
                     .get(),
         );
 
-        let average_attestation_per_maturity = if self.asset_pair_info.pricefeed
-            == (ImplementedPriceFeed::Deribit { forwards: true })
-        {
-            11
-        } else {
-            1
-        };
-
-        let mut buffer_result =
-            Vec::with_capacity(maturations.len() * average_attestation_per_maturity);
         // We must extend the buffer_result manually because prepare_announcement is an iterator
         // holding a mutable ref to rng which prevent us to flatten the iterators and collect.
         maturations.iter().copied().for_each(|maturity| {

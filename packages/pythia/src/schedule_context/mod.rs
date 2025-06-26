@@ -8,6 +8,7 @@ use tokio::sync::{broadcast, oneshot};
 use crate::{
     data_models::asset_pair::AssetPair,
     oracle::{error::OracleError, Oracle},
+    pricefeeds::ImplementedPriceFeed,
 };
 
 pub(super) mod api_context;
@@ -51,7 +52,18 @@ where
 
     // We set channel size to 2 for each oracle because it may happen that an announcement and attestation are sent into the channel
     // at the same time (if offset is a multiple of the attestation frequency schedule)
-    let channel_size = 2 * oracle_context.oracles().len();
+    // In the particular case of deribit forwards, we expect in average to send 11 announcements and attestations at the same time to websockets.
+    let channel_size = 2 * oracle_context
+        .oracles()
+        .values()
+        .map(|o| {
+            if o.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit { forwards: true }) {
+                13
+            } else {
+                1
+            }
+        })
+        .sum::<usize>();
     // We do not need Receiver right now as we only use them to send events to websockets
     // so we use Sender::new to create a only half of the channel with the given size.
     let channel_sender = broadcast::Sender::new(channel_size);

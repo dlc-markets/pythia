@@ -77,9 +77,11 @@ impl PartialEq for ImplementedPriceFeed {
 impl ImplementedPriceFeed {
     pub const fn average_events_per_maturity(&self) -> NonZeroUsize {
         const ONE: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+        const TWELVE: NonZeroUsize = NonZeroUsize::new(11).unwrap();
         match self {
             Self::Lnmarkets => ONE,
-            Self::Deribit => ONE,
+            Self::Deribit { forwards: false } => ONE,
+            Self::Deribit { forwards: true } => TWELVE,
             Self::Kraken => ONE,
             Self::GateIo => ONE,
             Self::Bitstamp => ONE,
@@ -120,34 +122,37 @@ impl ImplementedPriceFeed {
         datetime: DateTime<Utc>,
     ) -> Result<Vec<(EventId, Option<f64>)>> {
         let query_local = LocalSet::new();
-        let query_local_handle =
-            match self {
-                Self::Lnmarkets => {
-                    query_local.spawn_local(lnm::Lnmarkets {}.retrieve_prices(asset_pair, datetime))
-                }
-                Self::Deribit => query_local
-                    .spawn_local(deribit::Deribit {}.retrieve_prices(asset_pair, datetime)),
-                Self::Kraken => {
-                    query_local.spawn_local(kraken::Kraken {}.retrieve_prices(asset_pair, datetime))
-                }
-                Self::GateIo => {
-                    query_local.spawn_local(gateio::GateIo {}.retrieve_prices(asset_pair, datetime))
-                }
-                Self::Bitstamp => query_local
-                    .spawn_local(bitstamp::Bitstamp {}.retrieve_prices(asset_pair, datetime)),
-                #[cfg(test)]
-                Self::ReservedForTest { mocking_receiver } => {
-                    let prices = mocking_receiver
-                        .as_ref()
-                        .map(|r| {
-                            r.lock().unwrap().try_recv().expect(
+        let query_local_handle = match self {
+            Self::Lnmarkets => {
+                query_local.spawn_local(lnm::Lnmarkets {}.retrieve_prices(asset_pair, datetime))
+            }
+            Self::Deribit { forwards: false } => query_local
+                .spawn_local(deribit::Deribit::NoForward.retrieve_prices(asset_pair, datetime)),
+            Self::Deribit { forwards: true } => query_local.spawn_local(
+                deribit::Deribit::OptionExpiries.retrieve_prices(asset_pair, datetime),
+            ),
+            Self::Kraken => {
+                query_local.spawn_local(kraken::Kraken {}.retrieve_prices(asset_pair, datetime))
+            }
+            Self::GateIo => {
+                query_local.spawn_local(gateio::GateIo {}.retrieve_prices(asset_pair, datetime))
+            }
+            Self::Bitstamp => {
+                query_local.spawn_local(bitstamp::Bitstamp {}.retrieve_prices(asset_pair, datetime))
+            }
+            #[cfg(test)]
+            Self::ReservedForTest { mocking_receiver } => {
+                let prices = mocking_receiver
+                    .as_ref()
+                    .map(|r| {
+                        r.lock().unwrap().try_recv().expect(
                             "Caller must guarantee a push into the channel sender for each call",
                         )
-                        })
-                        .unwrap_or_default();
-                    query_local.spawn_local(async { Ok(prices) })
-                }
-            };
+                    })
+                    .unwrap_or_default();
+                query_local.spawn_local(async { Ok(prices) })
+            }
+        };
 
         query_local.await;
         let prices = query_local_handle.await.map_err(|e| {
