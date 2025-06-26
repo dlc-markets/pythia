@@ -5,7 +5,7 @@ use crate::{
     data_models::{asset_pair::AssetPair, event_ids::EventId, expiries::Expiry},
     pricefeeds::error::PriceFeedError,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Timelike, Utc};
 use cron::Schedule;
 use log::debug;
 use reqwest::Client;
@@ -107,62 +107,70 @@ pub async fn retrieve_option_prices(
         None
     };
 
-    let mut expiries_iter = get_all_quoting_forward_at_date(instant);
-    let soonest_expiry = expiries_iter
-        .next()
-        .expect("Our schedules always produce a date");
-    let nb_expiries = expiries_iter.count() + 1;
+    let mut expiries = get_all_quoting_forward_at_date(instant).collect::<Vec<_>>();
+    expiries.sort_unstable();
+    expiries.dedup();
+    let nb_expiries = expiries.len();
+    let closest_expiry = expiries[0];
 
-    let currency = match asset_pair {
-        AssetPair::BtcUsd => "BTC",
+    let response_payload = if Utc::now() - instant > TimeDelta::minutes(1) {
+        info!("Requested attesting data from the past with deribit pricefeed. Only delivery prices can be attested");
+        None
+    } else {
+        let currency = match asset_pair {
+            AssetPair::BtcUsd => "BTC",
+        };
+
+        if let Ok(result) = client
+            .get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency")
+            .query(&[("kind", "option"), ("currency", currency)])
+            .send()
+            .await
+        {
+            result.bytes().await.ok()
+        } else {
+            None
+        }
     };
 
-    let all_options_index_response = client
-        .get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency")
-        .query(&[("kind", "option"), ("currency", currency)])
-        .send()
-        .await?
-        .bytes()
-        .await?;
+    let mut deribit_response = response_payload.as_ref().and_then(|payload| {
+        // We are only interested in underlying future of each option expiry.
+        // Deribit returns a list of all their options with various strike that we do not care about.
+        // We use an optimized deserializer to extract the underlying future price for each expiry
+        // that avoid over allocating and ignore all objects once it has a response for the expected
+        // number of quoting expiries.
+        let serialized = custom_serde::DeribitResponseForwardDeserializer::new(nb_expiries)
+            .deserialize(&mut Deserializer::from_slice(payload))
+            .inspect_err(|e| {
+                error!("Error deserializing Deribit response: {:#?}", e);
+            })
+            .ok()?;
+        debug!("Got these futures prices from deribit: {:#?}", serialized);
+        Some(serialized.result)
+    });
 
-    // We are only interested in underlying future of each option expiry.
-    // Deribit returns a list of all their options with various strike that we do not care about.
-    // We use an optimized deserializer to extract the underlying future price for each expiry
-    // that avoid over allocating and ignore all objects once it has a response for the expected
-    // number of quoting expiries.
-    let mut de = Deserializer::from_slice(&all_options_index_response);
-    let deribit_response = custom_serde::DeribitResponseForwardDeserializer::new(
-        nb_expiries + delivery_case.is_some() as usize,
-    )
-    .deserialize(&mut de)
-    .inspect_err(|e| {
-        error!("Error deserializing Deribit response: {:#?}", e);
-    })
-    .map_err(|_| PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
-
-    debug!(
-        "Got these futures prices from deribit: {:#?}",
-        deribit_response
-    );
-
-    let soon_expiry_case = delivery_case.or_else(|| {
-        Some((
+    let soon_expiry_case = match (
+        deribit_response.as_mut().and_then(|r| r.remove("RY")),
+        delivery_case,
+    ) {
+        (price @ Some(_), None) => Some((
             EventId::forward_of_expiry_with_pair_at_timestamp(
                 asset_pair,
-                Expiry::from(soonest_expiry),
+                Expiry::from(closest_expiry),
                 instant,
             ),
-            Some(*deribit_response.result.get("RY")?),
-        ))
-    });
+            price,
+        )),
+        (_, Some(delivery_price)) => Some(delivery_price),
+        (None, None) => None,
+    };
 
     let mut as_vec_expiries = soon_expiry_case
         .into_iter()
         .chain(
             deribit_response
-                .result
+                .unwrap_or_default()
                 .into_iter()
-                .filter(|(key, _)| (key.len() == 7) || (key.len() == 6))
                 .map(|(key, value)| {
                     (
                         EventId::forward_of_expiry_with_pair_at_timestamp(
@@ -220,11 +228,8 @@ fn get_all_quoting_forward_at_date(date: DateTime<Utc>) -> impl Iterator<Item = 
 }
 
 fn is_an_expiry_date(date: DateTime<Utc>) -> bool {
-    DERIBIT_QUOTING_FORWARD_CONFIG.iter().any(
-        |ForwardConfig {
-             expiry_schedule, ..
-         }| expiry_schedule.includes(date),
-    )
+    // All expiries are every day at 8:00:00 UTC.
+    date.hour() == 8 && date.minute() == 0 && date.second() == 0
 }
 
 fn forward_event_id(asset_pair: AssetPair, expiry: &str, instant: DateTime<Utc>) -> Box<str> {
@@ -255,9 +260,7 @@ struct DeribitDeliveryPrice {
 }
 
 /// Query the Deribit API to get the delivery price for the given instant and index.
-///
-/// Returns Some(price) if available, None otherwise.
-pub async fn get_delivery_price_for_expiry(
+async fn get_delivery_price_for_expiry(
     client: &Client,
     asset_pair: AssetPair,
     instant: DateTime<Utc>,
@@ -266,10 +269,16 @@ pub async fn get_delivery_price_for_expiry(
         AssetPair::BtcUsd => "btc_usd",
     };
 
+    let days = (Utc::now() - instant).num_days().to_string();
+
     // Make the API request
     let response = client
         .get("https://www.deribit.com/api/v2/public/get_delivery_prices")
-        .query(&[("index_name", asset_pair_translation), ("count", "1")])
+        .query(&[
+            ("index_name", asset_pair_translation),
+            ("count", "1"),
+            ("offset", &days),
+        ])
         .send()
         .await?
         .json::<DeribitDeliveryPriceResponse>()
@@ -284,8 +293,8 @@ pub async fn get_delivery_price_for_expiry(
     response
         .result
         .data
-        .iter()
-        .find_map(|price| {
+        .first()
+        .and_then(|price| {
             (price.date == instant.format("%Y-%m-%d").to_string()).then_some(price.delivery_price)
         })
         .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))

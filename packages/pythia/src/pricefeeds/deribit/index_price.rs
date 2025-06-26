@@ -1,6 +1,9 @@
 use super::Result;
-use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
-use chrono::{DateTime, Utc};
+use crate::{
+    data_models::{asset_pair::AssetPair, event_ids::EventId},
+    pricefeeds::error::PriceFeedError,
+};
+use chrono::{DateTime, TimeDelta, Utc};
 use log::debug;
 use reqwest::Client;
 
@@ -23,6 +26,13 @@ pub async fn retrieve_index_price(
     let asset_pair_translation = match asset_pair {
         AssetPair::BtcUsd => "btc_usd",
     };
+
+    if Utc::now() - instant > TimeDelta::minutes(1) {
+        info!(
+            "Requested attesting data from the past with deribit pricefeed. Skipping index price."
+        );
+        return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
+    }
 
     debug!("sending Deribit http request");
     let res = client

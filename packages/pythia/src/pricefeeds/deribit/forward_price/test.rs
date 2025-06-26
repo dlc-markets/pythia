@@ -88,6 +88,17 @@ async fn test_get_delivery_price_for_expiry() {
     get_delivery_price_for_expiry(&client, asset_pair, instant)
         .await
         .unwrap();
+
+    assert_eq!(
+        get_delivery_price_for_expiry(
+            &client,
+            asset_pair,
+            Utc.with_ymd_and_hms(2022, 1, 1, 8, 0, 0).unwrap()
+        )
+        .await
+        .unwrap(),
+        47073.56
+    );
 }
 
 #[actix::test]
