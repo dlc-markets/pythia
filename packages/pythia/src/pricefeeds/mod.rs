@@ -126,10 +126,7 @@ mod test {
                 .map_err(|e| deprecated.push((pricefeed, e)));
         }
         if !deprecated.is_empty() {
-            panic!(
-                "Some pricefeed APIs seem deprecated: {:?}\n No answer for date {}",
-                deprecated, now
-            )
+            panic!("Some pricefeed APIs seem deprecated: {deprecated:?}\n No answer for date {now}")
         }
     }
 }

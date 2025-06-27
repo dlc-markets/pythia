@@ -168,7 +168,7 @@ impl Oracle {
                     .insert_announcement(&event_to_insert)
                     .await?;
 
-                    debug!("created oracle announcement with maturation {}", maturation);
+                    debug!("created oracle announcement with maturation {maturation}");
 
                     trace!("inserted event {:#?}", &event_to_insert);
 
@@ -212,7 +212,7 @@ impl Oracle {
                 self.db.insert_many_announcements(&events_to_insert).await?;
 
                 debug!("created oracle announcements with maturation {processing_mats:?}");
-                trace!("announcements {events_to_insert:#?}");
+                trace!("Inserted events: {events_to_insert:#?}");
                 Ok(())
             }),
         ));
@@ -281,10 +281,7 @@ impl Oracle {
     /// Attest or return attestations of all events at given date. Failing to attest an event will silently skip it.
     /// Store in DB and return its oracle attestation if an event is attested successfully.
     pub async fn attest_at_date(&self, date: DateTime<Utc>) -> Result<Vec<Result<Attestation>>> {
-        trace!(
-            "retrieving prices feed for all attestations for date {}",
-            date
-        );
+        trace!("retrieving prices feed for all attestations for date {date}");
 
         let prices = self
             .asset_pair_info
@@ -292,7 +289,7 @@ impl Oracle {
             .retrieve_prices(self.asset_pair_info.asset_pair, date)
             .await?;
 
-        trace!("retrieved prices for events {:?}", prices);
+        trace!("retrieved prices for events {prices:?}");
 
         let attestation_futures = prices.into_iter().map(async |(event_id, maybe_price)| {
             let price = maybe_price.ok_or(OracleError::MissingEventId(event_id))?;
@@ -302,15 +299,12 @@ impl Oracle {
                 .get_event(event_id)
                 .await
                 .inspect_err(|e| {
-                    error!("Postgres error while getting event {}: {:?}", event_id, e);
+                    error!("Postgres error while getting event {event_id}: {e:?}");
                 })?
                 .ok_or(OracleError::MissingAnnouncements)?;
 
             let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
-                info!(
-                    "Event {} already attested (should be possible only in debug mode)",
-                    event_id
-                );
+                info!("Event {event_id} already attested (should be possible only in debug mode)");
                 return Ok(compute_attestation(self, event_id, event).expect("is attested"));
             };
 
@@ -340,10 +334,7 @@ impl Oracle {
                 .update_to_attestation(attestation.event_id, &attestation, price)
                 .await
                 .inspect_err(|e| {
-                    error!(
-                        "Postgres error while updating to attestation {}: {:?}",
-                        event_id, e
-                    );
+                    error!("Postgres error while updating to attestation {event_id}: {e:?}");
                 })?;
 
             Ok(attestation)

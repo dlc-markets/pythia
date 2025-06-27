@@ -300,7 +300,7 @@ async fn test_ws_ping_pong() -> Result<(), PythiaApiError> {
                 "Pong message content doesn't match ping"
             );
         }
-        _ => panic!("Expected Pong message, got: {:?}", resp),
+        _ => panic!("Expected Pong message, got: {resp:?}"),
     }
 
     Ok(())
@@ -349,16 +349,15 @@ async fn test_ws_subscription() -> Result<(), PythiaApiError> {
             let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
 
             assert!(
-                response_text.contains(&format!("\"id\": {}", request_id)),
+                response_text.contains(&format!("\"id\": {request_id}")),
                 "Cannot find id of the sent request in response"
             );
             assert!(
                 response_text.contains("Successfully subscribe"),
-                "Expected subscription confirmation, got: {}",
-                response_text
+                "Expected subscription confirmation, got: {response_text}"
             );
         }
-        _ => panic!("Expected Text message, got: {:?}", resp),
+        _ => panic!("Expected Text message, got: {resp:?}"),
     }
     Ok(())
 }
@@ -399,7 +398,7 @@ async fn test_ws_get_request_existed_event_id() -> Result<(), PythiaApiError> {
                 response_text
             );
         }
-        _ => panic!("Expected Text message, got: {:?}", resp),
+        _ => panic!("Expected Text message, got: {resp:?}"),
     }
     Ok(())
 }
@@ -438,11 +437,10 @@ async fn test_ws_get_request_not_existed_event_id() -> Result<(), PythiaApiError
                 response_text.contains("eventId not found")
                     || response_text
                         .contains("method unknown or no oracle set for this asset pair"),
-                "Expected error response, got: {}",
-                response_text
+                "Expected error response, got: {response_text}"
             );
         }
-        _ => panic!("Expected Text message, got: {:?}", resp),
+        _ => panic!("Expected Text message, got: {resp:?}"),
     }
     Ok(())
 }

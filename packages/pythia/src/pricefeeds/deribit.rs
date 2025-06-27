@@ -46,7 +46,7 @@ impl PriceFeed for Deribit {
             .await?
             .json()
             .await?;
-        debug!("received response: {:#?}", res);
+        debug!("received response: {res:#?}");
 
         // Deribit does not allow to retrieve past index price
         // So we check that we are not asking for price more than a minute ago
