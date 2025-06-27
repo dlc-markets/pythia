@@ -50,7 +50,7 @@ impl PriceFeed for Bitstamp {
             .await?
             .json()
             .await?;
-        debug!("received response: {:#?}", res);
+        debug!("received response: {res:#?}");
 
         if let Some(errs) = res.errors {
             return Err(PriceFeedError::Server(format!(

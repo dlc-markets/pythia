@@ -41,7 +41,7 @@ impl PriceFeed for Lnmarkets {
             .await?
             .json()
             .await?;
-        debug!("received response: {:#?}", res);
+        debug!("received response: {res:#?}");
 
         if res.is_empty() {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));

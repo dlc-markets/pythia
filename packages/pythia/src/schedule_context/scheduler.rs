@@ -162,7 +162,7 @@ where
                 let Ok(attestations) = oracle
                     .attest_at_date(next_time)
                     .await
-                    .map_err(|e| error!("The oracle scheduler failed to attest: {}", e))
+                    .map_err(|e| error!("The oracle scheduler failed to attest: {e}"))
                 else {
                     continue 'oracles;
                 };
@@ -180,8 +180,7 @@ where
 
                     let OracleError::MissingEventId(event_id) = error else {
                         error!(
-                            "The oracle scheduler failed to attest an event at date {}: {}",
-                            next_time, error
+                            "The oracle scheduler failed to attest an event at date {next_time}: {error}"
                         );
                         continue 'attestations;
                     };
@@ -201,9 +200,7 @@ where
                             }
                             None => {
                                 error!(
-                                    "The pricefeed did not find data for the event {} at date {}, it has been retried for too long, skipping",
-                                    event_id,
-                                    next_time);
+                                    "The pricefeed did not find data for the event {event_id} at date {next_time}, it has been retried for too long, skipping");
                             }
                             _ => {}
                         }

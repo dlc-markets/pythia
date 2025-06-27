@@ -82,14 +82,14 @@ async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
                 .unwrap(),
         )
         .await
-        .inspect_err(|e| println!("{}", e))
+        .inspect_err(|e| println!("{e}"))
         .unwrap()
         .unwrap_or_else(|| panic!("No oracle announcement in DB !"));
     assert_eq!(oracle_announcement, db_oracle_announcement.0);
 
-    (oracle_announcement.oracle_public_key == oracle.get_public_key())
-        .then_some(())
-        .unwrap_or_else(|| panic!("Public key in announcement mismatch the oracle's one"));
+    if oracle_announcement.oracle_public_key != oracle.get_public_key() {
+        panic!("Public key in announcement mismatch the oracle's one");
+    }
 
     OracleAnnouncement::from(oracle_announcement)
         .validate(&SECP)
@@ -247,7 +247,7 @@ fn check_test_vec(attestation_test_vec: OracleAttestation) {
         })
         .for_each(|res| {
             if let Err(e) = res.1 {
-                println!("Error: {:?}", e);
+                println!("Error: {e:?}");
                 panic!("{:?} is invalid", res.0)
             }
         });
@@ -486,7 +486,7 @@ fn check_test_vec_dlc_specs(attestation_test_vec: OracleAttestation) {
         })
         .for_each(|res| {
             if let Err(e) = res.1 {
-                println!("Error: {:?}", e);
+                println!("Error: {e:?}");
                 panic!("{:?} is invalid", res.0)
             }
         });
@@ -702,9 +702,7 @@ mod unittest {
                 let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
-                    "event: {} should exist for maturation: {}",
-                    event_id,
-                    maturation
+                    "event: {event_id} should exist for maturation: {maturation}"
                 );
 
                 let event = event.expect("Event should exist");
@@ -821,8 +819,7 @@ mod unittest {
                 let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
-                    "Event should exist for maturation {}",
-                    maturation
+                    "Event should exist for maturation {maturation}"
                 );
                 let events = db
                     .get_many_events([event_id].to_vec())
@@ -995,8 +992,7 @@ mod unittest {
                 let expected_nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0.serialize();
                 assert_eq!(
                     announcement.oracle_event.oracle_nonces[i], expected_nonce,
-                    "Public nonce at index {} doesn't match derived nonce from secret",
-                    i
+                    "Public nonce at index {i} doesn't match derived nonce from secret"
                 );
             }
 
@@ -1024,14 +1020,12 @@ mod unittest {
                 assert_eq!(
                     announcement.oracle_event.oracle_nonces.len(),
                     digits as usize,
-                    "Nonce count should match digit count of {}",
-                    digits
+                    "Nonce count should match digit count of {digits}"
                 );
                 assert_eq!(
                     event_to_insert.nonces_keypairs.len(),
                     digits as usize,
-                    "Secret nonce count should match the digit count of {}",
-                    digits
+                    "Secret nonce count should match digit count of {digits}"
                 );
             }
 
@@ -1065,8 +1059,7 @@ mod unittest {
                 assert_eq!(
                     announcement.oracle_event.maturity as i64,
                     maturation.timestamp(),
-                    "Maturation epoch should match timestamp {}",
-                    maturation
+                    "Maturation epoch should match timestamp {maturation}"
                 );
 
                 // Verify event ID includes the correct timestamp
