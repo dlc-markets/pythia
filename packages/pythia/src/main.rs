@@ -18,6 +18,12 @@ mod oracle;
 mod pricefeeds;
 mod schedule_context;
 
+#[cfg(test)]
+mod test {
+    pub use crate::api::test as api;
+    pub use crate::schedule_context::test as schedule_context;
+}
+
 use config::{cli::PythiaArgs, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};

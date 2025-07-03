@@ -169,7 +169,7 @@ impl Oracle {
                         "Event {} already announced (should be possible only in debug mode or when restarted)",
                         &event_to_insert.event_id
                     );
-                    compute_announcement(self, event)
+                    compute_announcement(self, event_to_insert.event_id, event)
                 },
                 None => { self.db
                     .insert_announcement(&event_to_insert)
@@ -371,7 +371,7 @@ impl Oracle {
             return Ok(None);
         };
 
-        let announcement = compute_announcement(self, event.clone());
+        let announcement = compute_announcement(self, event_id, event.clone());
         Ok(Some((
             announcement,
             compute_attestation(self, event_id, event),
@@ -391,7 +391,7 @@ impl Oracle {
 
         Ok(event
             .into_iter()
-            .map(|e| compute_announcement(self, e.0))
+            .map(|(e, event_id)| compute_announcement(self, event_id, e))
             .collect())
     }
 
@@ -418,7 +418,7 @@ impl Oracle {
                         .collect::<Vec<_>>();
                     (
                         as_keypairs,
-                        Some(compute_announcement(self, postgres_response)),
+                        Some(compute_announcement(self, event_id, postgres_response)),
                     )
                 }
                 ScalarsRecords::DigitsAttestations(outcome, _) => {
@@ -549,14 +549,13 @@ fn compute_attestation(
     })
 }
 
-fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> Announcement {
-    let event_id = EventId::spot_from_pair_and_timestamp(
-        oracle.asset_pair_info.asset_pair,
-        event.maturity.with_timezone(&Utc),
-    );
-
+fn compute_announcement(
+    oracle: &Oracle,
+    event_id: EventId,
+    event: PostgresResponse,
+) -> Announcement {
     let oracle_event = Event {
-        oracle_nonces: event.nonces_public,
+        oracle_nonces: event.nonces_public.clone(),
         maturity: event.maturity.timestamp() as u32,
         event_descriptor: oracle.asset_pair_info.event_descriptor,
         event_id,
