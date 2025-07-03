@@ -1,394 +1,22 @@
 use actix_web::App;
-use chrono::{Duration, Timelike as _, Utc};
+
+use chrono::{DateTime, Duration, Timelike, Utc};
+use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
+
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
 use crate::{
-    api::v1_app_factory,
-    data_models::{asset_pair::AssetPair, event_ids::EventId},
-    schedule_context::{OracleContext as _, api_context::ApiContext},
+    api::{v1_app_factory, AttestationResponse},
+    data_models::{asset_pair::AssetPair, event_ids::EventId, expiries::Expiry},
+    schedule_context::{api_context::ApiContext, OracleContext},
+    SECP,
 };
 
-use crate::test::schedule_context::{HandlerToMock, MockContext};
-
-pub async fn run_in_local_set<F>(f: F)
-where
-    F: std::future::Future<Output = ()> + 'static,
-{
-    LocalSet::new().run_until(f).await
-}
-
-/// Populates the database with announcement events for testing
-///
-/// Creates a specified number of announcements with different maturity times
-/// and stores their event IDs for later use in tests.
-/// Sets up mocked pricefeed data before creating announcements.
-pub async fn populate_test_db(
-    mock_context: &mut MockContext,
-    count: usize,
-    context_handler: &HandlerToMock,
-) -> Vec<EventIdInfos> {
-    let now = Utc::now()
-        .with_second(0)
-        .unwrap()
-        .with_nanosecond(0)
-        .unwrap();
-
-    // Pre-generate event IDs and set up mocked pricefeed data
-    let mut event_ids = Vec::with_capacity(count);
-
-    // Find the BTC/USD oracle
-    let oracle = mock_context
-        .oracles()
-        .get(&AssetPair::BtcUsd)
-        .expect("BTC/USD oracle must exist");
-
-    // Create announcements at different times
-    for i in 0..count {
-        let maturity_time = now + Duration::hours(i as i64 + 1);
-
-        let event_id_infos =
-            EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, maturity_time);
-        // Set up mocked pricefeed data for all the events we're about to create
-        let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0 + i as f64))]);
-
-        // Create announcement
-        let mut announcements = oracle
-            .create_announcements_at_date(&mock_context.db(), maturity_time)
-            .await
-            .expect("Failed to create announcement");
-
-        // Verify the event ID matches what we expected
-        assert_eq!(
-            announcements.pop().unwrap().oracle_event.event_id,
-            event_id_infos.as_event_id()
-        );
-
-        event_ids.push(event_id_infos);
-    }
-
-    event_ids
-}
-
-/// Create a test server with the WebSocket endpoint and mocked pricefeed
-///
-/// This creates an Actix test server with our API context and WebSocket route
-/// and sets up some basic mocked pricefeed data for testing
-pub async fn get_test_server(pool: PgPool) -> (HandlerToMock, MockContext, actix_test::TestServer) {
-    let channel_sender = broadcast::Sender::new(32);
-    let (context_handler, context) = MockContext::new(pool).await;
-
-    // Set up some basic mocked pricefeed data for testing
-    let now = Utc::now()
-        .with_second(0)
-        .unwrap()
-        .with_nanosecond(0)
-        .unwrap();
-    let event_id = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
-    let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
-
-    let oracle = context.oracles().get(&AssetPair::BtcUsd).unwrap();
-    oracle
-        .create_announcements_at_date(&context.db(), now)
-        .await
-        .unwrap();
-
-    let api_context = ApiContext {
-        oracle_context: context.clone(),
-        offset_duration: chrono::Duration::minutes(2),
-        channel_sender,
-    };
-
-    (
-        context_handler,
-        context,
-        actix_test::start(move || {
-            let factory = v1_app_factory::<MockContext>(true);
-
-            App::new().app_data(api_context.clone()).service(factory)
-        }),
-    )
-}
-
-/// Create a JSON-RPC get request for testing
-///
-/// Creates a request to get a BTC/USD attestation event using a real event ID
-/// from the database if available.
-fn create_get_request(event_id: EventId) -> String {
-    let request = Request {
-        jsonrpc: Version::V2,
-        method: "get".to_string(),
-        params: Some(RequestContent::Get(GetRequest {
-            event_id,
-            asset_pair: EventChannel {
-                asset_pair: AssetPair::BtcUsd,
-                ty: EventType::Announcement,
-            },
-        })),
-        id: None,
-    };
-
-    serde_json::to_string(&request).unwrap()
-}
-
-/// Helper function to receive the next non-ping WebSocket message
-///
-/// This function filters out ping frames and returns the first non-ping message,
-/// which is usually what we're interested in for testing.
-async fn receive_next_non_ping(
-    ws: &mut Framed<BoxedSocket, Codec>,
-) -> Result<Frame, PythiaApiError> {
-    match ws
-        .by_ref()
-        .filter(|msg| future::ready(!matches!(msg, Ok(Frame::Ping(_)))))
-        .next()
-        .await
-    {
-        Some(Ok(frame)) => Ok(frame),
-        Some(Err(e)) => Err(PythiaApiError::WebSocketError(e.to_string())),
-        None => Err(PythiaApiError::WebSocketError(
-            "WebSocket closed".to_string(),
-        )),
-    }
-}
-
-/// Test basic connection to the WebSocket endpoint
-///
-/// This test verifies that we can connect to the WebSocket endpoint
-/// and receive the expected 101 Switching Protocols status code.
-#[sqlx::test]
-async fn test_ws_connection(pool: PgPool) {
-    run_in_local_set(async move {
-        let (_, _, srv) = get_test_server(pool).await;
-        let client = Client::default();
-
-        // Verify we can connect to the WebSocket endpoint
-        let ws = client.ws(srv.url("/v1/ws")).connect().await.unwrap();
-
-        // Status 101 "Switching Protocols" is the correct response for WebSocket upgrade
-        assert_eq!(
-            ws.0.status().as_u16(),
-            101,
-            "Expected WebSocket upgrade status 101, got: {}",
-            ws.0.status()
-        );
-    })
-    .await
-}
-
-/// Test ping-pong exchange with the WebSocket server
-///
-/// This test verifies that the server responds to ping messages with pong messages
-#[sqlx::test]
-async fn test_ws_ping_pong(pool: PgPool) {
-    run_in_local_set(async move {
-        let (_, _, srv) = get_test_server(pool).await;
-        let client = Client::default();
-
-        // Connect to the WebSocket
-        let (_, mut ws) = client
-            .ws(srv.url("/v1/ws"))
-            .connect()
-            .await
-            .expect("Failed to connect to WebSocket");
-
-        // Send a ping message
-        ws.send(Message::Ping("ping test".into()))
-            .await
-            .expect("Failed to send ping");
-
-        // Receive the response and verify it's a pong
-        let resp = receive_next_non_ping(&mut ws).await.unwrap();
-
-        match resp {
-            Frame::Pong(bytes) => {
-                assert_eq!(
-                    bytes, "ping test",
-                    "Pong message content doesn't match ping"
-                );
-            }
-            _ => panic!("Expected Pong message, got: {resp:?}"),
-        }
-    })
-    .await
-}
-
-/// Test subscription to events
-///
-/// This test verifies that we can subscribe to events and receive a confirmation
-#[sqlx::test]
-async fn test_ws_subscription(pool: PgPool) {
-    run_in_local_set(async move {
-        let (_, _, srv) = get_test_server(pool).await;
-        let client = Client::default();
-
-        // Connect to the WebSocket
-        let (_, mut ws) = client
-            .ws(srv.url("/v1/ws"))
-            .connect()
-            .await
-            .expect("Failed to connect to WebSocket");
-
-        // Send a subscription request
-
-        let request_id = 1337;
-        let request = Request {
-            jsonrpc: Version::V2,
-            method: "subscribe".to_string(),
-            params: Some(RequestContent::Subscription(EventChannel {
-                asset_pair: AssetPair::BtcUsd,
-                ty: EventType::Announcement,
-            })),
-            id: Some(Id::Num(request_id)),
-        };
-
-        let subscription_request = serde_json::to_string(&request).unwrap();
-
-        ws.send(Message::Text(subscription_request.into()))
-            .await
-            .expect("Failed to send subscription");
-
-        // Verify subscription confirmation
-        let resp = receive_next_non_ping(&mut ws).await.unwrap();
-
-        match resp {
-            Frame::Text(text) => {
-                let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
-
-                assert!(
-                    response_text.contains(&format!("\"id\": {request_id}")),
-                    "Cannot find id of the sent request in response"
-                );
-                assert!(
-                    response_text.contains("Successfully subscribe"),
-                    "Expected subscription confirmation, got: {response_text}"
-                );
-            }
-            _ => panic!("Expected Text message, got: {resp:?}"),
-        }
-    })
-    .await
-}
-
-/// Test get request for event data with real announcements
-///
-/// This test populates the database with real announcements and then
-/// attempts to get one of them through the WebSocket API.
-#[sqlx::test]
-async fn test_ws_get_request_existed_event_id(pool: PgPool) {
-    run_in_local_set(async move {
-        // Create a server with 3 test announcements
-        let (context_handler, mut oracle_context, srv) = get_test_server(pool).await;
-
-        let event_ids = populate_test_db(&mut oracle_context, 3, &context_handler).await;
-
-        let client = Client::default();
-
-        // Connect to the WebSocket
-        let (_, mut ws) = client
-            .ws(srv.url("/v1/ws"))
-            .connect()
-            .await
-            .expect("Failed to connect to WebSocket");
-
-        // Send a get request for an existed event
-        let get_request = create_get_request(event_ids[0].as_event_id());
-        ws.send(Message::Text(get_request.into()))
-            .await
-            .expect("Failed to send get request");
-
-        let resp = receive_next_non_ping(&mut ws).await.unwrap();
-
-        match resp {
-            Frame::Text(text) => {
-                let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
-                assert!(
-                    response_text.contains(event_ids[0].as_event_id().as_ref()),
-                    "Expected {} in response, got: {}",
-                    event_ids[0],
-                    response_text
-                );
-            }
-            _ => panic!("Expected Text message, got: {resp:?}"),
-        }
-    })
-    .await
-}
-
-/// Test get request for event data
-///
-/// This test verifies that we get an appropriate error response when requesting
-/// an event that doesn't exist (since we're using a mock Oracle)
-#[sqlx::test]
-async fn test_ws_get_request_not_existed_event_id(pool: PgPool) {
-    run_in_local_set(async move {
-        let (_, _, srv) = get_test_server(pool).await;
-        let client = Client::default();
-
-        // Connect to the WebSocket
-        let (_, mut ws) = client
-            .ws(srv.url("/v1/ws"))
-            .connect()
-            .await
-            .expect("Failed to connect to WebSocket");
-
-        // Send a get request
-        let get_request = create_get_request("btc_usd1746003000".parse().unwrap());
-        ws.send(Message::Text(get_request.into()))
-            .await
-            .expect("Failed to send get request");
-
-        // Verify the response - we should get a "eventId not found" response for attestation
-        // because we only created the announcements, not attestations
-        let resp = receive_next_non_ping(&mut ws).await.unwrap();
-
-        match resp {
-            Frame::Text(text) => {
-                let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
-                assert!(
-                    response_text.contains("eventId not found")
-                        || response_text
-                            .contains("method unknown or no oracle set for this asset pair"),
-                    "Expected error response, got: {response_text}"
-                );
-            }
-            _ => panic!("Expected Text message, got: {resp:?}"),
-        }
-    })
-    .await
-}
-
-/// Test clean WebSocket closure
-///
-/// This test verifies that we can properly close the WebSocket connection
-#[sqlx::test]
-
-async fn test_ws_clean_closure(pool: PgPool) {
-    run_in_local_set(async move {
-        let (_, _, srv) = get_test_server(pool).await;
-        let client = Client::default();
-
-        // Connect to the WebSocket
-        let (_, mut ws) = client
-            .ws(srv.url("/v1/ws"))
-            .connect()
-            .await
-            .expect("Failed to connect to WebSocket");
-
-        // Send a close frame
-        ws.send(Message::Close(Some(actix_ws::CloseReason {
-            code: actix_ws::CloseCode::Normal,
-            description: Some("Test complete".into()),
-        })))
-        .await
-        .expect("Failed to send close frame");
-
-        // May or may not get a close frame in response depending on implementation
-        // We'll just check if we get anything back without asserting
-        let _ = ws.next().await.unwrap();
-    })
-    .await
-}
+use crate::test::{
+    api::{get_test_server, populate_test_db, run_in_local_set},
+    schedule_context::MockContext,
+};
 
 // ============================================================================
 // HTTP API Tests with Mocked Pricefeed
@@ -503,7 +131,7 @@ async fn test_http_get_announcement(pool: PgPool) {
         let client = awc::Client::default();
 
         // Extract timestamp from the first event ID
-        let event_id = event_ids[0].as_event_id();
+        let event_id = &event_ids[0];
         // EventId format is "btc_usd{timestamp}", so extract the timestamp part
         let event_id_str = event_id.as_ref();
         let timestamp_str = &event_id_str[7..]; // Skip "btc_usd"
@@ -511,6 +139,8 @@ async fn test_http_get_announcement(pool: PgPool) {
         let timestamp = chrono::DateTime::from_timestamp(timestamp_seconds, 0)
             .unwrap()
             .to_rfc3339();
+
+        let _ = context_handler.send(vec![(*event_id, Some(50000.0))]);
 
         let mut resp = client
             .get(srv.url(&format!("/v1/asset/btc_usd/announcement/{}", timestamp)))
@@ -525,15 +155,15 @@ async fn test_http_get_announcement(pool: PgPool) {
             "Expected status 200 for existing announcement"
         );
 
-        let announcement: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
+        let announcements: Vec<OracleAnnouncement> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(announcements.len(), 1, "Expected 1 announcement");
         assert!(
-            announcement.get("oracleEvent").is_some(),
+            announcements[0].oracle_event.event_id == event_id.as_ref(),
             "Expected oracle event"
         );
-        assert!(
-            announcement.get("announcementSignature").is_some(),
-            "Expected announcement signature"
-        );
+        announcements[0].validate(&SECP).unwrap();
     })
     .await
 }
@@ -546,14 +176,16 @@ async fn test_http_get_attestation(pool: PgPool) {
     run_in_local_set(async move {
         // For attestation testing, we'll use the force endpoint to create an attestation
         // and then test retrieving it
-        let (_, _, srv) = get_test_server(pool).await;
+        let (context_handler, _, srv) = get_test_server(pool).await;
         let client = awc::Client::default();
 
         // First, create an attestation using the force endpoint
         let now = Utc::now();
+
+        let forced_price = 50000.0;
         let request_body = json!({
             "maturation": now.to_rfc3339(),
-            "price": 50000.0
+            "price": forced_price
         });
 
         let mut force_resp = client
@@ -570,9 +202,15 @@ async fn test_http_get_attestation(pool: PgPool) {
 
         let force_response: serde_json::Value =
             force_resp.json().await.expect("Failed to parse JSON");
-        let _event_id = force_response["attestation"]["eventId"]
+        let event_id = force_response["attestation"]["eventId"]
             .as_str()
-            .expect("Expected event ID");
+            .expect("Expected event ID")
+            .parse()
+            .unwrap();
+
+        context_handler
+            .send(vec![(event_id, Some(forced_price))])
+            .unwrap();
 
         // Now test getting the attestation
         let mut resp = client
@@ -591,13 +229,17 @@ async fn test_http_get_attestation(pool: PgPool) {
             "Expected status 200 for existing attestation"
         );
 
-        let attestation: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
-        assert!(attestation.get("eventId").is_some(), "Expected event ID");
+        let attestations: Vec<AttestationResponse> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(attestations.len(), 1, "Expected 1 attestation");
+
+        assert!(attestations[0].event_id == event_id, "Expected event ID");
         assert!(
-            attestation.get("signatures").is_some(),
+            attestations[0].signatures.len() == 30,
             "Expected signatures"
         );
-        assert!(attestation.get("values").is_some(), "Expected values");
+        assert!(attestations[0].values.len() == 30, "Expected values");
     })
     .await
 }
@@ -616,7 +258,7 @@ async fn test_http_batch_announcements(pool: PgPool) {
         // Extract timestamps from the event IDs
         let mut maturities = Vec::new();
         for event_id in &event_ids {
-            let event_id_str = event_id.as_event_id();
+            let event_id_str = event_id.as_ref();
             let timestamp_str = &event_id_str[7..]; // Skip "btc_usd"
             let timestamp_seconds: i64 = timestamp_str.parse().expect("Failed to parse timestamp");
             let timestamp = chrono::DateTime::from_timestamp(timestamp_seconds, 0).unwrap();
@@ -651,6 +293,88 @@ async fn test_http_batch_announcements(pool: PgPool) {
     .await
 }
 
+/// Test POST /asset/{asset_pair}/{expiry}/announcements/batch endpoint
+///
+/// This test verifies that the batch announcements endpoint works with mocked pricefeed
+#[sqlx::test]
+async fn test_http_batch_announcements_with_expiry(pool: PgPool) {
+    run_in_local_set(async move {
+        // Create a server with pre-populated announcements
+        let (context_handler, oracle_context, srv) = get_test_server(pool).await;
+        let client = awc::Client::default();
+
+        let expiry = Expiry::from(Utc::now().date_naive() + Duration::days(1));
+
+        let base_date = DateTime::from(expiry);
+
+        let maturities = vec![
+            (base_date - Duration::hours(2)),
+            (base_date - Duration::hours(1)),
+            base_date,
+        ];
+
+        let mut event_ids = Vec::with_capacity(maturities.len());
+
+        for maturity_time in &maturities {
+            let event_id = if maturity_time == &base_date {
+                EventId::delivery_of_expiry_with_pair(AssetPair::BtcUsd, expiry)
+            } else {
+                EventId::forward_of_expiry_with_pair_at_timestamp(
+                    AssetPair::BtcUsd,
+                    expiry,
+                    *maturity_time,
+                )
+            };
+
+            // Set up mocked pricefeed data for all the events we're about to create
+            let _ = context_handler.send(vec![(event_id, Some(50000.0 as f64))]);
+
+            // Create announcement
+            let mut announcements = oracle_context
+                .oracles()
+                .get(&AssetPair::BtcUsd)
+                .unwrap()
+                .create_announcements_at_date(*maturity_time)
+                .await
+                .expect("Failed to create announcement");
+
+            event_ids.push(event_id);
+
+            // Verify the event ID matches what we expected
+            assert_eq!(announcements.pop().unwrap().oracle_event.event_id, event_id);
+        }
+
+        event_ids.iter().for_each(|&event_id| {
+            context_handler
+                .send(vec![(event_id, Some(50000.0 as f64))])
+                .unwrap()
+        });
+
+        let request_body = json!({
+            "maturities": maturities.iter().map(|m| m.to_rfc3339()).collect::<Vec<String>>()
+        });
+
+        let mut resp = client
+            .post(srv.url(&format!("/v1/asset/btc_usd/{expiry}/announcements/batch")))
+            .send_json(&request_body)
+            .await
+            .expect("Failed to send request");
+
+        // Should succeed since we have announcements in the database
+        assert_eq!(
+            resp.status(),
+            200,
+            "Expected status 200 for existing announcement"
+        );
+
+        let announcements: Vec<OracleAnnouncement> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(announcements.len(), 3, "Expected 3 announcement");
+    })
+    .await
+}
+
 /// Test POST /force endpoint
 ///
 /// This test verifies that the force endpoint works with mocked pricefeed
@@ -662,7 +386,7 @@ async fn test_http_force_attestation(pool: PgPool) {
 
         // Set up mocked pricefeed data
         let now = Utc::now();
-        let event_id = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
+        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
 
         let _ = context_handler.send(vec![(event_id.clone(), Some(50000.0))]);
 
@@ -771,7 +495,7 @@ async fn test_http_future_attestation(pool: PgPool) {
             .with_nanosecond(0)
             .unwrap()
             + Duration::hours(3);
-        let event_id = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, future_time);
+        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, future_time);
 
         let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
 
@@ -779,9 +503,11 @@ async fn test_http_future_attestation(pool: PgPool) {
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .create_announcements_at_date(&context.db(), future_time)
+            .create_announcements_at_date(future_time)
             .await
             .unwrap();
+
+        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
 
         let timestamp = future_time.to_rfc3339();
         let resp = client
@@ -816,8 +542,7 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
             .unwrap()
             + Duration::minutes(5);
 
-        let event_id_infos = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
-        let event_id = event_id_infos.as_event_id();
+        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
 
         let api_context = ApiContext {
             oracle_context: oracle_context.clone(),
@@ -834,19 +559,19 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
         let client = awc::Client::default();
 
         // Set up mocked pricefeed data for the same event IDs
-        let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0))]);
+        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
 
         oracle_context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .create_announcements_at_date(oracle_context.db(), now)
+            .create_announcements_at_date(now)
             .await
             .unwrap();
 
         // Set up mocked pricefeed data for the same event IDs
         context_handler
-            .send(vec![(event_id_infos.clone(), Some(50000.0))])
+            .send(vec![(event_id, Some(50000.0))])
             .unwrap();
 
         // Test getting an announcement for an existing event
@@ -867,14 +592,15 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
         let body = resp.body().await.unwrap();
         println!("{:?}", body);
 
-        let announcement: OracleAnnouncement =
+        let announcements: Vec<OracleAnnouncement> =
             serde_json::from_slice(&body).expect("Failed to parse JSON");
 
-        announcement.validate(&SECP).unwrap();
-        assert_eq!(announcement.oracle_event.event_id, event_id.to_string());
+        assert_eq!(announcements.len(), 1, "Expected 1 announcement");
+        announcements[0].validate(&SECP).unwrap();
+        assert_eq!(announcements[0].oracle_event.event_id, event_id.to_string());
 
         context_handler
-            .send(vec![(event_id_infos.clone(), Some(50000.0))])
+            .send(vec![(event_id, Some(50000.0))])
             .unwrap();
 
         let resp = client
@@ -890,14 +616,20 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
             "Expected status 400 for not existing attestation"
         );
 
-        let _ = context_handler.send(vec![(event_id_infos, Some(50000.0))]);
+        context_handler
+            .send(vec![(event_id, Some(50000.0))])
+            .unwrap();
 
-        let _ = oracle_context
+        oracle_context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .attest_at_date(oracle_context.db(), now)
+            .attest_at_date(now)
             .await
+            .unwrap();
+
+        context_handler
+            .send(vec![(event_id, Some(50000.0))])
             .unwrap();
 
         let mut resp = client
@@ -913,21 +645,28 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
             "Expected status 200 for existing attestation"
         );
 
-        let attestation: AttestationResponse = resp.json().await.expect("Failed to parse JSON");
+        let attestations: Vec<AttestationResponse> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(attestations.len(), 1, "Expected 1 attestation");
 
         let attestation = OracleAttestation {
-            event_id: attestation.event_id.to_string(),
+            event_id: attestations[0].event_id.to_string(),
             oracle_public_key: oracle_context
                 .oracles()
                 .get(&AssetPair::BtcUsd)
                 .unwrap()
                 .get_public_key()
                 .into(),
-            signatures: attestation.signatures,
-            outcomes: attestation.values.iter().map(|o| o.to_string()).collect(),
+            signatures: attestations[0].signatures.clone(),
+            outcomes: attestations[0]
+                .values
+                .iter()
+                .map(|o| o.to_string())
+                .collect(),
         };
 
-        attestation.validate(&SECP, &announcement).unwrap();
+        attestation.validate(&SECP, &announcements[0]).unwrap();
         assert_eq!(&*attestation.event_id, &event_id.to_string());
     })
     .await

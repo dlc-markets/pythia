@@ -21,6 +21,12 @@ mod schedule_context;
 
 use config::{AssetPairInfo, cli::PythiaArgs};
 use db::DBconnection;
+#[cfg(test)]
+mod test {
+    pub use crate::api::test as api;
+    pub use crate::schedule_context::test as schedule_context;
+}
+
 use error::PythiaError;
 use oracle::Oracle;
 
