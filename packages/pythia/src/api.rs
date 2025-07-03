@@ -15,6 +15,7 @@ use crate::{
     data_models::{
         asset_pair::AssetPair,
         event_ids::EventId,
+        expiries::Expiry,
         oracle_msgs::{Announcement, Attestation},
         Outcome,
     },
@@ -27,6 +28,7 @@ struct EventChannel {
     asset_pair: AssetPair,
     #[serde(rename = "type")]
     ty: EventType,
+    expiry: Option<Expiry>,
 }
 #[derive(Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
@@ -53,8 +55,8 @@ pub(crate) struct AttestationResponse {
 }
 #[derive(Clone, Debug)]
 pub(crate) enum EventNotification {
-    Announcement(AssetPair, Announcement),
-    Attestation(AssetPair, AttestationResponse),
+    Announcement(AssetPair, Option<Expiry>, Announcement),
+    Attestation(AssetPair, Option<Expiry>, AttestationResponse),
 }
 
 fn v1_app_factory<Context>(debug_mode: bool) -> Scope
@@ -76,6 +78,10 @@ where
         .route(
             "/asset/{asset_pair}/announcements/batch",
             web::post().to(http::oracle_batch_announcements_service::<Context>),
+        )
+        .route(
+            "/forward/{asset_pair}/{expiry}/announcements/batch",
+            web::post().to(http::oracle_batch_forwards_service::<Context>),
         )
         .route("/ws", web::get().to(ws::websocket::<Context>));
     if debug_mode {
@@ -122,8 +128,10 @@ impl From<Attestation> for AttestationResponse {
 
 impl From<(AssetPair, Attestation)> for EventNotification {
     fn from(value: (AssetPair, Attestation)) -> Self {
+        let expiry = value.1.event_id.try_into().ok();
         EventNotification::Attestation(
             value.0,
+            expiry,
             AttestationResponse {
                 event_id: value.1.event_id,
                 signatures: value.1.signatures,
@@ -135,6 +143,7 @@ impl From<(AssetPair, Attestation)> for EventNotification {
 
 impl From<(AssetPair, Announcement)> for EventNotification {
     fn from(value: (AssetPair, Announcement)) -> Self {
-        EventNotification::Announcement(value.0, value.1)
+        let expiry = value.1.oracle_event.event_id.try_into().ok();
+        EventNotification::Announcement(value.0, expiry, value.1)
     }
 }

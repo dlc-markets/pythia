@@ -173,6 +173,7 @@ fn create_get_request(event_id: EventId) -> String {
             asset_pair: EventChannel {
                 asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Announcement,
+                expiry: None,
             },
         })),
         id: None,
@@ -288,6 +289,7 @@ async fn test_ws_subscription(pool: PgPool) -> JoinResult {
             params: Some(RequestContent::Subscription(EventChannel {
                 asset_pair: AssetPair::BtcUsd,
                 ty: EventType::Announcement,
+                expiry: None,
             })),
             id: Some(Id::Num(request_id)),
         };
@@ -571,15 +573,15 @@ async fn test_http_get_announcement(pool: PgPool) -> JoinResult {
             "Expected status 200 for existing announcement"
         );
 
-        let announcement: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
+        let announcements: Vec<OracleAnnouncement> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(announcements.len(), 1, "Expected 1 announcement");
         assert!(
-            announcement.get("oracleEvent").is_some(),
+            announcements[0].oracle_event.event_id == event_id.as_ref(),
             "Expected oracle event"
         );
-        assert!(
-            announcement.get("announcementSignature").is_some(),
-            "Expected announcement signature"
-        );
+        announcements[0].validate(&SECP).unwrap();
     })
     .await
 }
@@ -592,14 +594,16 @@ async fn test_http_get_attestation(pool: PgPool) -> JoinResult {
     run_in_local_set(async move {
         // For attestation testing, we'll use the force endpoint to create an attestation
         // and then test retrieving it
-        let (_, _, srv) = get_test_server(pool).await;
+        let (context_handler, _, srv) = get_test_server(pool).await;
         let client = awc::Client::default();
 
         // First, create an attestation using the force endpoint
         let now = Utc::now();
+
+        let forced_price = 50000.0;
         let request_body = json!({
             "maturation": now.to_rfc3339(),
-            "price": 50000.0
+            "price": forced_price
         });
 
         let mut force_resp = client
@@ -616,9 +620,15 @@ async fn test_http_get_attestation(pool: PgPool) -> JoinResult {
 
         let force_response: serde_json::Value =
             force_resp.json().await.expect("Failed to parse JSON");
-        let _event_id = force_response["attestation"]["eventId"]
+        let event_id = force_response["attestation"]["eventId"]
             .as_str()
-            .expect("Expected event ID");
+            .expect("Expected event ID")
+            .parse()
+            .unwrap();
+
+        context_handler
+            .send(vec![(event_id, Some(forced_price))])
+            .unwrap();
 
         // Now test getting the attestation
         let mut resp = client
@@ -637,13 +647,17 @@ async fn test_http_get_attestation(pool: PgPool) -> JoinResult {
             "Expected status 200 for existing attestation"
         );
 
-        let attestation: serde_json::Value = resp.json().await.expect("Failed to parse JSON");
-        assert!(attestation.get("eventId").is_some(), "Expected event ID");
+        let attestations: Vec<AttestationResponse> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(attestations.len(), 1, "Expected 1 attestation");
+
+        assert!(attestations[0].event_id == event_id, "Expected event ID");
         assert!(
-            attestation.get("signatures").is_some(),
+            attestations[0].signatures.len() == 30,
             "Expected signatures"
         );
-        assert!(attestation.get("values").is_some(), "Expected values");
+        assert!(attestations[0].values.len() == 30, "Expected values");
     })
     .await
 }
@@ -828,6 +842,8 @@ async fn test_http_future_attestation(pool: PgPool) -> JoinResult {
             .await
             .unwrap();
 
+        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
+
         let timestamp = future_time.to_rfc3339();
         let resp = client
             .get(srv.url(&format!("/v1/asset/btc_usd/attestation/{}", timestamp)))
@@ -911,11 +927,12 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) -> JoinR
         let body = resp.body().await.unwrap();
         println!("{:?}", body);
 
-        let announcement: OracleAnnouncement =
+        let announcements: Vec<OracleAnnouncement> =
             serde_json::from_slice(&body).expect("Failed to parse JSON");
 
-        announcement.validate(&SECP).unwrap();
-        assert_eq!(announcement.oracle_event.event_id, event_id.to_string());
+        assert_eq!(announcements.len(), 1, "Expected 1 announcement");
+        announcements[0].validate(&SECP).unwrap();
+        assert_eq!(announcements[0].oracle_event.event_id, event_id.to_string());
 
         context_handler
             .send(vec![(event_id, Some(50000.0))])
@@ -934,14 +951,20 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) -> JoinR
             "Expected status 400 for not existing attestation"
         );
 
-        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
+        context_handler
+            .send(vec![(event_id, Some(50000.0))])
+            .unwrap();
 
-        let _ = oracle_context
+        oracle_context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
             .attest_at_date(now)
             .await
+            .unwrap();
+
+        context_handler
+            .send(vec![(event_id, Some(50000.0))])
             .unwrap();
 
         let mut resp = client
@@ -957,21 +980,28 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) -> JoinR
             "Expected status 200 for existing attestation"
         );
 
-        let attestation: AttestationResponse = resp.json().await.expect("Failed to parse JSON");
+        let attestations: Vec<AttestationResponse> =
+            resp.json().await.expect("Failed to parse JSON");
+
+        assert_eq!(attestations.len(), 1, "Expected 1 attestation");
 
         let attestation = OracleAttestation {
-            event_id: attestation.event_id.to_string(),
+            event_id: attestations[0].event_id.to_string(),
             oracle_public_key: oracle_context
                 .oracles()
                 .get(&AssetPair::BtcUsd)
                 .unwrap()
                 .get_public_key()
                 .into(),
-            signatures: attestation.signatures,
-            outcomes: attestation.values.iter().map(|o| o.to_string()).collect(),
+            signatures: attestations[0].signatures.clone(),
+            outcomes: attestations[0]
+                .values
+                .iter()
+                .map(|o| o.to_string())
+                .collect(),
         };
 
-        attestation.validate(&SECP, &announcement).unwrap();
+        attestation.validate(&SECP, &announcements[0]).unwrap();
         assert_eq!(&*attestation.event_id, &event_id.to_string());
     })
     .await

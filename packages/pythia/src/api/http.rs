@@ -1,10 +1,12 @@
 use actix_web::{web, Error, HttpResponse, Result};
 use chrono::{DateTime, FixedOffset, Utc};
+use futures::stream::StreamExt;
+use futures_buffered::FuturesUnorderedBounded;
 use hex::ToHex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::{error::PythiaApiError, AttestationResponse, EventType},
+    api::{error::PythiaApiError, AttestationResponse, EventType, Expiry},
     config::ConfigResponse,
     data_models::{asset_pair::AssetPair, event_ids::EventId, oracle_msgs::Announcement},
     schedule_context::{api_context::ApiContext, OracleContext},
@@ -104,44 +106,94 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     .then_some(())
     .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
-    let event_id = EventId::spot_from_pair_and_timestamp(
-        oracle.asset_pair_info.asset_pair,
-        timestamp.with_timezone(&Utc),
-    );
-    let (announcement, maybe_attestation) = oracle
-        .oracle_state(event_id)
-        .await
-        .map_err(PythiaApiError::OracleFail)?
-        .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
+    let event_ids = oracle
+        .asset_pair_info
+        .pricefeed
+        .events_at_date(asset_pair, timestamp.with_timezone(&Utc));
+
+    if event_ids.is_empty() {
+        return Err(PythiaApiError::OracleEventNotFoundError(format!("at {timestamp}")).into());
+    }
 
     match event_type {
-        EventType::Announcement => Ok(HttpResponse::Ok().json(announcement)),
-        EventType::Attestation => {
-            let attestation = match maybe_attestation {
-                Some(attestation) => Ok(attestation),
-                None => {
-                    if timestamp < Utc::now() {
-                        Ok(oracle
-                            .try_attest_event(event_id)
-                            .await
-                            .map_err(PythiaApiError::OracleFail)?
-                            .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
-                        )
-                    } else {
-                        Err(actix_web::error::ErrorBadRequest(
-                            "Oracle cannot sign a value not yet known, retry after ".to_string()
-                                + &timestamp.to_rfc3339(),
-                        ))
-                    }
-                }
-            }?;
+        EventType::Announcement => {
+            let mut announcements = oracle
+                .oracle_many_announcements(event_ids)
+                .await
+                .map_err(PythiaApiError::OracleFail)?;
 
-            let attestation_response = AttestationResponse {
-                event_id,
-                signatures: attestation.signatures,
-                values: attestation.outcomes,
-            };
-            Ok(HttpResponse::Ok().json(attestation_response))
+            // Sort by expiry for easier reading. Notice that a spot event will be considered first
+            announcements.sort_unstable_by_key(|a| Expiry::try_from(a.oracle_event.event_id).ok());
+
+            Ok(HttpResponse::Ok().json(announcements))
+        }
+        EventType::Attestation => {
+            let attestations_status = event_ids
+                .into_iter()
+                .map(async |id| {
+                    Ok(oracle
+                        .oracle_state(id)
+                        .await
+                        .map_err(PythiaApiError::OracleFail)?
+                        .ok_or(PythiaApiError::OracleEventNotFoundError(
+                            timestamp.to_rfc3339(),
+                        ))?
+                        .1)
+                })
+                .collect::<FuturesUnorderedBounded<_>>()
+                .collect::<Vec<_>>()
+                .await;
+
+            let mut error_buffer: Option<PythiaApiError> = None;
+
+            let mut attestation_responses = attestations_status
+                .into_iter()
+                .filter_map(|r| {
+                    r.map_err(|e| error_buffer.insert(e))
+                        .ok()
+                        .flatten()
+                        .map(AttestationResponse::from)
+                })
+                .collect::<Vec<_>>();
+
+            if !attestation_responses.is_empty() {
+                attestation_responses.sort_unstable_by_key(|a| Expiry::try_from(a.event_id).ok());
+                return Ok(HttpResponse::Ok().json(attestation_responses));
+            } else if let Some(error) = error_buffer {
+                return Err(error.into());
+            }
+
+            if timestamp < Utc::now() {
+                let retrieved = oracle
+                    .attest_at_date(timestamp.with_timezone(&Utc))
+                    .await
+                    .map_err(PythiaApiError::OracleFail)?;
+
+                let mut responses = retrieved
+                    .into_iter()
+                    .filter_map(|attestation| {
+                        Some(AttestationResponse::from(
+                            attestation
+                                .map_err(|e| error_buffer.insert(PythiaApiError::OracleFail(e)))
+                                .ok()?,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+
+                if !responses.is_empty() {
+                    responses.sort_unstable_by_key(|a| Expiry::try_from(a.event_id).ok());
+                    Ok(HttpResponse::Ok().json(responses))
+                } else if let Some(error) = error_buffer {
+                    Err(error.into())
+                } else {
+                    Err(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())
+                }
+            } else {
+                Err(actix_web::error::ErrorBadRequest(
+                    "Oracle cannot sign a value not yet known, retry after ".to_string()
+                        + &timestamp.to_rfc3339(),
+                ))
+            }
         }
     }
 }
@@ -187,12 +239,7 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .0
         .maturities
         .iter()
-        .map(|ts| {
-            EventId::spot_from_pair_and_timestamp(
-                oracle.asset_pair_info.asset_pair,
-                ts.with_timezone(&Utc),
-            )
-        })
+        .map(|ts| EventId::spot_from_pair_and_timestamp(asset_pair, ts.with_timezone(&Utc)))
         .collect::<Vec<_>>();
 
     (!oracle
@@ -269,4 +316,93 @@ pub(super) async fn force<Context: OracleContext>(
             values: attestation.outcomes,
         },
     }))
+}
+
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[post("/forward/{asset_pair}/{expiry}/announcements/batch")]
+/// Gets the announcements from the oracle for all timestamps of the given asset pair
+/// with request: `POST /forward/{asset_pair}/{expiry}/announcements/batch`
+/// Body must be a JSON with a field `maturities` that is an array of timestamps
+/// The response is a JSON array of announcements sorted by timestamp
+pub(super) async fn oracle_batch_forwards_service<Context: OracleContext>(
+    context: ApiContext<Context>,
+    path: web::Path<(AssetPair, Expiry)>,
+    data: web::Json<BatchAnnouncementsRequest>,
+) -> Result<HttpResponse> {
+    let (asset_pair, expiry) = path.into_inner();
+    info!("POST /forward/{asset_pair}/{expiry}/announcements/batch: {data:#?}");
+
+    let Some(earliest_date) = data.0.maturities.iter().min() else {
+        return Err(
+            PythiaApiError::OracleEventNotFoundError("No maturities provided".to_string()).into(),
+        );
+    };
+
+    let oracle = context
+        .get_oracle(&asset_pair)
+        .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
+
+    if oracle
+        .is_empty()
+        .await
+        .map_err(PythiaApiError::OracleFail)?
+    {
+        info!("no oracle events found");
+        return Err(PythiaApiError::OracleEventNotFoundError(
+            "Oracle did not announce anything".to_string(),
+        )
+        .into());
+    }
+
+    let earliest_event_ids = oracle
+        .asset_pair_info
+        .pricefeed
+        .events_at_date(asset_pair, earliest_date.with_timezone(&Utc));
+
+    if !earliest_event_ids.into_iter().any(|id| {
+        Expiry::try_from(id)
+            .map(|e| e == expiry)
+            .unwrap_or_default()
+    }) {
+        return Err(
+            PythiaApiError::OracleEventNotFoundError(format!("with expiry {expiry}")).into(),
+        );
+    }
+
+    let latest_date = data
+        .0
+        .maturities
+        .iter()
+        .max()
+        .expect("We checked that there is at least one maturity");
+
+    let expiry_as_datetime = DateTime::<Utc>::from(expiry);
+
+    if latest_date.to_utc() >= expiry_as_datetime {
+        return Err(PythiaApiError::TimestampGreaterThanExpiry.into());
+    }
+
+    let events_ids = data
+        .0
+        .maturities
+        .iter()
+        .map(|maturity| {
+            if expiry_as_datetime == maturity.with_timezone(&Utc) {
+                EventId::delivery_of_expiry_with_pair(asset_pair, expiry)
+            } else {
+                EventId::forward_of_expiry_with_pair_at_timestamp(
+                    asset_pair,
+                    expiry,
+                    maturity.with_timezone(&Utc),
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let announcements = oracle
+        .oracle_many_announcements(events_ids)
+        .await
+        .map_err(PythiaApiError::OracleFail)?;
+
+    Ok(HttpResponse::Ok().json(announcements))
 }
