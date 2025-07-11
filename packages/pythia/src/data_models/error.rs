@@ -16,9 +16,14 @@ pub enum ParsingError {
     /// Invalid timestamp: {0}
     InvalidTimestamp(#[from] std::num::ParseIntError),
 
-    /// Error parsing the provided asset pair: got {actual} expected {expected}
-    InvalidAssetPair {
+    /// Invalid char input: got {actual} expected {expected}
+    InvalidChar {
         expected: &'static str,
         actual: String,
     },
+    /// Expiry must be uppercased %d%b%y chrono format
+    InvalidExpiryCase,
+
+    /// EventId must be one of a forward or delivery event id
+    NoExpiryInEventId,
 }
