@@ -12,4 +12,10 @@ pub enum ParsingError {
 
     /// Error parsing the provided expiry: {0}
     InvalidDate(#[from] chrono::format::ParseError),
+
+    /// Expiry must be uppercased %d%b%y chrono format
+    InvalidExpiryCase,
+
+    /// EventId must be one of a forward or delivery event id
+    NoExpiryInEventId,
 }
