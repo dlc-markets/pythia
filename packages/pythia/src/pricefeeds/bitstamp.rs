@@ -1,5 +1,5 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
-use crate::AssetPair;
+use crate::data_models::asset_pair::AssetPair;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::debug;

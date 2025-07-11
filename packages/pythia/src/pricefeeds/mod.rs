@@ -1,4 +1,4 @@
-use crate::AssetPair;
+use crate::data_models::asset_pair::AssetPair;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -51,7 +51,7 @@ impl ImplementedPriceFeed {
 mod test {
     use chrono::{SubsecRound, Utc};
 
-    use crate::config::AssetPair;
+    use crate::data_models::asset_pair::AssetPair;
 
     use super::{error::PriceFeedError, ImplementedPriceFeed};
     use strum::IntoEnumIterator;
