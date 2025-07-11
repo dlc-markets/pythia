@@ -8,6 +8,7 @@ use crate::data_models::error::ParsingError;
 pub mod asset_pair;
 pub mod error;
 pub mod event_ids;
+pub mod expiries;
 pub mod oracle_msgs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
