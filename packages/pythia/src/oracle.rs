@@ -138,13 +138,12 @@ impl Oracle {
     fn prepare_events_to_insert(&self, maturations: &[DateTime<Utc>]) -> Vec<SignedEventToInsert> {
         let mut rng = thread_rng();
 
-        let average_attestation_per_maturity = if self.asset_pair_info.pricefeed
-            == (ImplementedPriceFeed::Deribit { forwards: true })
-        {
-            11
-        } else {
-            1
-        };
+        let average_attestation_per_maturity =
+            if self.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit) {
+                12
+            } else {
+                1
+            };
 
         let mut buffer_result =
             Vec::with_capacity(maturations.len() * average_attestation_per_maturity);
@@ -209,13 +208,12 @@ impl Oracle {
             return Ok(());
         }
 
-        let average_announcement_per_maturity = if self.asset_pair_info.pricefeed
-            == (ImplementedPriceFeed::Deribit { forwards: true })
-        {
-            13
-        } else {
-            1
-        };
+        let average_announcement_per_maturity =
+            if self.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit) {
+                13
+            } else {
+                1
+            };
 
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
