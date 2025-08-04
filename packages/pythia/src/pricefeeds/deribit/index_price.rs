@@ -1,6 +1,6 @@
 use super::Result;
 use crate::{
-    data_models::{asset_pair::AssetPair, event_ids::EventId},
+    data_models::asset_pair::AssetPair,
     pricefeeds::{deribit::DeribitErrorObject, error::PriceFeedError},
 };
 use chrono::{DateTime, TimeDelta, Utc};
@@ -20,11 +20,13 @@ struct DeribitQuote {
     index_price: f64,
 }
 
+const INDEX_PRICE_URL: &str = "https://www.deribit.com/api/v2/public/get_index_price";
+
 pub async fn retrieve_index_price(
+    client: &Client,
     asset_pair: AssetPair,
     instant: DateTime<Utc>,
-) -> Result<Vec<(EventId, Option<f64>)>> {
-    let client = Client::new();
+) -> Result<f64> {
     let asset_pair_translation = match asset_pair {
         AssetPair::BtcUsd => "btc_usd",
     };
@@ -38,7 +40,7 @@ pub async fn retrieve_index_price(
 
     debug!("sending Deribit http request");
     let res = client
-        .get("https://www.deribit.com/api/v2/public/get_index_price")
+        .get(INDEX_PRICE_URL)
         .query(&[("index_name", asset_pair_translation)])
         .send()
         .await?
@@ -52,7 +54,5 @@ pub async fn retrieve_index_price(
         }
     };
 
-    let event_id = EventId::spot_from_pair_and_timestamp(asset_pair, instant);
-
-    Ok(vec![(event_id, Some(quote))])
+    Ok(quote)
 }

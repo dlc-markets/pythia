@@ -57,7 +57,7 @@ where
         .oracles()
         .values()
         .map(|o| {
-            if o.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit { forwards: true }) {
+            if o.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit) {
                 13
             } else {
                 1

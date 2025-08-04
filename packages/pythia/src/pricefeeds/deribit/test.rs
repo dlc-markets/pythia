@@ -1,5 +1,6 @@
 use super::*;
 use chrono::{Datelike, TimeDelta, TimeZone};
+use reqwest::Client;
 
 #[test]
 fn test_get_quoting_forward_at_date() {
@@ -7,10 +8,7 @@ fn test_get_quoting_forward_at_date() {
 
     // 11th June 2025: a Wednesday, only 10 expiries are available
     let today = Utc.with_ymd_and_hms(2025, 6, 11, 14, 0, 0).unwrap();
-    let mut expiries = get_all_quoting_forward_at_date(today).collect::<Vec<_>>();
-
-    expiries.sort_unstable();
-    expiries.dedup();
+    let expiries = forward_price::option_expiries(today);
 
     let expected_dates = vec![
         Utc.with_ymd_and_hms(2025, 6, 12, 8, 0, 0).unwrap(),
@@ -26,14 +24,12 @@ fn test_get_quoting_forward_at_date() {
     ];
 
     assert_eq!(expiries, expected_dates);
-    assert!(!is_an_expiry_date(today));
+    assert!(!delivery_price::is_an_expiry_date(today));
 
     // 12th June 2025: a Thursday, 11 expiries are available as a new weekly expiry
     // is available while the previous one is still not expired
     let today = Utc.with_ymd_and_hms(2025, 6, 12, 14, 0, 0).unwrap();
-    let mut expiries = get_all_quoting_forward_at_date(today).collect::<Vec<_>>();
-    expiries.sort_unstable();
-    expiries.dedup();
+    let expiries = forward_price::option_expiries(today);
 
     let expected_dates = vec![
         Utc.with_ymd_and_hms(2025, 6, 13, 8, 0, 0).unwrap(),
@@ -50,12 +46,10 @@ fn test_get_quoting_forward_at_date() {
     ];
 
     assert_eq!(expiries, expected_dates);
-    assert!(!is_an_expiry_date(today));
+    assert!(!delivery_price::is_an_expiry_date(today));
 
     let today = Utc.with_ymd_and_hms(2025, 6, 23, 8, 0, 0).unwrap();
-    let mut expiries = get_all_quoting_forward_at_date(today).collect::<Vec<_>>();
-    expiries.sort_unstable();
-    expiries.dedup();
+    let expiries = forward_price::option_expiries(today);
 
     let expected_dates = vec![
         Utc.with_ymd_and_hms(2025, 06, 24, 8, 0, 0).unwrap(),
@@ -73,12 +67,10 @@ fn test_get_quoting_forward_at_date() {
 
     assert_eq!(expiries, expected_dates);
 
-    assert!(is_an_expiry_date(today));
+    assert!(delivery_price::is_an_expiry_date(today));
 
     let today = Utc.with_ymd_and_hms(2025, 6, 27, 8, 0, 0).unwrap();
-    let mut expiries = get_all_quoting_forward_at_date(today).collect::<Vec<_>>();
-    expiries.sort_unstable();
-    expiries.dedup();
+    let expiries = forward_price::option_expiries(today);
 
     let expected_dates = vec![
         Utc.with_ymd_and_hms(2025, 06, 28, 8, 0, 0).unwrap(),
@@ -97,7 +89,7 @@ fn test_get_quoting_forward_at_date() {
 
     assert_eq!(expiries, expected_dates);
 
-    assert!(is_an_expiry_date(today));
+    assert!(delivery_price::is_an_expiry_date(today));
 }
 
 #[actix::test]
@@ -109,12 +101,12 @@ async fn test_get_delivery_price_for_expiry() {
         .with_ymd_and_hms(now.year(), now.month(), now.day(), 8, 0, 0)
         .unwrap();
     let instant = today_expiry + TimeDelta::days(if now > today_expiry { 0 } else { -1 });
-    get_delivery_price_for_expiry(&client, asset_pair, instant)
+    delivery_price::retrieve_delivery_price(&client, asset_pair, instant)
         .await
         .unwrap();
 
     assert_eq!(
-        get_delivery_price_for_expiry(
+        delivery_price::retrieve_delivery_price(
             &client,
             asset_pair,
             Utc.with_ymd_and_hms(2022, 1, 1, 8, 0, 0).unwrap()
@@ -127,11 +119,14 @@ async fn test_get_delivery_price_for_expiry() {
 
 #[actix::test]
 async fn test_get_forward_prices() {
+    let client = Client::new();
     let asset_pair = AssetPair::BtcUsd;
     let now = Utc::now();
-    let today_expiry = Utc
-        .with_ymd_and_hms(now.year(), now.month(), now.day(), 8, 0, 0)
-        .unwrap();
-    let instant = today_expiry + TimeDelta::days(if now > today_expiry { 0 } else { -1 });
-    retrieve_option_prices(asset_pair, instant).await.unwrap();
+
+    println!(
+        "{:?}",
+        forward_price::retrieve_dated_option_prices(&client, asset_pair, now)
+            .await
+            .unwrap()
+    );
 }
