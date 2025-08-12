@@ -1,8 +1,8 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
+use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,17 +26,27 @@ impl PriceFeed for Kraken {
             AssetPair::BtcUsd => "XXBTZUSD",
         };
         let start_time = instant.timestamp();
+
+        #[derive(serde::Serialize)]
+        struct KrakenQueryParams {
+            pair: &'static str,
+            since: i64,
+        }
+
         debug!("sending kraken http request");
         let res: Response = client
             .get("https://api.kraken.com/0/public/OHLC")
-            .query(&[
-                ("pair", asset_pair_translation),
-                ("since", &start_time.to_string()),
-            ])
+            .query(&KrakenQueryParams {
+                pair: asset_pair_translation,
+                since: start_time,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
         debug!("received response: {res:#?}");
 
         if !res.error.is_empty() {

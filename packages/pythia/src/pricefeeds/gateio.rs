@@ -1,8 +1,8 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
+use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
-use reqwest::Client;
 use serde_json::Value;
 
 pub(super) struct GateIo {}
@@ -20,18 +20,28 @@ impl PriceFeed for GateIo {
             AssetPair::BtcUsd => "BTC_USDT",
         };
 
+        #[derive(serde::Serialize)]
+        struct GateIoQueryParams {
+            currency_pair: &'static str,
+            from: i64,
+            limit: i32,
+        }
+
         debug!("sending gate.io http request");
         let res: Vec<Vec<Value>> = client
             .get("https://api.gateio.ws/api/v4/spot/candlesticks")
-            .query(&[
-                ("currency_pair", asset_pair_translation),
-                ("from", &start_time.to_string()),
-                ("limit", "1"),
-            ])
+            .query(&GateIoQueryParams {
+                currency_pair: asset_pair_translation,
+                from: start_time,
+                limit: 1,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
         debug!("received response: {res:#?}");
 
         if res.is_empty() {

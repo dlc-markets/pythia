@@ -1,9 +1,9 @@
 use crate::data_models::asset_pair::AssetPair;
 use crate::data_models::event_ids::EventId;
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
+use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
-use reqwest::Client;
 
 pub(super) struct Deribit {}
 
@@ -38,14 +38,24 @@ impl PriceFeed for Deribit {
             AssetPair::BtcUsd => "btc_usd",
         };
 
+        #[derive(serde::Serialize)]
+        struct DeribitQueryParams {
+            index_name: &'static str,
+        }
+
         debug!("sending Deribit http request");
         let res: DeribitResponse = client
             .get("https://www.deribit.com/api/v2/public/get_index_price")
-            .query(&[("index_name", asset_pair_translation)])
+            .query(&DeribitQueryParams {
+                index_name: asset_pair_translation,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
         debug!("received response: {res:#?}");
 
         // Deribit does not allow to retrieve past index price

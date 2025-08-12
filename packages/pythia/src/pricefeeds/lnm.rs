@@ -1,9 +1,9 @@
 use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
+use awc::Client;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
 use log::debug;
-use reqwest::Client;
 
 pub(super) struct Lnmarkets {}
 
@@ -29,18 +29,29 @@ impl PriceFeed for Lnmarkets {
             .expect("1 minute is a reasonable duration")
             .timestamp();
 
+        #[derive(serde::Serialize)]
+        struct LnmarketsQueryParams {
+            to: i64,
+            from: i64,
+            limit: i32,
+        }
+
         debug!("sending LNMarkets http request");
         let res: Vec<LnmarketsQuote> = client
             .get("https://api.Lnmarkets.com/v2/oracle/index")
-            .query(&[
-                ("to", (1_000 * &start_time).to_string().as_ref()),
-                ("from", (1_000 * &start_time).to_string().as_ref()),
-                ("limit", "1"),
-            ])
+            .insert_header(("User-Agent", "Actix-web"))
+            .query(&LnmarketsQueryParams {
+                to: (1_000 * start_time),
+                from: (1_000 * start_time),
+                limit: 1,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
         debug!("received response: {res:#?}");
 
         if res.is_empty() {

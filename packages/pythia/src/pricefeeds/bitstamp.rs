@@ -1,8 +1,8 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
 use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
+use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -36,20 +36,31 @@ impl PriceFeed for Bitstamp {
             AssetPair::BtcUsd => "btcusd",
         };
         let start_time = instant.timestamp();
+
+        #[derive(serde::Serialize)]
+        struct BitstampQueryParams {
+            step: i32,
+            start: i64,
+            limit: i32,
+        }
+
         debug!("sending bitstamp http request");
         let res: Response = client
             .get(format!(
                 "https://www.bitstamp.net/api/v2/ohlc/{asset_pair_translation}"
             ))
-            .query(&[
-                ("step", "60"),
-                ("start", &start_time.to_string()),
-                ("limit", "1"),
-            ])
+            .query(&BitstampQueryParams {
+                step: 60,
+                start: start_time,
+                limit: 1,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
         debug!("received response: {res:#?}");
 
         if let Some(errs) = res.errors {
