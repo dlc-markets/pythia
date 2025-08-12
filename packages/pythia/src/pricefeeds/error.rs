@@ -14,5 +14,5 @@ pub(crate) enum PriceFeedError {
     PriceNotAvailable(AssetPair, DateTime<Utc>),
 
     /// http request error: {0}
-    HttpRequest(#[from] reqwest::Error),
+    ConnectionError(String),
 }

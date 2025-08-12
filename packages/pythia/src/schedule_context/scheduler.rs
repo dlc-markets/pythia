@@ -191,7 +191,9 @@ where
                     let cloned_event_tx = event_tx.clone();
                     let asset_pair = oracle.asset_pair_info.asset_pair;
 
-                    tokio::spawn(async move {
+                    // spawn on the same thread a retry task to let the scheduler continue and
+                    // handle that the pricefeed retrieval is not Send.
+                    actix::spawn(async move {
                         match retry_attest(&cloned_context.oracles()[&asset_pair], event_id).await {
                             Some(attestation) if Sender::receiver_count(&cloned_event_tx) != 0 => {
                                 cloned_event_tx

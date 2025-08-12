@@ -4,6 +4,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display, Formatter};
+use tokio::task::LocalSet;
 
 pub(crate) mod error;
 use error::Result;
@@ -12,9 +13,19 @@ use error::Result;
 use strum::EnumIter;
 
 pub(crate) trait PriceFeed {
+    /// Compute the event ids for a given asset pair and datetime of this pricefeed.
     fn compute_event_ids(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Vec<EventId> {
         vec![EventId::spot_from_pair_and_timestamp(asset_pair, datetime)]
     }
+    /// Retrieve the prices for a given asset pair and datetime of this pricefeed.
+    ///
+    /// This is run in a local set so it is not required to be Send.
+    /// The returned list of (event_id, price) MUST be sorted by event_id.
+    /// All event_ids must be one of the event_ids computed by `compute_event_ids`
+    /// for the same asset pair and datetime.
+    ///
+    /// If the scheduler retrieve the price for an event_id and it failed,
+    /// returning None for the event_id will set a series of retry later.
     async fn retrieve_prices(
         &self,
         asset_pair: AssetPair,
@@ -54,33 +65,28 @@ impl ImplementedPriceFeed {
         asset_pair: AssetPair,
         datetime: DateTime<Utc>,
     ) -> Result<Vec<(EventId, Option<f64>)>> {
-        let prices = match self {
-            Self::Lnmarkets => {
-                lnm::Lnmarkets {}
-                    .retrieve_prices(asset_pair, datetime)
-                    .await
-            }
-            Self::Deribit => {
-                deribit::Deribit {}
-                    .retrieve_prices(asset_pair, datetime)
-                    .await
-            }
-            Self::Kraken => {
-                kraken::Kraken {}
-                    .retrieve_prices(asset_pair, datetime)
-                    .await
-            }
-            Self::GateIo => {
-                gateio::GateIo {}
-                    .retrieve_prices(asset_pair, datetime)
-                    .await
-            }
-            Self::Bitstamp => {
-                bitstamp::Bitstamp {}
-                    .retrieve_prices(asset_pair, datetime)
-                    .await
-            }
-        }?;
+        let query_local = LocalSet::new();
+        let query_local_handle =
+            match self {
+                Self::Lnmarkets => {
+                    query_local.spawn_local(lnm::Lnmarkets {}.retrieve_prices(asset_pair, datetime))
+                }
+                Self::Deribit => query_local
+                    .spawn_local(deribit::Deribit {}.retrieve_prices(asset_pair, datetime)),
+                Self::Kraken => {
+                    query_local.spawn_local(kraken::Kraken {}.retrieve_prices(asset_pair, datetime))
+                }
+                Self::GateIo => {
+                    query_local.spawn_local(gateio::GateIo {}.retrieve_prices(asset_pair, datetime))
+                }
+                Self::Bitstamp => query_local
+                    .spawn_local(bitstamp::Bitstamp {}.retrieve_prices(asset_pair, datetime)),
+            };
+
+        query_local.await;
+        let prices = query_local_handle.await.map_err(|e| {
+            error::PriceFeedError::ConnectionError(format!("Error in pricefeed: {e}"))
+        })??;
 
         assert!(
             prices.iter().is_sorted_by(|a, b| a.0 < b.0),
