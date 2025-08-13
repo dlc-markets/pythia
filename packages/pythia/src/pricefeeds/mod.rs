@@ -9,9 +9,6 @@ use tokio::task::LocalSet;
 pub(crate) mod error;
 use error::Result;
 
-#[cfg(test)]
-use strum::EnumIter;
-
 pub(crate) trait PriceFeed {
     /// Compute the event ids for a given asset pair and datetime of this pricefeed.
     fn compute_event_ids(&self, asset_pair: AssetPair, datetime: DateTime<Utc>) -> Vec<EventId> {
@@ -38,9 +35,21 @@ mod deribit;
 mod gateio;
 mod kraken;
 mod lnm;
+#[cfg(test)]
+pub mod test;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
+pub mod test_import {
+    pub use std::sync::{mpsc::Receiver, Mutex};
+    pub use strum::EnumIter;
+}
+
+#[cfg(test)]
+use test_import::*;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(test, derive(EnumIter))]
+#[cfg_attr(not(test), derive(PartialEq, Eq))]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ImplementedPriceFeed {
     Lnmarkets,
@@ -48,6 +57,18 @@ pub(crate) enum ImplementedPriceFeed {
     Kraken,
     GateIo,
     Bitstamp,
+    #[cfg(test)]
+    ReservedForTest {
+        #[serde(skip)]
+        mocking_receiver: Option<&'static Mutex<Receiver<Vec<(EventId, Option<f64>)>>>>,
+    },
+}
+
+#[cfg(test)]
+impl PartialEq for ImplementedPriceFeed {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
 }
 
 impl ImplementedPriceFeed {
@@ -58,6 +79,18 @@ impl ImplementedPriceFeed {
             Self::Kraken => kraken::Kraken {}.compute_event_ids(asset_pair, date),
             Self::GateIo => gateio::GateIo {}.compute_event_ids(asset_pair, date),
             Self::Bitstamp => bitstamp::Bitstamp {}.compute_event_ids(asset_pair, date),
+            #[cfg(test)]
+            Self::ReservedForTest { mocking_receiver } => mocking_receiver
+                .as_deref()
+                .map(|r| {
+                    r.lock().unwrap().try_recv().expect(
+                        "Caller must guarantee a push into the channel sender for each call",
+                    )
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(e, _)| e)
+                .collect(),
         }
     }
     pub async fn retrieve_prices(
@@ -81,6 +114,18 @@ impl ImplementedPriceFeed {
                 }
                 Self::Bitstamp => query_local
                     .spawn_local(bitstamp::Bitstamp {}.retrieve_prices(asset_pair, datetime)),
+                #[cfg(test)]
+                Self::ReservedForTest { mocking_receiver } => {
+                    let prices = mocking_receiver
+                        .as_ref()
+                        .map(|r| {
+                            r.lock().unwrap().try_recv().expect(
+                            "Caller must guarantee a push into the channel sender for each call",
+                        )
+                        })
+                        .unwrap_or_default();
+                    query_local.spawn_local(async { Ok(prices) })
+                }
             };
 
         query_local.await;
@@ -105,34 +150,10 @@ impl Display for ImplementedPriceFeed {
             Self::Kraken => write!(f, "kraken"),
             Self::GateIo => write!(f, "gateio"),
             Self::Bitstamp => write!(f, "bitstamp"),
+            #[cfg(test)]
+            Self::ReservedForTest { .. } => write!(f, "[MOCKED]"),
         }
     }
 }
 
 // Pricefeeds can be obtain by coding a pricefeed which simply aggregate other pricefeeds response
-
-#[cfg(test)]
-mod test {
-    use chrono::{SubsecRound, Utc};
-
-    use crate::data_models::asset_pair::AssetPair;
-
-    use super::{error::PriceFeedError, ImplementedPriceFeed};
-    use strum::IntoEnumIterator;
-
-    // Test all the implemented pricefeeds. Failing mean there has been breaking change in a pricefeed API
-    #[actix_web::test]
-    async fn test_all_pricefeeds() {
-        let mut deprecated: Vec<(ImplementedPriceFeed, PriceFeedError)> = vec![];
-        let now = Utc::now().trunc_subsecs(0);
-        for pricefeed in ImplementedPriceFeed::iter() {
-            let _ = pricefeed
-                .retrieve_prices(AssetPair::BtcUsd, now)
-                .await
-                .map_err(|e| deprecated.push((pricefeed, e)));
-        }
-        if !deprecated.is_empty() {
-            panic!("Some pricefeed APIs seem deprecated: {deprecated:?}\n No answer for date {now}")
-        }
-    }
-}

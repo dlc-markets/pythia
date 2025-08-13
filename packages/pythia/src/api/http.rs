@@ -147,9 +147,10 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BatchAnnouncementsRequest {
-    maturities: Vec<DateTime<FixedOffset>>,
+    pub(super) maturities: Vec<DateTime<FixedOffset>>,
 }
 
 // https://github.com/actix/actix-web/issues/2866 explains why we commented this:
