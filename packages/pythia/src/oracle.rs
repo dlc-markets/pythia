@@ -131,7 +131,7 @@ impl Oracle {
             .insert_announcement(&announcement, sk_nonces)
             .await?;
 
-        debug!("created oracle announcement with maturation {}", maturation);
+        debug!("created oracle announcement with maturation {maturation}");
 
         trace!("announcement {:#?}", &announcement);
 
@@ -169,10 +169,7 @@ impl Oracle {
                     .insert_many_announcements(&announcements_with_sk_nonces)
                     .await?;
 
-                debug!(
-                    "created oracle announcements with maturation {:?}",
-                    processing_mats
-                );
+                debug!("created oracle announcements with maturation {processing_mats:?}");
                 trace!(
                     "announcements {:#?}",
                     &announcements_with_sk_nonces
@@ -197,10 +194,7 @@ impl Oracle {
             return Ok(None);
         };
         let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
-            info!(
-                "Event {} already attested (should be possible only in debug mode)",
-                event_id
-            );
+            info!("Event {event_id} already attested (should be possible only in debug mode)");
             return Ok(compute_attestation(self, event_id, event));
         };
         trace!("retrieving price feed for attestation");
@@ -286,8 +280,7 @@ impl Oracle {
             Some(postgres_response) => match postgres_response.scalars_records {
                 ScalarsRecords::DigitsSkNonce(sk_nonces) => {
                     info!(
-                        "!!! Forced announcement !!!: {} event is already announced, will attest it immediately with price outcome {}",
-                        event_id, price
+                        "!!! Forced announcement !!!: {event_id} event is already announced, will attest it immediately with price outcome {price}"
                     );
                     let nonces = sk_nonces
                         .iter()
@@ -301,8 +294,7 @@ impl Oracle {
                 }
                 ScalarsRecords::DigitsAttestations(outcome, _) => {
                     info!(
-                        "!!! Forced attestation !!!: {} event is already attested with price {}, ignore forcing",
-                        event_id, outcome
+                        "!!! Forced attestation !!!: {event_id} event is already attested with price {outcome}, ignore forcing"
                     );
                     let (oracle_announcement, oracle_attestation) =
                         self.oracle_state(&event_id).await?.expect("is announced");
@@ -317,8 +309,7 @@ impl Oracle {
                 let mut sk_nonces = Vec::with_capacity(digits.into());
                 let mut nonces = Vec::with_capacity(digits.into());
                 debug!(
-                    "!!! Forced announcement !!!: created oracle event and announcement with maturation {}",
-                    maturation
+                    "!!! Forced announcement !!!: created oracle event and announcement with maturation {maturation}"
                 );
                 // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
                 {

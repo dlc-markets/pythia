@@ -41,8 +41,7 @@ impl PriceFeed for Bitstamp {
         debug!("sending bitstamp http request");
         let res: Response = client
             .get(format!(
-                "https://www.bitstamp.net/api/v2/ohlc/{}",
-                asset_pair_translation
+                "https://www.bitstamp.net/api/v2/ohlc/{asset_pair_translation}"
             ))
             .query(&[
                 ("step", "60"),
