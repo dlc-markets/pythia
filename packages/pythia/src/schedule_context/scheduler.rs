@@ -170,8 +170,7 @@ where
                         }
                     }
                     Ok(None) => error!(
-                        "The oracle scheduler failed to attest: {}: no announcement found",
-                        event_id
+                        "The oracle scheduler failed to attest: {event_id}: no announcement found"
                     ),
                     Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
                 }

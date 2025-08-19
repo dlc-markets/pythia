@@ -163,7 +163,7 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
     data: web::Json<BatchAnnouncementsRequest>,
 ) -> Result<HttpResponse> {
     let asset_pair = path.into_inner();
-    info!("POST /asset/{asset_pair}/announcements/batch: {:#?}", data);
+    info!("POST /asset/{asset_pair}/announcements/batch: {data:#?}");
 
     let oracle = context
         .get_oracle(&asset_pair)

@@ -56,7 +56,7 @@ async fn main() -> Result<(), PythiaError> {
         .zip(config.iter().cloned().map(|asset_pair_info| {
             let asset_pair = asset_pair_info.asset_pair;
 
-            info!("creating oracle for {}", asset_pair);
+            info!("creating oracle for {asset_pair}");
             Oracle::new(asset_pair_info, db_connection.clone(), keypair)
         }))
         .collect::<HashMap<_, _>>();

@@ -138,10 +138,7 @@ impl DBconnection {
 
         let affected_raws_counts = query_result.rows_affected();
 
-        trace!(
-            "Rows affected count when inserting announcement: {}",
-            affected_raws_counts
-        );
+        trace!("Rows affected count when inserting announcement: {affected_raws_counts}");
 
         if affected_raws_counts != digits.nb_digits as u64 {
             match affected_raws_counts {
@@ -265,10 +262,7 @@ impl DBconnection {
 
         let affected_raws_counts = query_result.rows_affected();
 
-        trace!(
-            "Rows affected count when inserting announcement: {}",
-            affected_raws_counts
-        );
+        trace!("Rows affected count when inserting announcement: {affected_raws_counts}");
         Ok(())
     }
 
@@ -313,10 +307,7 @@ impl DBconnection {
 
         let affected_raws_counts = query_result.rows_affected();
 
-        trace!(
-            "Rows affected count when updating to attestation: {}",
-            affected_raws_counts
-        );
+        trace!("Rows affected count when updating to attestation: {affected_raws_counts}");
 
         if affected_raws_counts as usize != sigs.len() {
             match affected_raws_counts {
