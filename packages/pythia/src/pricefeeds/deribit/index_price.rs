@@ -3,9 +3,9 @@ use crate::{
     data_models::asset_pair::AssetPair,
     pricefeeds::{deribit::DeribitErrorObject, error::PriceFeedError},
 };
+use awc::Client;
 use chrono::{DateTime, TimeDelta, Utc};
 use log::debug;
-use reqwest::Client;
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -42,10 +42,13 @@ pub async fn retrieve_index_price(
     let res = client
         .get(INDEX_PRICE_URL)
         .query(&[("index_name", asset_pair_translation)])
+        .expect("can be serialized")
         .send()
-        .await?
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
         .json::<DeribitResponseIndex>()
-        .await?;
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
 
     let quote = match res {
         DeribitResponseIndex::ResultResponse { result } => result.index_price,
