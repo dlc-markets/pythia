@@ -12,7 +12,7 @@ struct ForwardConfig {
     nb_expiries: usize,
 }
 
-// Deribit quotes 4 type of expiries for options: 3 daily, 3 weekly, 3 monthly and 4 quarterly
+// Deribit quotes 4 type of expiries for options: 4 daily, 3 weekly, 3 monthly and 4 quarterly
 static DERIBIT_QUOTING_OPTIONS_FORWARD_CONFIG: LazyLock<[ForwardConfig; 4]> = LazyLock::new(|| {
     let daily_schedule = "0 0 8 * * * *".parse().expect("our valid schedule");
     let weekly_schedule = "0 0 8 * * FRIDAY *".parse().expect("our valid schedule");
@@ -24,10 +24,10 @@ static DERIBIT_QUOTING_OPTIONS_FORWARD_CONFIG: LazyLock<[ForwardConfig; 4]> = La
     [
         ForwardConfig {
             expiry_schedule: daily_schedule,
-            // We expect 3 expiries to be quoted continuously for daily expiries.
+            // We expect 4 expiries to be quoted continuously for daily expiries.
             // But as another expiry is added 24 hours before the next expiry,
-            // we must set nb_expiries to 2 to get 3 daily expiries continuously.
-            nb_expiries: 2,
+            // we must set nb_expiries to 3 to get 4 daily expiries continuously.
+            nb_expiries: 3,
         },
         ForwardConfig {
             expiry_schedule: weekly_schedule,
