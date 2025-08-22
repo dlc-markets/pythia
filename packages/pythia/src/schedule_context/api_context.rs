@@ -1,10 +1,10 @@
-use actix_utils::future::{err, ok, Ready};
 use actix_web::{
     error::{Error, ErrorInternalServerError},
     FromRequest,
 };
 use chrono::Duration;
 use cron::Schedule;
+use futures::future::{err, ok, Ready};
 use tokio::sync::broadcast::Sender;
 
 use crate::{api::EventNotification, oracle::Oracle};

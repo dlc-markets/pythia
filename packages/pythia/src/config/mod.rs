@@ -1,50 +1,23 @@
-use crate::pricefeeds::ImplementedPriceFeed;
+use crate::{
+    data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
+    pricefeeds::ImplementedPriceFeed,
+};
 use chrono::Duration;
 use cron::Schedule;
-use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug, Display, Formatter};
-
-#[cfg(test)]
-use strum::EnumIter;
 
 pub(super) mod cli;
 mod env;
 pub(super) mod error;
-
-#[derive(Copy, Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[cfg_attr(test, derive(EnumIter))]
-#[serde(rename_all = "snake_case")]
-pub(super) enum AssetPair {
-    #[default]
-    BtcUsd,
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AssetPairInfo {
     pub(super) pricefeed: ImplementedPriceFeed,
     pub(super) asset_pair: AssetPair,
-    #[serde(default = "default_digit_event")]
-    pub(super) event_descriptor: DigitDecompositionEventDescriptor,
-}
-
-fn default_digit_event() -> DigitDecompositionEventDescriptor {
-    DigitDecompositionEventDescriptor {
-        base: 2,
-        is_signed: false,
-        unit: "usd".to_owned(),
-        precision: 0,
-        nb_digits: 20,
-    }
-}
-
-impl Display for AssetPair {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            AssetPair::BtcUsd => write!(f, "btc_usd"),
-        }
-    }
+    #[serde(default)]
+    pub(super) event_descriptor: DigitDecompositionEventDesc,
 }
 
 mod standard_duration {

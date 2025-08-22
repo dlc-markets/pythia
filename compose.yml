@@ -10,21 +10,19 @@ x-defaults: &defaults
     POSTGRES_HOST: postgres
 
   logging:
-    driver: 'json-file'
+    driver: "json-file"
     options:
-      max-size: '5m'
-      max-file: '10'
-      tag: '{{.Name}}'
+      max-size: "5m"
+      max-file: "10"
+      tag: "{{.Name}}"
 
 name: oracle
 
 networks:
   network:
 
-
 volumes:
   postgres:
-
 
 services:
   postgres:
@@ -48,7 +46,7 @@ services:
       dockerfile: packages/pythia/Dockerfile
     environment:
       <<: *environment
-      RUST_LOG: info
+      RUST_LOG: debug
       PYTHIA_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
     command: >
       pythia

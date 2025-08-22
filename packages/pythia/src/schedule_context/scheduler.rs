@@ -8,6 +8,7 @@ use tokio::{
 use super::{error::PythiaContextError, OracleContext};
 use crate::{
     api::EventNotification,
+    data_models::event_ids::EventId,
     error::PythiaError,
     oracle::{error::OracleError, CHUNK_SIZE},
 };
@@ -156,10 +157,12 @@ where
             };
 
             for oracle in oracle_context.oracles().values() {
-                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + next_time.timestamp().to_string().as_str();
+                let event_id = EventId::spot_from_pair_and_timestamp(
+                    oracle.asset_pair_info.asset_pair,
+                    next_time,
+                );
 
-                let perhaps_attestation = oracle.try_attest_event(&event_id).await;
+                let perhaps_attestation = oracle.try_attest_event(event_id).await;
 
                 match perhaps_attestation {
                     Ok(Some(attestation)) => {
@@ -172,7 +175,7 @@ where
                     Ok(None) => error!(
                         "The oracle scheduler failed to attest: {event_id}: no announcement found"
                     ),
-                    Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
+                    Err(e) => error!("The oracle scheduler failed to attest: {e}"),
                 }
             }
         }
