@@ -1,7 +1,7 @@
 ///// Helper function to get the delivery price for an expiry /////
 
+use awc::Client;
 use chrono::{DateTime, Timelike, Utc};
-use reqwest::Client;
 use serde::Deserialize;
 
 use super::{DeribitErrorObject, Result};
@@ -69,10 +69,13 @@ async fn get_delivery_price_for_expiry(
             ("count", "1"),
             ("offset", &days),
         ])
+        .expect("can be serialized")
         .send()
-        .await?
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
         .json::<DeribitDeliveryPriceResponse>()
-        .await?
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
     {
         DeribitDeliveryPriceResponse::ResultResponse { result } => result,
         DeribitDeliveryPriceResponse::ErrorResponse { error } => {

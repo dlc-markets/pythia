@@ -1,6 +1,6 @@
 use super::*;
+use awc::Client;
 use chrono::{Datelike, TimeDelta, TimeZone};
-use reqwest::Client;
 
 #[test]
 fn test_get_quoting_forward_at_date() {

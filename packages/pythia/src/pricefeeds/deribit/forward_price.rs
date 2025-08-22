@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use super::Result;
 use crate::{data_models::asset_pair::AssetPair, pricefeeds::error::PriceFeedError};
+use awc::Client;
 use chrono::{DateTime, TimeDelta, Utc};
 use log::debug;
-use reqwest::Client;
 
 pub(super) const BOOK_SUMMARY_BY_CURRENCY: &str =
     "https://www.deribit.com/api/v2/public/get_book_summary_by_currency";
@@ -39,10 +39,13 @@ pub async fn retrieve_dated_option_prices(
     let response_payload = client
         .get(BOOK_SUMMARY_BY_CURRENCY)
         .query(&[("kind", "future"), ("currency", currency)])
+        .expect("can be serialized")
         .send()
-        .await?
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
         .json::<DeribitResponseForward>()
-        .await?;
+        .await
+        .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
 
     let expiry_map = match response_payload {
         DeribitResponseForward::ErrorResponse { error } => {
