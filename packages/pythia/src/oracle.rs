@@ -1,21 +1,24 @@
-use crate::{config::AssetPair, oracle::crypto::sign_outcome, AssetPairInfo};
+use crate::{
+    data_models::{
+        asset_pair::AssetPair,
+        event_ids::EventId,
+        oracle_msgs::{Announcement, Attestation, DigitDecompositionEventDesc, Event},
+    },
+    oracle::crypto::{sign_event, sign_outcome},
+    pricefeeds::ImplementedPriceFeed,
+    AssetPairInfo,
+};
 
 use chrono::{DateTime, Utc};
-use dlc_messages::oracle_msgs::{
-    EventDescriptor, OracleAnnouncement, OracleAttestation, OracleEvent,
-};
-use futures::{stream, TryStreamExt};
-use futures_buffered::BufferedStreamExt;
-use lightning::util::ser::Writeable;
+use futures::{stream, StreamExt, TryStreamExt};
+use futures_buffered::{BufferedStreamExt, FuturesUnorderedBounded};
 use secp256k1_zkp::{
-    hashes::{sha256, Hash},
     rand::{rngs::ThreadRng, thread_rng, RngCore},
     schnorr::Signature,
-    Keypair, Message, XOnlyPublicKey,
+    Keypair, XOnlyPublicKey,
 };
 
 use crate::SECP;
-type OracleAnnouncementWithSkNonces = (OracleAnnouncement, Vec<[u8; 32]>);
 
 mod crypto;
 pub(crate) mod error;
@@ -23,12 +26,40 @@ pub(crate) mod postgres;
 #[cfg(test)]
 mod test;
 
-use crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature, SigningScalar};
+use crypto::{to_digit_decomposition_vec, OracleSignature};
 use error::{OracleError, Result};
 use postgres::*;
 /// Number of maturations to process in each batch to prevent database connection pool exhaustion
 /// and maintain optimal performance while processing backlogged announcements
 pub const CHUNK_SIZE: usize = 100;
+
+#[derive(Debug)]
+struct SignedEventToInsert {
+    announcement_signature: Signature,
+    nonces_keypairs: Vec<Keypair>,
+    maturity: u32,
+    event_id: EventId,
+    event_descriptor: DigitDecompositionEventDesc,
+}
+
+impl SignedEventToInsert {
+    fn as_announcement(&self, oracle_public_key: XOnlyPublicKey) -> Announcement {
+        Announcement {
+            announcement_signature: self.announcement_signature,
+            oracle_public_key,
+            oracle_event: Event {
+                oracle_nonces: self
+                    .nonces_keypairs
+                    .iter()
+                    .map(|kp| kp.x_only_public_key().0.serialize())
+                    .collect(),
+                maturity: self.maturity,
+                event_id: self.event_id,
+                event_descriptor: self.event_descriptor,
+            },
+        }
+    }
+}
 
 /// A stateful digits event oracle application. It prepares announcements and try to attest them on demand. It also managed the storage of announcements and attestations.
 #[derive(Clone)]
@@ -50,92 +81,112 @@ impl Oracle {
     }
     /// The oracle public key
     pub fn get_public_key(&self) -> XOnlyPublicKey {
-        self.keypair.public_key().into()
+        self.keypair.x_only_public_key().0
     }
     /// Check if the oracle announced at least one event
     pub async fn is_empty(&self) -> Result<bool> {
         self.db.is_empty().await.map_err(OracleError::from)
     }
 
-    fn prepare_announcement(
-        &self,
+    fn prepare_event_to_insert<'a>(
+        &'a self,
         maturation: DateTime<Utc>,
-        rng: &mut ThreadRng,
-    ) -> Result<OracleAnnouncementWithSkNonces> {
-        let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
-            + maturation.timestamp().to_string().as_str();
-        let event = &self.asset_pair_info.event_descriptor;
-        let digits = event.nb_digits;
-        let mut sk_nonces = Vec::with_capacity(digits.into());
-        let mut nonces = Vec::with_capacity(digits.into());
-        for _ in 0..digits {
-            let mut sk_nonce = [0u8; 32];
-            rng.fill_bytes(&mut sk_nonce);
-            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce)
-                .expect("sk_nonce has the required length");
-            let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
-            sk_nonces.push(sk_nonce);
-            nonces.push(nonce);
-        }
-        let oracle_event = OracleEvent {
-            oracle_nonces: nonces,
-            event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: EventDescriptor::DigitDecompositionEvent(
-                self.asset_pair_info.event_descriptor.clone(),
-            ),
-            event_id,
-        };
+        rng: &'a mut ThreadRng,
+    ) -> impl Iterator<Item = SignedEventToInsert> + use<'a> {
+        let event_ids = self
+            .asset_pair_info
+            .pricefeed
+            .events_at_date(self.asset_pair_info.asset_pair, maturation)
+            .into_iter();
 
-        let announcement = OracleAnnouncement {
-            announcement_signature: SECP.sign_schnorr(
-                &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
-                &self.keypair,
-            ),
-            oracle_public_key: self.keypair.public_key().into(),
-            oracle_event,
-        };
-        Ok((announcement, sk_nonces))
+        let event_ref = &self.asset_pair_info.event_descriptor;
+        let digits = event_ref.nb_digits as usize;
+
+        let mut secret_bytes = [0u8; 32];
+
+        event_ids.map(move |event_id| {
+            let mut nonces_keypairs = Vec::with_capacity(digits);
+
+            for _ in 0..digits {
+                rng.fill_bytes(&mut secret_bytes);
+                let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &secret_bytes)
+                    .expect("secret_bytes has the required length");
+                nonces_keypairs.push(oracle_r_kp);
+            }
+
+            let oracle_event = Event {
+                oracle_nonces: nonces_keypairs
+                    .iter()
+                    .map(|kp| kp.x_only_public_key().0.serialize())
+                    .collect(),
+                maturity: maturation.timestamp() as u32,
+                event_id,
+                event_descriptor: self.asset_pair_info.event_descriptor,
+            };
+
+            SignedEventToInsert {
+                announcement_signature: sign_event(&self.keypair, &oracle_event),
+                nonces_keypairs,
+                maturity: oracle_event.maturity,
+                event_id,
+                event_descriptor: oracle_event.event_descriptor,
+            }
+        })
     }
 
     /// Prepare announcements for a list of maturities and return them in the same order
-    fn prepare_announcements(
-        &self,
-        maturations: &[DateTime<Utc>],
-    ) -> Result<Vec<OracleAnnouncementWithSkNonces>> {
+    fn prepare_events_to_insert(&self, maturations: &[DateTime<Utc>]) -> Vec<SignedEventToInsert> {
         let mut rng = thread_rng();
-        maturations
-            .iter()
-            .map(|&maturity| self.prepare_announcement(maturity, &mut rng))
-            .collect()
+
+        let average_attestation_per_maturity =
+            if self.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit) {
+                12
+            } else {
+                1
+            };
+
+        let mut buffer_result =
+            Vec::with_capacity(maturations.len() * average_attestation_per_maturity);
+        // We must extend the buffer_result manually because prepare_announcement is an iterator
+        // holding a mutable ref to rng which prevent us to flatten the iterators and collect.
+        maturations.iter().copied().for_each(|maturity| {
+            buffer_result.extend(self.prepare_event_to_insert(maturity, &mut rng));
+        });
+
+        buffer_result
     }
 
-    /// Create an oracle announcement that it will sign the price at given maturity instant
-    pub async fn create_announcement(
+    /// Create oracle announcements that the oracle will sign the price at given maturity instant
+    pub async fn create_announcements_at_date(
         &self,
         maturation: DateTime<Utc>,
-    ) -> Result<OracleAnnouncement> {
-        // Check if the event was already announced
-        let event_id = self.asset_pair_info.asset_pair.to_string().to_lowercase()
-            + maturation.timestamp().to_string().as_str();
-        if let Some(event) = self.db.get_event(&event_id).await? {
-            info!(
-                "Event {} already announced (should be possible only in debug mode or when restarted)",
-                &event_id
-            );
-            return Ok(compute_announcement(self, event));
-        }
+    ) -> Result<Vec<Announcement>> {
+        let mut rng = thread_rng();
+        self.prepare_event_to_insert(maturation, &mut rng).map(async |event_to_insert| {
+            // If already announced just return the announcement in DB
+            Ok(match self.db.get_event(event_to_insert.event_id).await? {
+                Some(event) => {
+                    info!(
+                        "Event {} already announced (should be possible only in debug mode or when restarted)",
+                        &event_to_insert.event_id
+                    );
+                    compute_announcement(self, event_to_insert.event_id, event)
+                },
+                None => { self.db
+                    .insert_announcement(&event_to_insert)
+                    .await?;
 
-        let (announcement, sk_nonces) = self.prepare_announcement(maturation, &mut thread_rng())?;
+                    debug!("created oracle announcement with maturation {maturation}");
 
-        self.db
-            .insert_announcement(&announcement, sk_nonces)
-            .await?;
+                    trace!("inserted event {:#?}", &event_to_insert);
 
-        debug!("created oracle announcement with maturation {maturation}");
-
-        trace!("announcement {:#?}", &announcement);
-
-        Ok(announcement)
+                    event_to_insert.as_announcement(self.get_public_key())
+                }
+            })
+        })
+        .collect::<FuturesUnorderedBounded<_>>()
+        .try_collect()
+        .await
     }
 
     pub async fn create_many_announcements<const CHUNK_SIZE: usize>(
@@ -157,39 +208,41 @@ impl Oracle {
             return Ok(());
         }
 
+        let average_announcement_per_maturity =
+            if self.asset_pair_info.pricefeed == (ImplementedPriceFeed::Deribit) {
+                13
+            } else {
+                1
+            };
+
         // Create a stream that divides pending maturations into chunks
         // Each chunk is mapped to an async operation that processes the maturations with all oracles
-        let chunks_stream = stream::iter(non_existing_sorted_maturations.chunks(CHUNK_SIZE).map(
-            type_hint(async |processing_mats| {
-                let announcements_with_sk_nonces = self.prepare_announcements(processing_mats)?;
-                // The announcements are already sorted because processing_mats is a chunk
-                // of the already sorted by postgres non_existing_sorted_maturations vector
-                // and prepare_announcements return announcements in the same order as maturities
-                self.db
-                    .insert_many_announcements(&announcements_with_sk_nonces)
-                    .await?;
+        let chunks_stream = stream::iter(
+            non_existing_sorted_maturations
+                .chunks(CHUNK_SIZE / average_announcement_per_maturity + 1)
+                .map(type_hint(async |processing_mats| {
+                    let mut events_to_insert = self.prepare_events_to_insert(processing_mats);
 
-                debug!("created oracle announcements with maturation {processing_mats:?}");
-                trace!(
-                    "announcements {:#?}",
-                    &announcements_with_sk_nonces
-                        .into_iter()
-                        .map(|(announcement, _)| announcement)
-                        .collect::<Vec<_>>()
-                );
-                Ok(())
-            }),
-        ));
+                    events_to_insert.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+                    // We just sorted the announcements by event_id, so we can insert them in DB
 
-        // buffer_unordered allows a maximum of 2 chunks being processed concurrently.
-        // This helps prevent database connection pool exhaustion while maintaining throughput.
+                    self.db.insert_many_announcements(&events_to_insert).await?;
+
+                    debug!("created oracle announcements with maturation {processing_mats:?}");
+                    trace!("Inserted events: {events_to_insert:#?}");
+                    Ok(())
+                })),
+        );
+
+        // buffer_unordered with a maximum of 2 chunks being processed concurrently
+        // helps prevent database connection pool exhaustion while maintaining throughput.
         // Process all chunks in any order and return any error.
         chunks_stream.buffered_unordered(2).try_collect().await
     }
 
     /// Attest or return attestation of event with given eventID. Return None if it was not announced, a PriceFeeder error if it the outcome is not available.
     /// Store in DB and return some oracle attestation if event is attested successfully.
-    pub async fn try_attest_event(&self, event_id: &str) -> Result<Option<OracleAttestation>> {
+    pub async fn try_attest_event(&self, event_id: EventId) -> Result<Option<Attestation>> {
         let Some(event) = self.db.get_event(event_id).await? else {
             return Ok(None);
         };
@@ -198,34 +251,42 @@ impl Oracle {
             return Ok(compute_attestation(self, event_id, event));
         };
         trace!("retrieving price feed for attestation");
-        let outcome = self
+
+        let prices = self
             .asset_pair_info
             .pricefeed
-            .get_pricefeed()
-            .retrieve_price(self.asset_pair_info.asset_pair, event.maturity)
+            .retrieve_prices(self.asset_pair_info.asset_pair, event.maturity)
             .await?;
 
+        let event_index = prices
+            .binary_search_by(|(id, _)| id.cmp(&event_id))
+            .map_err(|_| OracleError::MissingEventId(event_id))?;
+
+        let outcome = prices[event_index]
+            .1
+            .ok_or(OracleError::MissingEventId(event_id))?;
+
         let outcomes = to_digit_decomposition_vec(outcome, event.digits, event.precision);
-        let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
-            .into_iter()
+        let signatures = outcomes
+            .iter()
+            .copied()
             .zip(outstanding_sk_nonces.iter())
             .map(|(outcome, outstanding_sk_nonce)| {
-                let signature = sign_outcome(&SECP, &self.keypair, &outcome, outstanding_sk_nonce);
-                (outcome, signature)
+                sign_outcome(&SECP, &self.keypair, outcome, outstanding_sk_nonce)
             })
-            .unzip();
+            .collect::<Vec<Signature>>();
 
-        let attestation = OracleAttestation {
-            event_id: event_id.to_string(),
+        let attestation = Attestation {
+            event_id,
             oracle_public_key: self.keypair.public_key().into(),
             signatures,
-            outcomes: outcome_vec,
+            outcomes,
         };
         debug!(
             "created oracle attestation with maturation {}",
             event.maturity
         );
-        trace!("attestation {:#?}", &attestation);
+        trace!("attestation {attestation:#?}");
 
         self.db
             .update_to_attestation(event_id, &attestation, outcome)
@@ -234,16 +295,84 @@ impl Oracle {
         Ok(Some(attestation))
     }
 
+    /// Attest or return attestations of all events at given date. Failing to attest an event will silently skip it.
+    /// Store in DB and return its oracle attestation if an event is attested successfully.
+    pub async fn attest_at_date(&self, date: DateTime<Utc>) -> Result<Vec<Result<Attestation>>> {
+        trace!("retrieving prices feed for all attestations for date {date}");
+
+        let prices = self
+            .asset_pair_info
+            .pricefeed
+            .retrieve_prices(self.asset_pair_info.asset_pair, date)
+            .await?;
+
+        trace!("retrieved prices for events {prices:?}");
+
+        let attestation_futures = prices.into_iter().map(async |(event_id, maybe_price)| {
+            let price = maybe_price.ok_or(OracleError::MissingEventId(event_id))?;
+
+            let event = self
+                .db
+                .get_event(event_id)
+                .await
+                .inspect_err(|e| {
+                    error!("Postgres error while getting event {event_id}: {e:?}");
+                })?
+                .ok_or(OracleError::MissingAnnouncements)?;
+
+            let ScalarsRecords::DigitsSkNonce(outstanding_sk_nonces) = event.scalars_records else {
+                info!("Event {event_id} already attested (should be possible only in debug mode)");
+                return Ok(compute_attestation(self, event_id, event).expect("is attested"));
+            };
+
+            let outcomes = to_digit_decomposition_vec(price, event.digits, event.precision);
+            let signatures = outcomes
+                .iter()
+                .zip(outstanding_sk_nonces.into_iter())
+                .map(|(outcome, outstanding_sk_nonce)| {
+                    sign_outcome(&SECP, &self.keypair, *outcome, &outstanding_sk_nonce)
+                })
+                .collect::<Vec<_>>();
+
+            let attestation = Attestation {
+                event_id,
+                oracle_public_key: self.keypair.public_key().into(),
+                signatures,
+                outcomes,
+            };
+
+            debug!(
+                "created oracle attestation with maturation {}",
+                event.maturity
+            );
+            trace!("attestation {:#?}", &attestation);
+
+            self.db
+                .update_to_attestation(attestation.event_id, &attestation, price)
+                .await
+                .inspect_err(|e| {
+                    error!("Postgres error while updating to attestation {event_id}: {e:?}");
+                })?;
+
+            Ok(attestation)
+        });
+
+        Ok(attestation_futures
+            .collect::<FuturesUnorderedBounded<_>>()
+            .collect()
+            .await)
+    }
+
     /// If it exists, return an event announcement and attestation.
     pub async fn oracle_state(
         &self,
-        event_id: &str,
-    ) -> Result<Option<(OracleAnnouncement, Option<OracleAttestation>)>> {
+        event_id: EventId,
+    ) -> Result<Option<(Announcement, Option<Attestation>)>> {
         let Some(event) = self.db.get_event(event_id).await? else {
             return Ok(None);
         };
 
-        let announcement = compute_announcement(self, event.clone());
+        let announcement = compute_announcement(self, event_id, event.clone());
         Ok(Some((
             announcement,
             compute_attestation(self, event_id, event),
@@ -253,8 +382,8 @@ impl Oracle {
     /// If it exists, return many events announcement and attestation.
     pub async fn oracle_many_announcements(
         &self,
-        events_ids: Vec<String>,
-    ) -> Result<Box<[OracleAnnouncement]>> {
+        events_ids: Vec<EventId>,
+    ) -> Result<Box<[Announcement]>> {
         let event = self
             .db
             .get_many_events(events_ids)
@@ -263,7 +392,7 @@ impl Oracle {
 
         Ok(event
             .into_iter()
-            .map(|e| compute_announcement(self, e))
+            .map(|(e, event_id)| compute_announcement(self, event_id, e))
             .collect())
     }
 
@@ -271,33 +400,34 @@ impl Oracle {
         &self,
         maturation: DateTime<Utc>,
         price: f64,
-    ) -> Result<(OracleAnnouncement, OracleAttestation)> {
-        let event_id = (AssetPair::default().to_string() + &maturation.timestamp().to_string())
-            .into_boxed_str();
+    ) -> Result<(Announcement, Attestation)> {
+        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::default(), maturation);
         let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
-        let (sk_nonces, nonces, was_not_announced) = match self.db.get_event(&event_id).await? {
-            Some(postgres_response) => match postgres_response.scalars_records {
+        let (nonces_keypairs, maybe_announcement) = match self.db.get_event(event_id).await? {
+            Some(postgres_response) => match &postgres_response.scalars_records {
                 ScalarsRecords::DigitsSkNonce(sk_nonces) => {
                     info!(
                         "!!! Forced announcement !!!: {event_id} event is already announced, will attest it immediately with price outcome {price}"
                     );
-                    let nonces = sk_nonces
+                    let as_keypairs = sk_nonces
                         .iter()
                         .map(|sk| {
-                            let oracle_r_kp = secp256k1_zkp::Keypair::from_seckey_slice(&SECP, sk)
-                                .expect("too low probability of secret to be invalid");
-                            XOnlyPublicKey::from_keypair(&oracle_r_kp).0
+                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, sk)
+                                .expect("too low probability of secret to be invalid")
                         })
                         .collect::<Vec<_>>();
-                    (sk_nonces, nonces, false)
+                    (
+                        as_keypairs,
+                        Some(compute_announcement(self, event_id, postgres_response)),
+                    )
                 }
                 ScalarsRecords::DigitsAttestations(outcome, _) => {
                     info!(
                         "!!! Forced attestation !!!: {event_id} event is already attested with price {outcome}, ignore forcing"
                     );
                     let (oracle_announcement, oracle_attestation) =
-                        self.oracle_state(&event_id).await?.expect("is announced");
+                        self.oracle_state(event_id).await?.expect("is announced");
 
                     return Ok((
                         oracle_announcement,
@@ -306,53 +436,25 @@ impl Oracle {
                 }
             },
             None => {
-                let mut sk_nonces = Vec::with_capacity(digits.into());
-                let mut nonces = Vec::with_capacity(digits.into());
+                let mut nonces_keypairs = Vec::with_capacity(digits.into());
                 debug!(
                     "!!! Forced announcement !!!: created oracle event and announcement with maturation {maturation}"
                 );
                 // Begin scope to ensure ThreadRng is drop at compile time so that Oracle derive Send AutoTrait
                 {
                     let mut rng = thread_rng();
+                    let mut secret_bytes = [0u8; 32];
                     for _ in 0..digits {
-                        let mut sk_nonce = [0u8; 32];
-                        rng.fill_bytes(&mut sk_nonce);
+                        rng.fill_bytes(&mut secret_bytes);
                         let oracle_r_kp =
-                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &sk_nonce)
-                                .expect("sk_nonce has the required length");
-                        let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
-                        sk_nonces.push(sk_nonce);
-                        nonces.push(nonce);
+                            secp256k1_zkp::Keypair::from_seckey_slice(&SECP, &secret_bytes)
+                                .expect("secret_bytes has the required length");
+                        nonces_keypairs.push(oracle_r_kp);
                     }
                 }; // End scope: ThreadRng is drop at compile time so that Oracle derives Send AutoTrait
-                (sk_nonces, nonces, true)
+                (nonces_keypairs, None)
             }
         };
-        let oracle_event = OracleEvent {
-            oracle_nonces: nonces,
-            event_maturity_epoch: maturation.timestamp() as u32,
-            event_descriptor: EventDescriptor::DigitDecompositionEvent(
-                self.asset_pair_info.event_descriptor.clone(),
-            ),
-            event_id: self.asset_pair_info.asset_pair.to_string().to_lowercase()
-                + maturation.timestamp().to_string().as_str(),
-        };
-
-        let announcement = OracleAnnouncement {
-            announcement_signature: SECP.sign_schnorr(
-                &Message::from_digest(sha256::Hash::hash(&oracle_event.encode()).to_byte_array()),
-                &self.keypair,
-            ),
-            oracle_public_key: self.keypair.public_key().into(),
-            oracle_event,
-        };
-
-        if was_not_announced {
-            let _ = &self
-                .db
-                .insert_announcement(&announcement, sk_nonces.clone())
-                .await?;
-        }
 
         let outcomes = to_digit_decomposition_vec(
             price,
@@ -363,20 +465,49 @@ impl Oracle {
                 .expect("Number range good in forced case"),
         );
 
-        let (outcome_vec, signatures): (Vec<String>, Vec<Signature>) = outcomes
-            .into_iter()
-            .zip(sk_nonces.iter())
-            .map(|(outcome, outstanding_sk_nonce)| {
-                let signature = sign_outcome(&SECP, &self.keypair, &outcome, outstanding_sk_nonce);
-                (outcome, signature)
+        let signatures = outcomes
+            .iter()
+            .zip(nonces_keypairs.iter())
+            .map(|(outcome, nonce_keypair)| {
+                sign_outcome(
+                    &SECP,
+                    &self.keypair,
+                    *outcome,
+                    &nonce_keypair.secret_bytes(),
+                )
             })
-            .unzip();
+            .collect::<Vec<Signature>>();
 
-        let attestation = OracleAttestation {
-            event_id: announcement.oracle_event.event_id.clone(),
+        let announcement = if let Some(announcement) = maybe_announcement {
+            announcement
+        } else {
+            let oracle_event = Event {
+                oracle_nonces: nonces_keypairs
+                    .iter()
+                    .map(|kp| kp.x_only_public_key().0.serialize())
+                    .collect(),
+                maturity: maturation.timestamp() as u32,
+                event_descriptor: self.asset_pair_info.event_descriptor,
+                event_id,
+            };
+
+            let event_to_insert = SignedEventToInsert {
+                announcement_signature: sign_event(&self.keypair, &oracle_event),
+                nonces_keypairs,
+                maturity: oracle_event.maturity,
+                event_id,
+                event_descriptor: oracle_event.event_descriptor,
+            };
+            let _ = &self.db.insert_announcement(&event_to_insert).await?;
+
+            event_to_insert.as_announcement(self.get_public_key())
+        };
+
+        let attestation = Attestation {
+            event_id,
             oracle_public_key: self.keypair.public_key().into(),
             signatures,
-            outcomes: outcome_vec,
+            outcomes,
         };
 
         info!(
@@ -385,7 +516,7 @@ impl Oracle {
         );
         let _ = &self
             .db
-            .update_to_attestation(event_id.as_ref(), &attestation, price)
+            .update_to_attestation(event_id, &attestation, price)
             .await?;
 
         Ok((announcement, attestation))
@@ -394,45 +525,46 @@ impl Oracle {
 
 fn compute_attestation(
     oracle: &Oracle,
-    event_id: &str,
+    event_id: EventId,
     event: PostgresResponse,
-) -> Option<OracleAttestation> {
-    if let ScalarsRecords::DigitsAttestations(outcome, sigs) = event.scalars_records {
-        let full_signatures = sigs
-            .into_iter()
-            .zip(event.nonce_public)
-            .map(|(s, n)| {
-                <(NoncePoint, SigningScalar) as Into<OracleSignature>>::into((n.into(), s.into()))
-                    .into()
-            })
-            .collect();
-        Some(OracleAttestation {
-            event_id: event_id.to_string(),
-            oracle_public_key: oracle.keypair.public_key().into(),
-            signatures: full_signatures,
-            outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+) -> Option<Attestation> {
+    let ScalarsRecords::DigitsAttestations(outcome, sigs) = event.scalars_records else {
+        return None;
+    };
+
+    let signatures = sigs
+        .into_iter()
+        .zip(event.nonces_public)
+        .map(|parts| {
+            OracleSignature::from(parts)
+                .try_into()
+                .expect("We only insert serialized XOnlyPublicKey in DB, if this happen DB has been corrupted in some very bad way")
         })
-    } else {
-        None
-    }
+        .collect();
+
+    Some(Attestation {
+        event_id,
+        oracle_public_key: oracle.keypair.public_key().into(),
+        signatures,
+        outcomes: to_digit_decomposition_vec(outcome, event.digits, event.precision),
+    })
 }
 
-fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> OracleAnnouncement {
-    let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-        + event.maturity.timestamp().to_string().as_str();
-
-    let oracle_event = OracleEvent {
-        oracle_nonces: event.nonce_public.clone(),
-        event_maturity_epoch: event.maturity.timestamp() as u32,
-        event_descriptor: EventDescriptor::DigitDecompositionEvent(
-            oracle.asset_pair_info.event_descriptor.clone(),
-        ),
+fn compute_announcement(
+    oracle: &Oracle,
+    event_id: EventId,
+    event: PostgresResponse,
+) -> Announcement {
+    let oracle_event = Event {
+        oracle_nonces: event.nonces_public.clone(),
+        maturity: event.maturity.timestamp() as u32,
+        event_descriptor: oracle.asset_pair_info.event_descriptor,
         event_id,
     };
 
-    OracleAnnouncement {
+    Announcement {
         announcement_signature: event.announcement_signature,
-        oracle_public_key: oracle.keypair.public_key().into(),
+        oracle_public_key: oracle.keypair.x_only_public_key().0,
         oracle_event,
     }
 }

@@ -1,6 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse, Result};
 use actix_ws::{CloseCode, CloseReason, Message, MessageStream, Session};
-use dlc_messages::oracle_msgs::OracleAnnouncement;
+use chrono::{DateTime, TimeDelta, Utc};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
@@ -10,7 +10,7 @@ use tokio::{select, time};
 use super::{error::PythiaApiError, EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
-    config::AssetPair,
+    data_models::{asset_pair::AssetPair, event_ids::EventId, oracle_msgs::Announcement},
     oracle::{error::OracleError, Oracle},
     schedule_context::{api_context::ApiContext, OracleContext},
 };
@@ -18,7 +18,7 @@ use crate::{
 #[derive(Clone, Serialize, Debug)]
 #[serde(untagged)]
 enum EventData {
-    Announcement(OracleAnnouncement),
+    Announcement(Announcement),
     Attestation(Option<AttestationResponse>),
 }
 
@@ -69,12 +69,11 @@ async fn handle_websocket_session<Context>(
     // A client is by default subscribing to the channel of btcusd attestation
     // if such oracle is available
     let mut subscribed_to = Vec::with_capacity(2);
-    if context.get_oracle(&AssetPair::BtcUsd).is_some() {
-        subscribed_to.push(EventChannel {
-            asset_pair: AssetPair::BtcUsd,
-            ty: EventType::Attestation,
-        });
-    }
+    subscribed_to.push(EventChannel {
+        asset_pair: AssetPair::BtcUsd,
+        ty: EventType::Attestation,
+        expiry: None,
+    });
 
     // Set up heartbeat and timeout tracking
     let mut last_heartbeat = Instant::now();
@@ -145,7 +144,7 @@ async fn handle_websocket_session<Context>(
 
             // Handle events from broadcast
             Ok(event) = channel_receiver.recv() => {
-                if handle_event_notification(event, &mut session, &subscribed_to).await.is_err() {
+                if handle_event_notification(event, &mut session, &mut subscribed_to).await.is_err() {
                     break;
                 }
             }
@@ -200,6 +199,30 @@ where
                 .await?;
         }
         RequestContent::Subscription(channel) => {
+            if let Some(expiry) = channel.expiry {
+                let end_of_channel_date = DateTime::<Utc>::from(expiry)
+                    - if channel.ty == EventType::Announcement {
+                        context.offset_duration
+                    } else {
+                        TimeDelta::zero()
+                    };
+                if end_of_channel_date < Utc::now() {
+                    session
+                        .text(
+                            to_string_pretty(&jsonrpc_error_response(
+                                &request,
+                                Some(
+                                    "Subscription to this channel is not allowed as it will not emit any events"
+                                        .to_string(),
+                                ),
+                            ))
+                            .expect("JSONRPC Response can always be parsed"),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+            }
+
             match request.method.as_str() {
                 "subscribe" => {
                     if !subscribed_to.contains(channel) {
@@ -236,34 +259,53 @@ where
 async fn handle_event_notification(
     event: EventNotification,
     session: &mut Session,
-    subscribed_to: &[EventChannel],
+    subscribed_to: &mut Vec<EventChannel>,
 ) -> Result<(), PythiaApiError> {
-    match event {
-        EventNotification::Announcement(asset_pair, _) => {
-            if subscribed_to.contains(&EventChannel {
+    let (channel, event_id) = match event {
+        EventNotification::Announcement(asset_pair, expiry, ref announcement) => (
+            EventChannel {
                 asset_pair,
                 ty: EventType::Announcement,
-            }) {
-                session
-                    .text(
-                        to_string_pretty(&EventBroadcast::from(event))
-                            .expect("serializable response"),
-                    )
-                    .await?;
-            }
-        }
-        EventNotification::Attestation(asset_pair, _) => {
-            if subscribed_to.contains(&EventChannel {
+                expiry,
+            },
+            announcement.oracle_event.event_id,
+        ),
+        EventNotification::Attestation(asset_pair, expiry, ref attestation) => (
+            EventChannel {
                 asset_pair,
                 ty: EventType::Attestation,
-            }) {
-                session
-                    .text(
-                        to_string_pretty(&EventBroadcast::from(event))
-                            .expect("serializable response"),
-                    )
-                    .await?;
-            }
+                expiry,
+            },
+            attestation.event_id,
+        ),
+    };
+
+    if subscribed_to.contains(&channel) {
+        session
+            .text(to_string_pretty(&EventBroadcast::from(event)).expect("serializable response"))
+            .await?;
+
+        if let EventId::Delivery(_) = event_id {
+            subscribed_to.retain(|c| c != &channel);
+
+            let type_str = match channel.ty {
+                EventType::Announcement => "announcements",
+                EventType::Attestation => "attestations",
+            };
+
+            session.text(to_string_pretty(&json_rpc_types::Request::<_, &'static str> {
+                jsonrpc: json_rpc_types::Version::V2,
+                method: "unsubscribed",
+                params: Some(format!(
+                    "Unsubscribed from {} for the forward with expiry {} of the {} pair as delivery {} has just been notified",
+                    type_str,
+                    channel.expiry.expect("eventId is delivery so it has an expiry").as_ref(),
+                    channel.asset_pair,
+                    &type_str[..type_str.len() - 1],
+                )),
+                id: None,
+            }).expect("JSONRPC Request can always be parsed"),
+            ).await?;
         }
     }
 
@@ -274,8 +316,10 @@ async fn future_oracle_state(
     oracle: &Oracle,
     request: &GetRequest,
 ) -> Result<Option<EventData>, OracleError> {
-    oracle.oracle_state(&request.event_id).await.map(|state| {
-        match (&request.asset_pair.ty, state) {
+    oracle
+        .oracle_state(request.event_id)
+        .await
+        .map(|state| match (&request.asset_pair.ty, state) {
             (EventType::Announcement, Some((announcement, _))) => {
                 Some(EventData::Announcement(announcement))
             }
@@ -284,8 +328,7 @@ async fn future_oracle_state(
             }
             (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
             (_, None) => None,
-        }
-    })
+        })
 }
 
 type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;
@@ -339,23 +382,29 @@ fn jsonrpc_subscription_response(
         EventChannel {
             asset_pair,
             ty: EventType::Announcement,
+            expiry,
         } => json_rpc_types::Response {
             jsonrpc: json_rpc_types::Version::V2,
             payload: Ok(format!(
                 "Successfully {} for announcement of the {} pair",
                 request.method, asset_pair
-            )),
+            ) + &expiry
+                .map(|e| format!(" for the forward with expiry {}", e.as_ref()))
+                .unwrap_or("".to_string())),
             id: request.id,
         },
         EventChannel {
             asset_pair,
             ty: EventType::Attestation,
+            expiry,
         } => json_rpc_types::Response {
             jsonrpc: json_rpc_types::Version::V2,
             payload: Ok(format!(
                 "Successfully {} for attestation of the {} pair",
                 request.method, asset_pair
-            )),
+            ) + &expiry
+                .map(|e| format!(" for the forward with expiry {}", e.as_ref()))
+                .unwrap_or("".to_string())),
             id: request.id,
         },
     }
@@ -375,12 +424,20 @@ impl From<EventNotification> for EventBroadcast {
 impl From<EventNotification> for EventBroadcastContent {
     fn from(value: EventNotification) -> Self {
         let (channel_string, event_data) = match value {
-            EventNotification::Announcement(asset_pair, event_data) => (
-                asset_pair.to_string().to_lowercase() + "/announcement",
+            EventNotification::Announcement(asset_pair, expiry, event_data) => (
+                asset_pair.to_string().to_lowercase()
+                    + &expiry
+                        .map(|s| "/".to_string() + s.as_ref())
+                        .unwrap_or("".to_string())
+                    + "/announcement",
                 EventData::Announcement(event_data),
             ),
-            EventNotification::Attestation(asset_pair, event_data) => (
-                asset_pair.to_string().to_lowercase() + "/attestation",
+            EventNotification::Attestation(asset_pair, expiry, event_data) => (
+                asset_pair.to_string().to_lowercase()
+                    + &expiry
+                        .map(|s| "/".to_string() + s.as_ref())
+                        .unwrap_or("".to_string())
+                    + "/attestation",
                 EventData::Attestation(Some(event_data)),
             ),
         };

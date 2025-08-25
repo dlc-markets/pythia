@@ -2,7 +2,7 @@ use displaydoc::Display;
 use std::io;
 use thiserror::Error;
 
-use crate::{config::AssetPair, oracle::error::OracleError};
+use crate::{data_models::asset_pair::AssetPair, oracle::error::OracleError};
 
 #[derive(Debug, Display, Error)]
 pub enum PythiaApiError {
@@ -37,6 +37,9 @@ pub enum PythiaApiError {
     #[cfg(not(test))]
     /// WebSocket closed
     WebSocketError(#[from] actix_ws::Closed),
+
+    /// An expiry related event can only have a timestamps less or equal to the expiry.
+    TimestampGreaterThanExpiry,
 }
 
 impl actix_web::error::ResponseError for PythiaApiError {
@@ -53,6 +56,7 @@ impl actix_web::error::ResponseError for PythiaApiError {
             PythiaApiError::OracleEmpty => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
             PythiaApiError::JsonRpcParsingError(_) => actix_web::http::StatusCode::BAD_REQUEST,
             PythiaApiError::WebSocketError(_) => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            PythiaApiError::TimestampGreaterThanExpiry => actix_web::http::StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -67,6 +71,6 @@ impl From<actix_ws::ProtocolError> for PythiaApiError {
 #[cfg(test)]
 impl From<actix_ws::Closed> for PythiaApiError {
     fn from(err: actix_ws::Closed) -> Self {
-        PythiaApiError::WebSocketError(format!("WebSocket closed: {}", err))
+        PythiaApiError::WebSocketError(format!("WebSocket closed: {err}"))
     }
 }
