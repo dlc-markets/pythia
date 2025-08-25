@@ -1,15 +1,19 @@
 use chrono::{DateTime, Utc};
-use dlc_messages::oracle_msgs::{EventDescriptor, OracleAnnouncement, OracleAttestation};
-use secp256k1_zkp::{schnorr::Signature, Scalar, XOnlyPublicKey};
+use secp256k1_zkp::{schnorr::Signature, Scalar};
 use sqlx::{
     postgres::{PgConnectOptions, PgPool, PgPoolOptions},
+    prelude::FromRow,
     Result,
 };
 
 use std::io::{Error, ErrorKind};
 
-use super::OracleAnnouncementWithSkNonces;
+use crate::{
+    data_models::{event_ids::EventId, oracle_msgs::Attestation},
+    oracle::SignedEventToInsert,
+};
 
+#[derive(FromRow)]
 struct EventResponse {
     digits: i32,
     precision: i32,
@@ -18,18 +22,20 @@ struct EventResponse {
     outcome: Option<f64>,
 }
 
+#[derive(FromRow)]
 struct DigitAnnouncementResponse {
     nonce_public: Vec<u8>,
     nonce_secret: Option<Vec<u8>>,
 }
-#[derive(Default)]
+#[derive(Default, FromRow)]
 struct BatchedAnnouncementResponse {
     digits: i32,
     precision: i32,
     maturity: DateTime<Utc>,
     announcement_signature: Vec<u8>,
-    nonces_public: Option<Vec<Vec<u8>>>,
+    nonces_public: Option<Vec<[u8; 32]>>,
 }
+
 struct DigitAttestationResponse {
     nonce_public: Vec<u8>,
     signature: Option<Vec<u8>>,
@@ -41,7 +47,7 @@ pub(super) enum ScalarsRecords {
     DigitsAttestations(f64, Vec<Scalar>),
 }
 
-#[derive(Clone)]
+#[derive(FromRow)]
 struct BoolResponse {
     all_exist: Option<bool>,
 }
@@ -57,7 +63,7 @@ pub(super) struct PostgresResponse {
     pub precision: u16,
     pub maturity: DateTime<Utc>,
     pub announcement_signature: Signature,
-    pub nonce_public: Vec<XOnlyPublicKey>,
+    pub nonces_public: Vec<[u8; 32]>,
     pub scalars_records: ScalarsRecords,
 }
 #[derive(Clone)]
@@ -87,26 +93,16 @@ impl DBconnection {
     }
 
     /// Insert announcement data and meta-data in postgres DB
-    pub(super) async fn insert_announcement(
-        &self,
-        announcement: &OracleAnnouncement,
-        outstanding_sk_nonces: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        let EventDescriptor::DigitDecompositionEvent(ref digits) =
-            announcement.oracle_event.event_descriptor
-        else {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "Only DigitDecomposition event type is supported",
-            ))?;
-        };
+    pub(super) async fn insert_announcement(&self, event: &SignedEventToInsert) -> Result<()> {
+        let digits = event.event_descriptor;
 
-        let sk_nonces = outstanding_sk_nonces
-            .into_iter()
-            .map(|x| x.into())
-            .collect::<Vec<_>>();
+        let (nonce_publics, nonce_secrets) = event
+            .nonces_keypairs
+            .iter()
+            .map(|kp| (kp.x_only_public_key().0.serialize(), kp.secret_bytes()))
+            .collect::<(Vec<[u8; 32]>, Vec<[u8; 32]>)>();
 
-        let query_result = sqlx::query!(
+        let query_result = sqlx::query(
             "WITH events AS (
                 INSERT INTO oracle.events VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING
             )
@@ -114,25 +110,21 @@ impl DBconnection {
                 SELECT * FROM UNNEST($6::VARCHAR[], $7::INT[], $8::BYTEA[], $9::BYTEA[])
             ) ON CONFLICT DO NOTHING
             ",
-            &announcement.oracle_event.event_id,
-            &(digits.nb_digits as i32),
-            digits.precision,
-            DateTime::from_timestamp(announcement.oracle_event.event_maturity_epoch.into(), 0)
-                .ok_or(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Failed to convert timestamp to DateTime"
-                ))?,
-            announcement.announcement_signature.as_ref(),
-            &vec![announcement.oracle_event.event_id.to_owned(); digits.nb_digits as usize][..],
-            &(0..digits.nb_digits as i32).collect::<Vec<i32>>(),
-            &announcement
-                .oracle_event
-                .oracle_nonces
-                .iter()
-                .map(|x| x.serialize().to_vec())
-                .collect::<Vec<Vec<u8>>>(),
-            sk_nonces.as_slice()
         )
+        .bind(event.event_id)
+        .bind(digits.nb_digits as i32)
+        .bind(digits.precision)
+        .bind(
+            DateTime::from_timestamp(event.maturity.into(), 0).ok_or(Error::new(
+                ErrorKind::InvalidInput,
+                "Failed to convert timestamp to DateTime",
+            ))?,
+        )
+        .bind(event.announcement_signature.as_ref())
+        .bind(vec![event.event_id; digits.nb_digits as usize])
+        .bind((0..digits.nb_digits as i32).collect::<Vec<i32>>())
+        .bind(&nonce_publics)
+        .bind(&nonce_secrets)
         .execute(&self.0)
         .await?;
 
@@ -155,76 +147,62 @@ impl DBconnection {
     /// otherwise it panics before the insert
     pub(super) async fn insert_many_announcements(
         &self,
-        announcements_with_sk_nonces_sorted_by_id: &[OracleAnnouncementWithSkNonces],
+        events_sorted_by_id: &[SignedEventToInsert],
     ) -> Result<()> {
-        if announcements_with_sk_nonces_sorted_by_id.is_empty() {
+        let Some(first_event) = events_sorted_by_id.first() else {
             return Ok(());
-        }
+        };
 
         // Sanity check that announcements are sorted
         // if not we panic to not corrupt the database
         assert!(
-            announcements_with_sk_nonces_sorted_by_id.is_sorted_by(|a, b| a
-                .0
-                .oracle_event
+            events_sorted_by_id.is_sorted_by(|a, b| a
                 .event_id
-                .as_str()
-                <= b.0.oracle_event.event_id.as_str()),
-            "announcements_with_sk_nonces_sorted_by_id must be sorted in ascending order before inserting into database"
+                <= b.event_id
+            ),
+            "announcements_sorted_by_id must be sorted in ascending order before inserting into database"
         );
 
-        #[allow(clippy::type_complexity)]
-        let (
-            event_ids,
-            digits_counts,
-            precisions,
-            maturities,
-            announcement_signatures,
-            nonce_publics,
-            nonce_secrets,
-        ): (
-            Vec<String>,
-            Vec<i32>,
-            Vec<i32>,
-            Vec<DateTime<Utc>>,
-            Vec<Vec<u8>>,
-            Vec<_>,
-            Vec<_>,
-        ) = announcements_with_sk_nonces_sorted_by_id
-            .iter()
-            .map(|(announcement, outstanding_sk_nonces)| {
-                let EventDescriptor::DigitDecompositionEvent(ref digit) =
-                    announcement.oracle_event.event_descriptor
-                else {
-                    return Err(Error::new(
-                        ErrorKind::InvalidInput,
-                        "Only DigitDecomposition event type is supported",
-                    ))?;
-                };
-                Ok((
-                    announcement.oracle_event.event_id.clone(),
-                    digit.nb_digits as i32,
-                    digit.precision,
-                    DateTime::from_timestamp(
-                        announcement.oracle_event.event_maturity_epoch.into(),
-                        0,
-                    )
-                    .ok_or(Error::new(
-                        ErrorKind::InvalidInput,
-                        "Failed to convert timestamp to DateTime",
-                    ))?,
-                    announcement.announcement_signature.as_ref().to_vec(),
-                    announcement
-                        .oracle_event
-                        .oracle_nonces
-                        .iter()
-                        .map(|x| x.serialize().to_vec()),
-                    outstanding_sk_nonces.iter().map(|x| x.to_vec()),
-                ))
-            })
-            .collect::<Result<_>>()?;
+        let estimated_nb_digits = first_event.event_descriptor.nb_digits as usize;
 
-        let query_result = sqlx::query!(
+        let mut tuple_extend = (
+            Vec::with_capacity(events_sorted_by_id.len() * estimated_nb_digits),
+            Vec::with_capacity(events_sorted_by_id.len() * estimated_nb_digits),
+        );
+
+        let (event_ids, digits_counts, precisions, maturities, announcement_signatures) =
+            events_sorted_by_id
+                .iter()
+                .map(|event| {
+                    tuple_extend.extend(
+                        event
+                            .nonces_keypairs
+                            .iter()
+                            .map(|kp| (kp.x_only_public_key().0.serialize(), kp.secret_bytes())),
+                    );
+
+                    Ok((
+                        event.event_id,
+                        event.event_descriptor.nb_digits as i32,
+                        event.event_descriptor.precision,
+                        DateTime::from_timestamp(event.maturity.into(), 0).ok_or(Error::new(
+                            ErrorKind::InvalidInput,
+                            "Failed to convert timestamp to DateTime",
+                        ))?,
+                        event.announcement_signature.as_ref(),
+                    ))
+                })
+                .collect::<Result<(
+                    Vec<EventId>,
+                    Vec<i32>,
+                    Vec<i32>,
+                    Vec<DateTime<Utc>>,
+                    Vec<&[u8; 64]>,
+                )>>()?;
+
+        let (nonce_publics, nonce_secrets) = tuple_extend;
+
+        let query_result = sqlx::query(
             "WITH events AS (
                 INSERT INTO oracle.events (id, digits, precision, maturity, announcement_signature) 
                 SELECT * FROM UNNEST($1::VARCHAR[], $2::INT[], $3::INT[], $4::TIMESTAMPTZ[], $5::BYTEA[])
@@ -250,15 +228,16 @@ impl DBconnection {
             FROM events_with_offset e
             CROSS JOIN LATERAL generate_series(0, e.digits - 1) as g(digit_index)
             ON CONFLICT DO NOTHING
-            ",
-            &event_ids,
-            &digits_counts,
-            &precisions,
-            &maturities,
-            &announcement_signatures,
-            &nonce_publics.into_iter().flatten().collect::<Vec<_>>(),
-            &nonce_secrets.into_iter().flatten().collect::<Vec<_>>(),
-        ).execute(&self.0).await?;
+            ")
+            .bind(event_ids)
+            .bind(digits_counts)
+            .bind(precisions)
+            .bind(maturities)
+            .bind(announcement_signatures)
+            .bind(nonce_publics)
+            .bind(nonce_secrets)
+            .execute(&self.0)
+            .await?;
 
         let affected_raws_counts = query_result.rows_affected();
 
@@ -269,21 +248,21 @@ impl DBconnection {
     /// Add signed outcome to meta data and digits signatures to DB and delete secret nonces to avoid secret key leaking
     pub(super) async fn update_to_attestation(
         &self,
-        event_id: &str,
-        attestation: &OracleAttestation,
+        event_id: EventId,
+        attestation: &Attestation,
         outcome: f64,
     ) -> Result<()> {
-        let (indexes, sigs): (Vec<usize>, Vec<Vec<u8>>) = attestation
+        let (indexes, sigs) = attestation
             .signatures
             .iter()
-            .map(|sig| sig.as_ref().split_at(32).1.to_vec())
             .enumerate()
-            .unzip();
+            .map(|(index, sig)| (index as i32, sig.as_ref().split_at(32).1))
+            .collect::<(Vec<_>, Vec<_>)>();
 
         // SECURITY: secret nonce MUST be dropped from DB by setting all of them to null.
         // This ensures that a DB leakage would not immediately allow secret key extraction
         // Notice: secret key is still leaked if we sign events which secret nonce was in leaked DB
-        let query_result = sqlx::query!(
+        let query_result = sqlx::query(
             "WITH events AS (
                 UPDATE oracle.events SET outcome = $1::FLOAT8 WHERE id = $2::TEXT
             )
@@ -296,12 +275,12 @@ impl DBconnection {
             ) AS bulk 
         WHERE event_id = bulk.id AND digit_index = bulk.digit AND nonce_secret IS NOT NULL
         ",
-            outcome,
-            event_id,
-            &sigs,
-            &vec![event_id.to_owned(); indexes.len() as usize][..],
-            &indexes.into_iter().map(|x| x as i32).collect::<Vec<i32>>()[..],
         )
+        .bind(outcome)
+        .bind(event_id)
+        .bind(sigs.as_slice())
+        .bind(vec![event_id; indexes.len()])
+        .bind(indexes)
         .execute(&self.0)
         .await?;
 
@@ -320,12 +299,12 @@ impl DBconnection {
     }
 
     /// Retrieve the current state of an event in oracle's DB
-    pub(super) async fn get_event(&self, event_id: &str) -> Result<Option<PostgresResponse>> {
+    pub(super) async fn get_event(&self, event_id: EventId) -> Result<Option<PostgresResponse>> {
         let Some(event) = sqlx::query_as!(
-        EventResponse,
-        "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = $1",
-        event_id
-    )
+            EventResponse,
+            "SELECT digits, precision, maturity, announcement_signature, outcome FROM oracle.events WHERE id = $1",
+            event_id.as_ref()
+        )
     .fetch_optional(&self.0)
     .await? else {return Ok(None)};
 
@@ -334,27 +313,26 @@ impl DBconnection {
                 let digits = sqlx::query_as!(
                 DigitAnnouncementResponse,
                 "SELECT nonce_public, nonce_secret FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
-                event_id
+                event_id.as_ref()
             )
             .fetch_all(&self.0)
             .await?;
-                let aggregated_rows: Vec<(XOnlyPublicKey, [u8; 32])> = digits
+                let (nonces_public, nonce_secret) = digits
                     .iter()
                     .map(|x| {
                         (
-                            XOnlyPublicKey::from_slice(&x.nonce_public)
+                            <[u8; 32]>::try_from(&x.nonce_public[..])
                                 .expect("nonce_public must have valid length inserted by pythia"),
-                            x.nonce_secret
-                                .as_ref()
-                                .expect("nonce_secret must be present in digits table if we did not get an attestation in events table")
-                                .as_slice()
-                                .try_into()
+                            <[u8; 32]>::try_from(
+                                x.nonce_secret
+                                    .as_ref()
+                                    .expect("nonce_secret must be present in digits table if we did not get an attestation in events table")
+                                    .as_slice(),
+                            )
                                 .expect("nonce_secret must have valid length inserted by pythia"),
                         )
                     })
-                    .collect();
-                let (nonce_public, nonce_secret): (Vec<XOnlyPublicKey>, Vec<[u8; 32]>) =
-                    aggregated_rows.into_iter().unzip();
+                    .collect::<(Vec<_>, Vec<_>)>();
                 Ok(Some(PostgresResponse {
                     digits: event.digits as u16,
                     precision: event.precision as u16,
@@ -363,7 +341,7 @@ impl DBconnection {
                         &event.announcement_signature[..],
                     )
                     .expect("announcement_signature must have valid length inserted by pythia"),
-                    nonce_public,
+                    nonces_public,
                     scalars_records: ScalarsRecords::DigitsSkNonce(nonce_secret),
                 }))
             }
@@ -371,16 +349,16 @@ impl DBconnection {
                 let digits = sqlx::query_as!(
                 DigitAttestationResponse,
                 "SELECT nonce_public, signature FROM oracle.digits WHERE event_id = $1 ORDER BY digit_index;",
-                event_id
+                event_id.as_ref()
             )
             .fetch_all(&self.0)
             .await?;
-                type AggregatedRows = (XOnlyPublicKey, Scalar);
-                let aggregated_rows: Vec<AggregatedRows> = digits
+
+                let (nonces_public, sigs) = digits
                     .iter()
                     .map(|x| {
                         (
-                            XOnlyPublicKey::from_slice(&x.nonce_public)
+                            <[u8; 32]>::try_from(&x.nonce_public[..])
                                 .expect("pythia must have inserted nonce of valid length"),
                             Scalar::from_be_bytes(
                                 x.signature
@@ -393,8 +371,6 @@ impl DBconnection {
                         )
                     })
                     .collect();
-                let (nonce_public, sigs): (Vec<XOnlyPublicKey>, Vec<Scalar>) =
-                    aggregated_rows.into_iter().unzip();
                 Ok(Some(PostgresResponse {
                     digits: event.digits as u16,
                     precision: event.precision as u16,
@@ -403,7 +379,7 @@ impl DBconnection {
                         &event.announcement_signature[..],
                     )
                     .expect("announcement_signature must have valid length inserted by pythia"),
-                    nonce_public,
+                    nonces_public,
                     scalars_records: ScalarsRecords::DigitsAttestations(outcome, sigs),
                 }))
             }
@@ -413,22 +389,21 @@ impl DBconnection {
     /// Retrieve the current state of many events in oracle's DB
     pub(super) async fn get_many_events(
         &self,
-        mut events_ids: Vec<String>,
-    ) -> Result<Option<Vec<PostgresResponse>>> {
+        mut events_ids: Vec<EventId>,
+    ) -> Result<Option<Vec<(PostgresResponse, EventId)>>> {
         // Remove duplicate maturities
         events_ids.sort_unstable();
         events_ids.dedup();
 
-        let BoolResponse { all_exist } = sqlx::query_as!(
-            BoolResponse,
+        let BoolResponse { all_exist } = sqlx::query_as(
             "SELECT COUNT(*) = COALESCE ($2, 0) AS all_exist
             FROM (
-                SELECT DISTINCT UNNEST($1::VARCHAR[]) AS id
+                SELECT DISTINCT UNNEST($1::TEXT[]) AS id
             ) AS distinct_event_id 
             WHERE id IN (SELECT id FROM oracle.events);",
-            &events_ids,
-            events_ids.len() as i64
         )
+        .bind(&events_ids)
+        .bind(events_ids.len() as i64)
         .fetch_one(&self.0)
         .await?;
 
@@ -436,8 +411,7 @@ impl DBconnection {
             return Ok(None);
         };
 
-        let batch = sqlx::query_as!(
-            BatchedAnnouncementResponse,
+        let batch: Vec<BatchedAnnouncementResponse> = sqlx::query_as(
             "SELECT 
                 e.digits, 
                 e.precision, 
@@ -461,8 +435,8 @@ impl DBconnection {
                 e.id, e.digits, e.precision, e.maturity, e.announcement_signature
             ORDER BY
                 e.id;",
-            &events_ids
         )
+        .bind(&events_ids)
         .fetch_all(&self.0)
         .await?;
 
@@ -489,19 +463,13 @@ impl DBconnection {
                             .expect(
                                 "announcement_signature must have valid length inserted by pythia",
                             ),
-                            nonce_public: nonces_public
-                                .into_iter()
-                                .map(|ref s| {
-                                    XOnlyPublicKey::from_slice(s).expect(
-                                        "nonce_public must have valid length inserted by pythia",
-                                    )
-                                })
-                                .collect(),
+                            nonces_public,
                             scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
                         }
                     },
                 )
-                .collect(),
+                .zip(events_ids)
+                .collect::<Vec<_>>(),
         ))
     }
 
