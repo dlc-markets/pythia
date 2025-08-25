@@ -1,4 +1,4 @@
-use crate::AssetPair;
+use crate::data_models::asset_pair::AssetPair;
 use chrono::{DateTime, Utc};
 use displaydoc::Display;
 use thiserror::Error;
@@ -14,5 +14,5 @@ pub(crate) enum PriceFeedError {
     PriceNotAvailable(AssetPair, DateTime<Utc>),
 
     /// http request error: {0}
-    HttpRequest(#[from] reqwest::Error),
+    ConnectionError(String),
 }

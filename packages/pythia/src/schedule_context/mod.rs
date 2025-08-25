@@ -6,13 +6,15 @@ use std::{borrow::Borrow, collections::HashMap};
 use tokio::sync::{broadcast, oneshot};
 
 use crate::{
-    config::AssetPair,
+    data_models::asset_pair::AssetPair,
     oracle::{error::OracleError, Oracle},
 };
 
 pub(super) mod api_context;
 pub(super) mod error;
 pub(super) mod scheduler;
+#[cfg(test)]
+pub mod test;
 
 use api_context::ApiContext;
 use error::PythiaContextError;

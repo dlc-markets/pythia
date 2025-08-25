@@ -21,7 +21,8 @@ use super::{
     Oracle,
 };
 use crate::{
-    config::{AssetPair, AssetPairInfo},
+    config::AssetPairInfo,
+    data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
     oracle::SECP,
     pricefeeds::{
         error::PriceFeedError,
@@ -36,10 +37,10 @@ async fn setup_oracle(
     pricefeed: ImplementedPriceFeed,
 ) -> Oracle {
     let asset_pair = AssetPair::BtcUsd;
-    let event_descriptor = DigitDecompositionEventDescriptor {
+    let event_descriptor = DigitDecompositionEventDesc {
         base: 2,
         is_signed: false,
-        unit: "btc/usd".into(),
+        unit: "usd/btc".parse().expect("usd/btc len is 7"),
         precision,
         nb_digits,
     };
@@ -67,21 +68,32 @@ async fn test_oracle_setup(tbd: PgPool) {
 }
 
 async fn test_announcement(oracle: &Oracle, date: DateTime<Utc>) {
-    let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+    let oracle_announcement = oracle
+        .create_announcements_at_date(date)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
 
     let db_oracle_announcement = oracle
-        .oracle_state(&("btc_usd".to_owned() + date.timestamp().to_string().as_str()))
+        .oracle_state(
+            ("btc_usd".to_owned() + date.timestamp().to_string().as_str())
+                .parse()
+                .unwrap(),
+        )
         .await
-        .inspect_err(|e| println!("{}", e))
+        .inspect_err(|e| println!("{e}"))
         .unwrap()
         .unwrap_or_else(|| panic!("No oracle announcement in DB !"));
     assert_eq!(oracle_announcement, db_oracle_announcement.0);
 
-    (oracle_announcement.oracle_public_key == oracle.get_public_key())
-        .then_some(())
-        .unwrap_or_else(|| panic!("Public key in announcement mismatch the oracle's one"));
+    if oracle_announcement.oracle_public_key != oracle.get_public_key() {
+        panic!("Public key in announcement mismatch the oracle's one");
+    }
 
-    oracle_announcement.validate(&SECP).unwrap();
+    OracleAnnouncement::from(oracle_announcement)
+        .validate(&SECP)
+        .unwrap();
 }
 
 #[sqlx::test]
@@ -108,10 +120,15 @@ async fn announcements_tests(tbd: PgPool) {
 }
 
 async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
-    let oracle_announcement = oracle.create_announcement(date).await.unwrap();
+    let oracle_announcement = oracle
+        .create_announcements_at_date(date)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
     let now = Utc::now();
     let oracle_attestation = match oracle
-        .try_attest_event(&oracle_announcement.oracle_event.event_id)
+        .try_attest_event(oracle_announcement.oracle_event.event_id)
         .await
     {
         Ok(attestation) => attestation,
@@ -131,10 +148,24 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
         }
         _ => panic!("DB error"),
     };
+    // This assert also checks that the signatures were indeed using the nonce provided:
+    //
+    // `try_attest_event` fills its instance of returned attestation directly with
+    // the signatures resulting from the sign function of secp.
+    //
+    // `oracle_state` uses the nonce stored in DB that cannot be modified by
+    // the oracle at attestation time, and the scalars part of previous signatures..
+    //
+    // So `try_attest_event` signatures are valid with respect to schnorr signature scheme,
+    // but may not use the nonce provided by announcement, while the signatures from `oracle_state`
+    // are formed with the nonce stored in DB and may be cryptographically invalid.
+    //
+    // If the signature were not using the nonce provided by announcement, there will be a mismatch
+    // between the two instances of attestations returned in the nonce point part of each signature.
     assert_eq!(
         oracle_attestation,
         oracle
-            .oracle_state(&oracle_announcement.oracle_event.event_id)
+            .oracle_state(oracle_announcement.oracle_event.event_id)
             .await
             .unwrap()
             .unwrap()
@@ -142,7 +173,7 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
     );
     match oracle_attestation {
         None => {
-            assert!(oracle_announcement.oracle_event.event_maturity_epoch > now.timestamp() as u32)
+            assert!(oracle_announcement.oracle_event.maturity > now.timestamp() as u32)
         }
         Some(attestation) => {
             let event = &oracle.asset_pair_info.event_descriptor;
@@ -151,22 +182,31 @@ async fn test_attestation(oracle: &Oracle, date: DateTime<Utc>) {
                 (oracle
                     .asset_pair_info
                     .pricefeed
-                    .get_pricefeed()
-                    .retrieve_price(AssetPair::BtcUsd, date)
+                    .retrieve_prices(AssetPair::BtcUsd, date)
                     .await
+                    .unwrap()
+                    .pop()
+                    .unwrap()
+                    .1
                     .unwrap()
                     - attestation
                         .outcomes
                         .iter()
                         .rev()
                         .enumerate()
-                        .map(|c| c.1.parse::<f64>().unwrap()
+                        .map(|c| c
+                            .1
+                            .parse::<u8>()
+                            .expect("Outcome char is necessarily a digit")
+                            as f64
                             * (2_f64.powf(c.0 as f64 - (precision as f64))))
                         .sum::<f64>())
                 .abs()
                     < 0.01
             );
-            attestation.validate(&SECP, &oracle_announcement).unwrap();
+            OracleAttestation::from(attestation)
+                .validate(&SECP, &OracleAnnouncement::from(oracle_announcement))
+                .unwrap();
         }
     }
 }
@@ -207,7 +247,7 @@ fn check_test_vec(attestation_test_vec: OracleAttestation) {
         })
         .for_each(|res| {
             if let Err(e) = res.1 {
-                println!("Error: {:?}", e);
+                println!("Error: {e:?}");
                 panic!("{:?} is invalid", res.0)
             }
         });
@@ -446,7 +486,7 @@ fn check_test_vec_dlc_specs(attestation_test_vec: OracleAttestation) {
         })
         .for_each(|res| {
             if let Err(e) = res.1 {
-                println!("Error: {:?}", e);
+                println!("Error: {e:?}");
                 panic!("{:?} is invalid", res.0)
             }
         });
@@ -576,15 +616,15 @@ fn tests_vector_attestation_suredbits() {
 mod unittest {
 
     use chrono::{Duration, Utc};
-    use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
     use secp256k1_zkp::{Keypair, SecretKey};
     use sqlx::PgPool;
     use std::str::FromStr;
 
     use crate::{
+        data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
         oracle::{Oracle, ScalarsRecords},
         pricefeeds::ImplementedPriceFeed,
-        AssetPair, AssetPairInfo, DBconnection, SECP,
+        AssetPairInfo, DBconnection, SECP,
     };
     type Error = Box<dyn std::error::Error>;
     type Result<T> = std::result::Result<T, Error>;
@@ -594,10 +634,10 @@ mod unittest {
         let asset_pair_info = AssetPairInfo {
             pricefeed: ImplementedPriceFeed::Lnmarkets,
             asset_pair: AssetPair::default(),
-            event_descriptor: DigitDecompositionEventDescriptor {
+            event_descriptor: DigitDecompositionEventDesc {
                 base: 2,
                 is_signed: false,
-                unit: "usd".to_owned(),
+                unit: "usd/btc".parse().expect("usd/btc len is 7"),
                 precision: 0,
                 nb_digits: 20,
             },
@@ -615,10 +655,10 @@ mod unittest {
         let asset_pair_info = AssetPairInfo {
             pricefeed: ImplementedPriceFeed::Lnmarkets,
             asset_pair: AssetPair::default(),
-            event_descriptor: DigitDecompositionEventDescriptor {
+            event_descriptor: DigitDecompositionEventDesc {
                 base: 2,
                 is_signed: false,
-                unit: "usd".to_owned(),
+                unit: "usd/btc".parse().expect("usd/btc len is 7"),
                 precision: 0,
                 nb_digits: nb_digit,
             },
@@ -633,7 +673,7 @@ mod unittest {
 
     mod test_create_many_announcements {
         use super::*;
-        use crate::oracle::CHUNK_SIZE;
+        use crate::{data_models::event_ids::EventId, oracle::CHUNK_SIZE};
 
         #[sqlx::test]
         async fn test_create_many_announcements_new(pool: PgPool) -> Result<()> {
@@ -655,14 +695,14 @@ mod unittest {
 
             // Verify that all announcements were created
             for maturation in maturations.iter() {
-                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
-                let event = db.get_event(&event_id).await?;
+                let event_id = EventId::spot_from_pair_and_timestamp(
+                    oracle.asset_pair_info.asset_pair,
+                    *maturation,
+                );
+                let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
-                    "event: {} should exist for maturation: {}",
-                    event_id,
-                    maturation
+                    "event: {event_id} should exist for maturation: {maturation}"
                 );
 
                 let event = event.expect("Event should exist");
@@ -682,7 +722,7 @@ mod unittest {
 
                 // Verify it has nonces
                 assert_eq!(
-                    event.nonce_public.len() as u16,
+                    event.nonces_public.len() as u16,
                     oracle.asset_pair_info.event_descriptor.nb_digits,
                     "Event should have the correct number of nonces"
                 );
@@ -717,12 +757,14 @@ mod unittest {
             let mut original_nonces = Vec::new();
 
             for maturation in &maturations {
-                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
-                event_ids.push(event_id.clone());
+                let event_id = EventId::spot_from_pair_and_timestamp(
+                    oracle.asset_pair_info.asset_pair,
+                    *maturation,
+                );
+                event_ids.push(event_id);
 
-                let event = db.get_event(&event_id).await?.unwrap();
-                original_nonces.push(event.nonce_public.clone());
+                let event = db.get_event(event_id).await?.unwrap();
+                original_nonces.push(event.nonces_public.clone());
             }
 
             // Try creating announcements again
@@ -732,9 +774,9 @@ mod unittest {
 
             // Verify nothing changed
             for (i, event_id) in event_ids.iter().enumerate() {
-                let event = db.get_event(event_id).await?.unwrap();
+                let event = db.get_event(*event_id).await?.unwrap();
                 assert_eq!(
-                    event.nonce_public, original_nonces[i],
+                    event.nonces_public, original_nonces[i],
                     "Nonces should not change when announcement already exists"
                 );
             }
@@ -770,13 +812,14 @@ mod unittest {
 
             // Verify all announcements exist
             for maturation in &mixed_maturations {
-                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
-                let event = db.get_event(&event_id).await?;
+                let event_id = EventId::spot_from_pair_and_timestamp(
+                    oracle.asset_pair_info.asset_pair,
+                    *maturation,
+                );
+                let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
-                    "Event should exist for maturation {}",
-                    maturation
+                    "Event should exist for maturation {maturation}"
                 );
                 let events = db
                     .get_many_events([event_id].to_vec())
@@ -829,28 +872,24 @@ mod unittest {
             // Verify announcements have correct digit counts
             for maturation in &maturations_even {
                 // Check first oracle's announcement
-                let event_id1 = oracle20
-                    .asset_pair_info
-                    .asset_pair
-                    .to_string()
-                    .to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
-                let event1 = db.get_event(&event_id1).await?.unwrap();
+                let event_id1 = EventId::spot_from_pair_and_timestamp(
+                    oracle20.asset_pair_info.asset_pair,
+                    *maturation,
+                );
+                let event1 = db.get_event(event_id1).await?.unwrap();
                 assert_eq!(event1.digits, 20);
-                assert_eq!(event1.nonce_public.len(), 20);
+                assert_eq!(event1.nonces_public.len(), 20);
             }
 
             for maturation in &maturations_odd {
                 // Check second oracle's announcement
-                let event_id2 = oracle10
-                    .asset_pair_info
-                    .asset_pair
-                    .to_string()
-                    .to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
-                let event2 = db.get_event(&event_id2).await?.unwrap();
+                let event_id2 = EventId::spot_from_pair_and_timestamp(
+                    oracle10.asset_pair_info.asset_pair,
+                    *maturation,
+                );
+                let event2 = db.get_event(event_id2).await?.unwrap();
                 assert_eq!(event2.digits, 10);
-                assert_eq!(event2.nonce_public.len(), 10);
+                assert_eq!(event2.nonces_public.len(), 10);
             }
 
             Ok(())
@@ -858,11 +897,14 @@ mod unittest {
     }
 
     mod test_prepare_announcement {
+        use crate::data_models::event_ids::EventId;
+
         use super::*;
-        use bitcoin::hashes::{sha256, Hash};
-        use dlc_messages::oracle_msgs::EventDescriptor;
-        use lightning::util::ser::Writeable;
-        use secp256k1_zkp::{rand::thread_rng, Message, XOnlyPublicKey};
+        use secp256k1_zkp::{
+            hashes::{sha256, Hash},
+            rand::thread_rng,
+            Message, XOnlyPublicKey,
+        };
 
         #[sqlx::test]
         fn test_prepare_announcement_basic(pool: PgPool) -> Result<()> {
@@ -874,39 +916,41 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) =
-                oracle.prepare_announcement(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify event ID format (asset_pair + timestamp)
-            let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                + maturation.timestamp().to_string().as_str();
+            let expected_id = EventId::spot_from_pair_and_timestamp(
+                oracle.asset_pair_info.asset_pair,
+                maturation,
+            );
             assert_eq!(announcement.oracle_event.event_id, expected_id);
 
             // Verify maturation time
             assert_eq!(
-                announcement.oracle_event.event_maturity_epoch as i64,
+                announcement.oracle_event.maturity as i64,
                 maturation.timestamp()
             );
 
             // Verify event descriptor
-            match &announcement.oracle_event.event_descriptor {
-                EventDescriptor::DigitDecompositionEvent(desc) => {
-                    assert_eq!(
-                        desc.nb_digits,
-                        oracle.asset_pair_info.event_descriptor.nb_digits
-                    );
-                    assert_eq!(
-                        desc.precision,
-                        oracle.asset_pair_info.event_descriptor.precision
-                    );
-                    assert_eq!(desc.base, oracle.asset_pair_info.event_descriptor.base);
-                    assert_eq!(
-                        desc.is_signed,
-                        oracle.asset_pair_info.event_descriptor.is_signed
-                    );
-                }
-                _ => panic!("Expected DigitDecompositionEvent"),
-            }
+            let desc = &announcement.oracle_event.event_descriptor;
+
+            assert_eq!(
+                desc.nb_digits,
+                oracle.asset_pair_info.event_descriptor.nb_digits
+            );
+            assert_eq!(
+                desc.precision,
+                oracle.asset_pair_info.event_descriptor.precision
+            );
+            assert_eq!(desc.base, oracle.asset_pair_info.event_descriptor.base);
+            assert_eq!(
+                desc.is_signed,
+                oracle.asset_pair_info.event_descriptor.is_signed
+            );
 
             // Verify oracle public key
             assert_eq!(announcement.oracle_public_key, oracle.get_public_key());
@@ -919,7 +963,7 @@ mod unittest {
 
             // Verify secret nonces length
             assert_eq!(
-                sk_nonces.len(),
+                event_to_insert.nonces_keypairs.len(),
                 oracle.asset_pair_info.event_descriptor.nb_digits as usize
             );
 
@@ -936,18 +980,19 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, sk_nonces) =
-                oracle.prepare_announcement(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify that public nonces match the secret nonces
-            for (i, sk_nonce) in sk_nonces.iter().enumerate() {
-                let oracle_r_kp =
-                    secp256k1_zkp::Keypair::from_seckey_slice(&SECP, sk_nonce).unwrap();
-                let expected_nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+            for (i, oracle_r_kp) in event_to_insert.nonces_keypairs.iter().enumerate() {
+                let expected_nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0.serialize();
                 assert_eq!(
                     announcement.oracle_event.oracle_nonces[i], expected_nonce,
-                    "Public nonce at index {} doesn't match derived nonce from secret",
-                    i
+                    "Public nonce at index {i} doesn't match derived nonce from secret"
                 );
             }
 
@@ -965,21 +1010,22 @@ mod unittest {
 
             for &digits in &digit_counts {
                 let oracle = create_test_oracle_with_digits(&db, digits)?;
-                let (announcement, sk_nonces) =
-                    oracle.prepare_announcement(maturation, &mut rng)?;
+                let event_to_insert = oracle
+                    .prepare_event_to_insert(maturation, &mut rng)
+                    .next()
+                    .expect("test announcement 1 should be created");
+                let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
                 // Verify the nonce counts match the digit count
                 assert_eq!(
                     announcement.oracle_event.oracle_nonces.len(),
                     digits as usize,
-                    "Nonce count should match digit count of {}",
-                    digits
+                    "Nonce count should match digit count of {digits}"
                 );
                 assert_eq!(
-                    sk_nonces.len(),
+                    event_to_insert.nonces_keypairs.len(),
                     digits as usize,
-                    "Secret nonce count should match digit count of {}",
-                    digits
+                    "Secret nonce count should match digit count of {digits}"
                 );
             }
 
@@ -1003,20 +1049,24 @@ mod unittest {
             ];
 
             for &maturation in &maturation_times {
-                let (announcement, _) =
-                    oracle.prepare_announcement(maturation, &mut thread_rng())?;
+                let event_to_insert = oracle
+                    .prepare_event_to_insert(maturation, &mut thread_rng())
+                    .next()
+                    .expect("test announcement 1 should be created");
+                let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
                 // Verify the maturation time is set correctly
                 assert_eq!(
-                    announcement.oracle_event.event_maturity_epoch as i64,
+                    announcement.oracle_event.maturity as i64,
                     maturation.timestamp(),
-                    "Maturation epoch should match timestamp {}",
-                    maturation
+                    "Maturation epoch should match timestamp {maturation}"
                 );
 
                 // Verify event ID includes the correct timestamp
-                let expected_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + maturation.timestamp().to_string().as_str();
+                let expected_id = EventId::spot_from_pair_and_timestamp(
+                    oracle.asset_pair_info.asset_pair,
+                    maturation,
+                );
                 assert_eq!(
                     announcement.oracle_event.event_id,
                     expected_id,
@@ -1038,12 +1088,21 @@ mod unittest {
             let maturation = Utc::now() + Duration::hours(1);
 
             // Prepare announcement
-            let (announcement, _) = oracle.prepare_announcement(maturation, &mut thread_rng())?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify the signature
-            let message = Message::from_digest(
-                sha256::Hash::hash(&announcement.oracle_event.encode()).to_byte_array(),
-            );
+            let message = {
+                let mut hash_engine = sha256::HashEngine::default();
+                announcement
+                    .oracle_event
+                    .write_to(&mut hash_engine)
+                    .expect("write to hash cannot fail");
+                Message::from_digest(sha256::Hash::from_engine(hash_engine).to_byte_array())
+            };
 
             // The signature should verify with the oracle's public key
             SECP.verify_schnorr(
@@ -1067,8 +1126,16 @@ mod unittest {
 
             // Prepare two announcements with the same parameters
             let mut rng = thread_rng();
-            let (announcement1, _) = oracle.prepare_announcement(maturation, &mut rng)?;
-            let (announcement2, _) = oracle.prepare_announcement(maturation, &mut rng)?;
+            let event_to_insert1 = oracle
+                .prepare_event_to_insert(maturation, &mut rng)
+                .next()
+                .expect("test announcement 1 should be created");
+            let event_to_insert2 = oracle
+                .prepare_event_to_insert(maturation, &mut rng)
+                .next()
+                .expect("test announcement 2 should be created");
+            let announcement1 = event_to_insert1.as_announcement(oracle.get_public_key());
+            let announcement2 = event_to_insert2.as_announcement(oracle.get_public_key());
 
             // The event IDs should be identical
             assert_eq!(

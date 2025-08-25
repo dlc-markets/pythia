@@ -4,28 +4,31 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-dlc-messages = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
-    "use-serde",
-    "serde",
-] }
+actix = "0.13.1"
+actix-cors = "0.7.0"
 actix-web = "4.8.0"
 actix-ws = "0.3.0"
-async-trait = "0.1.53"
-bitcoin = { version = "0.32.2", features = ["serde"] }
+arrayvec = { version = "0.7.6", features = ["serde"] }
+atomic-take = "1.1.0"
+awc = { version = "3.7.0", features = ["rustls"] }
+bitcoin_hashes = "0.14.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.3.8", features = ["derive"] }
-derive_more = "0.99.17"
+cron = { version = "0.15.0", features = ["serde"] }
 displaydoc = "0.2.5"
-dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
-    "serde",
-] }
 env_logger = "0.10.2"
-hex = "0.4"
+futures = "0.3.31"
+futures-buffered = "0.2.11"
+hex = { version = "0.4.3", features = ["serde"] }
 humantime = "2.1.0"
-lightning = "0.0.125"
+json-rpc-types = "1.3.4"
 log = "0.4.20"
-reqwest = { version = "0.11.10", features = ["json"] }
-secp256k1-zkp = { version = "0.11.0", features = ["rand-std", "serde"] }
+secp256k1-zkp = { version = "0.11.0", features = [
+    "serde",
+    "rand-std",
+    "hashes",
+] }
+secp256k1-zkp-sys = { version = "0.10.1", default-features = false }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.81"
 sqlx = { version = "0.8.3", features = [
@@ -33,34 +36,23 @@ sqlx = { version = "0.8.3", features = [
     "postgres",
     "chrono",
     "macros",
-] }
-thiserror = "1.0.31"
-tokio = { version = "1.35.1", features = ["time", "macros"] }
-actix-cors = "0.7.0"
-actix = "0.13.1"
-json-rpc-types = "1.3.4"
-bytestring = "1.3.1"
-cron = { version = "0.15.0", features = ["serde"] }
-actix-utils = "3.0.1"
-time = "0.3.36"
-futures = "0.3.31"
-futures-buffered = "0.2.11"
-atomic-take = "1.1.0"
+    "migrate",
+], default-features = false }
+thiserror = "2.0.12"
+tokio = { version = "1.35.1", features = [
+    "time",
+    "macros",
+], default-features = false }
 
 [dev-dependencies]
-dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
+actix-test = "0.1.5"
+actix-codec = "0.5.2"
+dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git" }
+dlc-messages = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master", features = [
+    "use-serde",
     "serde",
 ] }
-strum = { version = "0.25.0", features = ["strum_macros", "derive"] }
-sqlx = { version = "0.8.3", features = [
-    "runtime-tokio-rustls",
-    "postgres",
-    "chrono",
-    "macros",
-    "migrate",
-] }
-actix-test = "0.1.5"
 futures-util = "0.3.31"
-awc = "3.6.0"
-actix-codec = "0.5.2"
+lightning = "0.0.125"
 serial_test = "3.2.0"
+strum = { version = "0.25.0", features = ["strum_macros", "derive"] }
