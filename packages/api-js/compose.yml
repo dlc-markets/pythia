@@ -1,0 +1,65 @@
+x-defaults: &defaults
+  restart: unless-stopped
+  networks:
+    - network
+
+  environment: &environment
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_DB: pythia
+    POSTGRES_HOST: postgres
+
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "5m"
+      max-file: "10"
+      tag: "{{.Name}}"
+
+name: oracle
+
+networks:
+  network:
+
+volumes:
+  postgres:
+
+services:
+  postgres:
+    <<: *defaults
+    image: postgres:16.6-alpine
+    volumes:
+      - postgres:/var/lib/postgresql
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  pythia:
+    <<: *defaults
+    build:
+      context: ../..
+      dockerfile: packages/pythia/Dockerfile
+    environment:
+      <<: *environment
+      RUST_LOG: debug
+      PYTHIA_SECRET_KEY: d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a
+    command: >
+      pythia
+      --pair '{"pricefeed":"deribit","assetPair":"btc_usd","eventDescriptor":{"base":2,"isSigned":false,"unit":"usd/btc","precision":0,"nbDigits":20}}'
+      --schedule '*/1 * * * * * *'
+      --offset '10seconds'
+    ports:
+      - 8000:8000
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "8000"]
+      interval: 5s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
