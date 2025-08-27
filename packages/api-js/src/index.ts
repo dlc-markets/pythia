@@ -1,6 +1,27 @@
 import process from 'node:process'
 import { EventEmitter } from 'eventemitter3'
 import { WebSocket } from 'ws'
+import {
+  type EventType,
+  type ExpiryChannel,
+  type PythiaAnnouncement,
+  type PythiaAsset,
+  type PythiaAttestation,
+  type PythiaChannelAnnouncement,
+  type PythiaChannelAttestation,
+  type PythiaEvent,
+  type PythiaSubscriptionAnnouncement,
+  type PythiaSubscriptionAttestation,
+  getPythiaChannel,
+  unpackPythiaSubscription,
+} from './messages.js'
+import {
+  type AssetPair,
+  type Expiry,
+  asEventId,
+  assertEventId,
+  unpackEventId,
+} from './types.js'
 
 interface FetchOptions {
   method: string
@@ -8,56 +29,21 @@ interface FetchOptions {
   body?: string
 }
 
-interface PythiaAsset {
-  pricefeed: string
-  announcement_offset: string
-  frequency: string
-}
-
-interface PythiaAnnouncement {
-  announcementSignature: string
-  oraclePublicKey: string
-  oracleEvent: {
-    oracleNonces: string[]
-    eventMaturityEpoch: number
-    eventDescriptor: {
-      digitDecompositionEvent: {
-        base: number
-        isSigned: boolean
-        unit: string
-        precision: number
-        nbDigits: number
-      }
-    }
-    eventId: string
+type Events = Record<
+  PythiaChannelAnnouncement,
+  [PythiaEvent<PythiaSubscriptionAnnouncement, PythiaAnnouncement>]
+> &
+  Record<
+    PythiaChannelAttestation,
+    [PythiaEvent<PythiaSubscriptionAttestation, PythiaAttestation>]
+  > & {
+    connected: []
+    disconnected: []
   }
-}
-
-interface PythiaAttestation {
-  eventId: string
-  signatures: string[]
-  values: string[]
-}
-
-interface Events {
-  connected: () => void
-  disconnected: () => void
-  [key: `${string}/attestation`]: (attestation: PythiaAttestation) => void
-  [key: `${string}/announcement`]: (attestation: PythiaAnnouncement) => void
-}
 
 interface Constructor {
   version?: string
   url?: string
-}
-
-export const parseEventId = (eventId: string) => {
-  const match = eventId.match(/([a-z_]+)(\d+)/i)?.slice(1)
-  if (!match || match.length !== 2) {
-    throw new Error('Invalid event id')
-  }
-  const [assetPair, time] = match as [string, string]
-  return { assetPair, time: new Date(+time * 1000) }
 }
 
 export class Pythia extends EventEmitter<Events> {
@@ -99,7 +85,20 @@ export class Pythia extends EventEmitter<Events> {
 
         if (data.method === 'subscriptions') {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
-          this.emit(data.params.channel, data.params.data)
+          const { channel: subscriptionChannel } = data.params as
+            | { channel: PythiaSubscriptionAnnouncement }
+            | { channel: PythiaSubscriptionAttestation }
+
+          const { assetPair, type, expiry } =
+            unpackPythiaSubscription(subscriptionChannel)
+
+          this.emit(getPythiaChannel({ assetPair, type, expiry }), data.params)
+          if (expiry) {
+            this.emit(
+              getPythiaChannel({ assetPair, type, expiry: 'ALL' }),
+              data.params
+            )
+          }
         }
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -118,6 +117,40 @@ export class Pythia extends EventEmitter<Events> {
 
   disconnect() {
     this.websocket?.close()
+  }
+
+  subscribe({
+    assetPair,
+    type,
+    expiry,
+  }: {
+    assetPair: AssetPair
+    type: EventType
+    expiry?: ExpiryChannel
+  }) {
+    this.websocket?.send(
+      JSON.stringify({
+        method: 'subscribe',
+        params: { assetPair, type, expiry },
+      })
+    )
+  }
+
+  unsubscribe({
+    assetPair,
+    type,
+    expiry,
+  }: {
+    assetPair: AssetPair
+    type: EventType
+    expiry?: ExpiryChannel
+  }) {
+    this.websocket?.send(
+      JSON.stringify({
+        method: 'unsubscribe',
+        params: { assetPair, type, expiry },
+      })
+    )
   }
 
   async request<Result>(
@@ -155,43 +188,71 @@ export class Pythia extends EventEmitter<Events> {
   }
 
   getAssets() {
-    return this.request<string[]>('GET', 'assets')
+    return this.request<AssetPair[]>('GET', 'assets')
   }
 
-  getAsset({ assetPair }: { assetPair: string }) {
+  getConfig({ assetPair }: { assetPair: AssetPair }) {
     return this.request<PythiaAsset>('GET', `asset/${assetPair}/config`)
   }
 
-  getAnnouncement({ assetPair, time }: { assetPair: string; time: Date }) {
-    return this.request<PythiaAnnouncement>(
+  async getAnnouncement({
+    assetPair,
+    time,
+    expiry,
+  }: { assetPair: AssetPair; time: Date; expiry?: Expiry }) {
+    const announcements = await this.request<PythiaAnnouncement[]>(
       'GET',
       `asset/${assetPair}/announcement/${time.toISOString()}`
     )
-  }
 
-  getAnnouncements({ assetPair, times }: { assetPair: string; times: Date[] }) {
-    return this.request<PythiaAnnouncement[]>(
-      'POST',
-      `asset/${assetPair}/announcements/batch`,
-      { maturities: times.map((date) => date.toISOString()) }
+    return announcements.find(
+      (announcement) =>
+        announcement.oracleEvent.eventId === asEventId(assetPair, time, expiry)
     )
   }
 
-  getAnnouncementByEventId({ eventId }: { eventId: string }) {
-    const { assetPair, time } = parseEventId(eventId)
-    return this.getAnnouncement({ assetPair, time })
+  getAnnouncements({
+    assetPair,
+    times,
+    expiry,
+  }: { assetPair: AssetPair; times: Date[]; expiry?: Expiry }) {
+    return expiry === undefined
+      ? this.request<PythiaAnnouncement[]>(
+          'POST',
+          `asset/${assetPair}/announcements/batch`,
+          { maturities: times.map((date) => date.toISOString()) }
+        )
+      : this.request<PythiaAnnouncement[]>(
+          'POST',
+          `asset/${assetPair}/${expiry}/announcements/batch`,
+          { maturities: times.map((date) => date.toISOString()) }
+        )
   }
 
-  getAttestation({ assetPair, time }: { assetPair: string; time: Date }) {
-    return this.request<PythiaAttestation>(
+  getAnnouncementByEventId({ eventId }: { eventId: string }) {
+    const { assetPair, time, expiry } = unpackEventId(assertEventId(eventId))
+    return this.getAnnouncement({ assetPair, time, expiry })
+  }
+
+  async getAttestation({
+    assetPair,
+    time,
+    expiry,
+  }: { assetPair: AssetPair; time: Date; expiry?: Expiry }) {
+    const attestations = await this.request<PythiaAttestation[]>(
       'GET',
       `asset/${assetPair}/attestation/${time.toISOString()}`
+    )
+
+    return attestations.find(
+      (attestation) =>
+        attestation.eventId === asEventId(assetPair, time, expiry)
     )
   }
 
   getAttestationByEventId({ eventId }: { eventId: string }) {
-    const { assetPair, time } = parseEventId(eventId)
-    return this.getAttestation({ assetPair, time })
+    const { assetPair, time, expiry } = unpackEventId(assertEventId(eventId))
+    return this.getAttestation({ assetPair, time, expiry })
   }
 
   forceAttestation({ time, price }: { time: Date; price: number }) {
