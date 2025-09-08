@@ -1,7 +1,9 @@
 import type { AssetPair, EventId, Expiry } from './types.js'
 
+type PriceFeed = 'lnmarkets' | 'deribit' | 'kraken' | 'gateio' | 'bitstamp'
+
 export interface PythiaAsset {
-  pricefeed: string
+  pricefeed: PriceFeed
   announcement_offset: string
   frequency: string
 }

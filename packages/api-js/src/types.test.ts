@@ -54,34 +54,34 @@ describe('assertExpiry', () => {
 
   test('should reject invalid month values', () => {
     expect(() => assertExpiry('31XYZ23')).toThrow(
-      'Invalid expiry format: 31XYZ23. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 31XYZ23. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
     expect(() => assertExpiry('05ABC95')).toThrow(
-      'Invalid expiry format: 05ABC95. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 05ABC95. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
   })
 
   test('should reject invalid year values', () => {
     expect(() => assertExpiry('25DEC-1')).toThrow(
-      'Invalid expiry format: 25DEC-1. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 25DEC-1. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
     expect(() => assertExpiry('25DEC100')).toThrow(
-      'Invalid expiry format: 25DEC100. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 25DEC100. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
   })
 
   test('should reject invalid formats', () => {
     expect(() => assertExpiry('25DEC')).toThrow(
-      'Invalid expiry format: 25DEC. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 25DEC. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
     expect(() => assertExpiry('DEC24')).toThrow(
-      'Invalid expiry format: DEC24. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: DEC24. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
     expect(() => assertExpiry('25DEC2024')).toThrow(
-      'Invalid expiry format: 25DEC2024. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 25DEC2024. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
     expect(() => assertExpiry('25-12-24')).toThrow(
-      'Invalid expiry format: 25-12-24. Date must be a Deribit expiry like "25DEC24"'
+      'Invalid expiry format: 25-12-24. Date must be a Deribit expiry like "25DEC24" or "01JAN25"'
     )
   })
 })

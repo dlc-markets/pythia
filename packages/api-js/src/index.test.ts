@@ -15,6 +15,7 @@ import type {
   PythiaSubscriptionAnnouncement,
   PythiaSubscriptionAttestation,
 } from './messages.js'
+import { type Expiry, asEventId, assertExpiry, unpackEventId } from './types.js'
 
 describe('Pythia', () => {
   let pythia: Pythia
@@ -104,6 +105,19 @@ describe('Pythia', () => {
       })
       pythia.subscribe({ assetPair: 'btc_usd', type: 'announcement' })
 
+      const quotingExpiry = getQuotingExpiry()
+      let announcementSpyExpiry:
+        | PythiaEvent<PythiaSubscriptionAnnouncement, PythiaAnnouncement>
+        | undefined
+      pythia.on(`btc_usd/${quotingExpiry}/announcement`, (announcement) => {
+        announcementSpyExpiry = announcement
+      })
+      pythia.subscribe({
+        assetPair: 'btc_usd',
+        type: 'announcement',
+        expiry: quotingExpiry,
+      })
+
       await vi.waitFor(
         () => {
           if (!announcementSpy) {
@@ -125,6 +139,43 @@ describe('Pythia', () => {
         precision: 0,
         nbDigits: 20,
       })
+
+      assert(announcementSpy.data.oracleEvent.eventId)
+
+      const eventId = announcementSpy.data.oracleEvent.eventId
+
+      await vi.waitFor(
+        () => {
+          if (!announcementSpyExpiry) {
+            throw new Error('Announcement not received')
+          }
+        },
+        { timeout: 2000 }
+      )
+
+      assert(announcementSpyExpiry)
+
+      expect(announcementSpyExpiry.channel).toBe(
+        `btc_usd/${quotingExpiry}/announcement`
+      )
+      expect(
+        announcementSpyExpiry.data.oracleEvent.eventDescriptor
+          .digitDecompositionEvent
+      ).toStrictEqual({
+        base: 2,
+        isSigned: false,
+        unit: 'usd/btc',
+        precision: 0,
+        nbDigits: 20,
+      })
+
+      assert(announcementSpy.data.oracleEvent.eventId)
+
+      const eventIdExpiry = announcementSpyExpiry.data.oracleEvent.eventId
+
+      const { assetPair, time } = unpackEventId(eventIdExpiry)
+
+      expect(asEventId(assetPair, time)).toBe(eventId)
     })
 
     test('should emit attestation event', async () => {
@@ -133,6 +184,19 @@ describe('Pythia', () => {
         | undefined
       pythia.on('btc_usd/attestation', (attestation) => {
         attestationSpy = attestation
+      })
+
+      const quotingExpiry = getQuotingExpiry()
+      let attestationSpyExpiry:
+        | PythiaEvent<PythiaSubscriptionAttestation, PythiaAttestation>
+        | undefined
+      pythia.on(`btc_usd/${quotingExpiry}/attestation`, (attestation) => {
+        attestationSpyExpiry = attestation
+      })
+      pythia.subscribe({
+        assetPair: 'btc_usd',
+        type: 'attestation',
+        expiry: quotingExpiry,
       })
 
       await vi.waitFor(() => {
@@ -145,6 +209,35 @@ describe('Pythia', () => {
       expect(attestationSpy.data.values.length).toBe(20)
       expect(attestationSpy.data.signatures.length).toBe(20)
 
+      assert(attestationSpy.data.eventId)
+
+      const eventId = attestationSpy.data.eventId
+
+      await vi.waitFor(
+        () => {
+          if (!attestationSpyExpiry) {
+            throw new Error('Attestation not received')
+          }
+        },
+        { timeout: 2000 }
+      )
+
+      assert(attestationSpyExpiry)
+
+      expect(attestationSpyExpiry.channel).toBe(
+        `btc_usd/${quotingExpiry}/attestation`
+      )
+      expect(attestationSpyExpiry.data.values.length).toBe(20)
+      expect(attestationSpyExpiry.data.signatures.length).toBe(20)
+
+      assert(attestationSpy.data.eventId)
+
+      const eventIdExpiry = attestationSpyExpiry.data.eventId
+
+      const { assetPair, time } = unpackEventId(eventIdExpiry)
+
+      expect(asEventId(assetPair, time)).toBe(eventId)
+
       pythia.unsubscribe({ assetPair: 'btc_usd', type: 'attestation' })
 
       const notReceivingAttestation = new Promise((resolve, reject) => {
@@ -154,5 +247,82 @@ describe('Pythia', () => {
 
       await expect(notReceivingAttestation).resolves.toBeUndefined()
     })
+
+    test('should emit all expiries events', async () => {
+      const expiriesAnnouncement = new Set<Expiry>()
+      pythia.on('btc_usd/ALL/announcement' as const, (announcement) => {
+        const { expiry } = unpackEventId(announcement.data.oracleEvent.eventId)
+        assert(expiry)
+        expiriesAnnouncement.add(expiry)
+      })
+      pythia.subscribe({
+        assetPair: 'btc_usd',
+        type: 'announcement',
+        expiry: 'ALL',
+      })
+
+      const expiriesAttestation = new Set<Expiry>()
+      pythia.on('btc_usd/ALL/attestation' as const, (attestation) => {
+        const { expiry } = unpackEventId(attestation.data.eventId)
+        assert(expiry)
+        expiriesAttestation.add(expiry)
+      })
+      pythia.subscribe({
+        assetPair: 'btc_usd',
+        type: 'attestation',
+        expiry: 'ALL',
+      })
+
+      await vi.waitFor(
+        () => {
+          if (!expiriesAnnouncement.size) {
+            throw new Error('Announcement not received')
+          }
+        },
+        { timeout: 2000 }
+      )
+
+      await vi.waitFor(
+        () => {
+          if (!expiriesAttestation.size) {
+            throw new Error('Attestation not received')
+          }
+        },
+        { timeout: 2000 }
+      )
+
+      expect(expiriesAnnouncement.size).toBeGreaterThan(2)
+      expect(expiriesAnnouncement.size).toBeOneOf([
+        expiriesAttestation.size - 1,
+        expiriesAttestation.size,
+        expiriesAttestation.size + 1,
+      ])
+
+      const quotingExpiry = getQuotingExpiry()
+
+      expect(expiriesAttestation).toContain(quotingExpiry)
+
+      const intersection = new Set(
+        [...expiriesAttestation].filter((x) => expiriesAnnouncement.has(x))
+      )
+
+      expect(intersection.size).toBeGreaterThan(expiriesAttestation.size - 1)
+    })
   })
 })
+
+const getQuotingExpiry: () => Expiry = () => {
+  const now = new Date(Date.now())
+  const year = now.getFullYear().toString().slice(-2)
+  const month = now.toString().slice(4, 7).toUpperCase()
+  const day = now.getDate()
+
+  const laterDay = day > 28 ? 1 : day + 1
+  let expiry = `${laterDay}${month}${year}`
+
+  if (expiry.length !== 7) {
+    expiry = `0${expiry}`
+  }
+
+  return assertExpiry(expiry)
+}

@@ -43,12 +43,12 @@ export const assertAssetPair = (value: string): AssetPair => {
 export const assertExpiry = (value: string): Expiry => {
   // Validate format: (e.g., "25DEC24")
   const expiryRegex =
-    /^([0-9]{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)([0-9]{2})$/i
+    /^([0-9]{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)([0-9]{2})$/i
   const match = value.match(expiryRegex)
 
   if (!match || !match[1] || !match[2] || !match[3]) {
     throw new Error(
-      `Invalid expiry format: ${value}. Date must be a Deribit expiry like "25DEC24"`
+      `Invalid expiry format: ${value}. Date must be a Deribit expiry like "25DEC24" or "01JAN25"`
     )
   }
 
