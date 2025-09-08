@@ -1,12 +1,12 @@
 use actix_web::{web, Error, HttpResponse, Result};
 use chrono::{DateTime, FixedOffset, Utc};
-use dlc_messages::oracle_msgs::OracleAnnouncement;
 use hex::ToHex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, EventType},
-    config::{AssetPair, ConfigResponse},
+    config::ConfigResponse,
+    data_models::{asset_pair::AssetPair, event_ids::EventId, oracle_msgs::Announcement},
     schedule_context::{api_context::ApiContext, OracleContext},
 };
 
@@ -75,9 +75,9 @@ pub(super) async fn config<Context: OracleContext>(
         .get_oracle(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse {
-        pricefeed: oracle.asset_pair_info.pricefeed,
+        pricefeed: &oracle.asset_pair_info.pricefeed.to_string(),
         announcement_offset: context.offset_duration,
-        schedule: context.schedule().clone(),
+        schedule: context.schedule(),
     }))
 }
 
@@ -104,11 +104,12 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     .then_some(())
     .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
-    let event_id = (oracle.asset_pair_info.asset_pair.to_string()
-        + &timestamp.timestamp().to_string())
-        .into_boxed_str();
+    let event_id = EventId::spot_from_pair_and_timestamp(
+        oracle.asset_pair_info.asset_pair,
+        timestamp.with_timezone(&Utc),
+    );
     let (announcement, maybe_attestation) = oracle
-        .oracle_state(&event_id)
+        .oracle_state(event_id)
         .await
         .map_err(PythiaApiError::OracleFail)?
         .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
@@ -121,7 +122,7 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
                 None => {
                     if timestamp < Utc::now() {
                         Ok(oracle
-                            .try_attest_event(&event_id)
+                            .try_attest_event(event_id)
                             .await
                             .map_err(PythiaApiError::OracleFail)?
                             .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
@@ -146,9 +147,10 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BatchAnnouncementsRequest {
-    maturities: Vec<DateTime<FixedOffset>>,
+    pub(super) maturities: Vec<DateTime<FixedOffset>>,
 }
 
 // https://github.com/actix/actix-web/issues/2866 explains why we commented this:
@@ -185,7 +187,12 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .0
         .maturities
         .iter()
-        .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
+        .map(|ts| {
+            EventId::spot_from_pair_and_timestamp(
+                oracle.asset_pair_info.asset_pair,
+                ts.with_timezone(&Utc),
+            )
+        })
         .collect::<Vec<_>>();
 
     (!oracle
@@ -212,7 +219,7 @@ pub(super) struct ForceData {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ForceResponse {
-    announcement: OracleAnnouncement,
+    announcement: Announcement,
     attestation: AttestationResponse,
 }
 
@@ -257,7 +264,7 @@ pub(super) async fn force<Context: OracleContext>(
     Ok(HttpResponse::Ok().json(ForceResponse {
         announcement: announcement.clone(),
         attestation: AttestationResponse {
-            event_id: announcement.oracle_event.event_id.into(),
+            event_id: announcement.oracle_event.event_id,
             signatures: attestation.signatures,
             values: attestation.outcomes,
         },
