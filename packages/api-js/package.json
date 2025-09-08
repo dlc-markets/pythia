@@ -40,7 +40,7 @@
   "scripts": {
     "build": "tsc --build tsconfig.build.json",
     "type-check": "tsc --noEmit",
-    "test": "vitest --run"
+    "test": "docker compose -f compose.yml up -d --wait; vitest --run; result=$?; docker compose -f compose.yml down; [ $result -eq 0 ]  || exit 1"
   },
   "dependencies": {
     "eventemitter3": "5.0.1",

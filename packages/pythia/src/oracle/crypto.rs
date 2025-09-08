@@ -1,10 +1,59 @@
-use derive_more::From;
-use dlc::secp_utils::schnorrsig_sign_with_nonce;
 use secp256k1_zkp::{
     hashes::{sha256, Hash},
     schnorr::Signature,
-    All, Keypair, Message, Scalar, Secp256k1, XOnlyPublicKey,
+    All, Keypair, Message, Scalar, Secp256k1, UpstreamError,
 };
+
+use crate::{
+    data_models::{oracle_msgs::Event, Outcome, OUTCOME_ONE, OUTCOME_ZERO},
+    SECP,
+};
+
+/// Custom signature type
+pub(super) struct OracleSignature {
+    nonce: [u8; 32],
+    scalar: Scalar,
+}
+
+impl From<(Scalar, [u8; 32])> for OracleSignature {
+    fn from((scalar, nonce): (Scalar, [u8; 32])) -> Self {
+        Self { nonce, scalar }
+    }
+}
+
+impl TryFrom<OracleSignature> for Signature {
+    type Error = UpstreamError;
+
+    fn try_from(sig: OracleSignature) -> Result<Self, Self::Error> {
+        Signature::from_slice(&[sig.nonce, sig.scalar.to_be_bytes()].concat())
+    }
+}
+
+impl From<Signature> for OracleSignature {
+    fn from(sig: Signature) -> Self {
+        let (x_nonce_bytes, scalar_bytes) = sig.as_ref().split_at(32);
+        let scalar_array = scalar_bytes
+            .try_into()
+            .expect("Schnorr signature is 64 bytes long");
+        Self {
+            nonce: x_nonce_bytes.try_into().expect("signature split correctly"),
+            scalar: Scalar::from_be_bytes(scalar_array)
+                .expect("signature scalar is always less then curve order"),
+        }
+    }
+}
+
+pub(super) fn sign_event(key_pair: &Keypair, event: &Event) -> Signature {
+    let message = {
+        let mut hash_engine = sha256::HashEngine::default();
+        event
+            .write_to(&mut hash_engine)
+            .expect("write to hash engine cannot fail");
+        Message::from_digest(sha256::Hash::from_engine(hash_engine).to_byte_array())
+    };
+
+    SECP.sign_schnorr(&message, key_pair)
+}
 
 /// SHA 256 hash of the string "0"
 const HASH_ZERO_BYTES: [u8; 32] = [
@@ -18,42 +67,48 @@ const HASH_ONE_BYTES: [u8; 32] = [
     162, 47, 29, 73, 192, 30, 82, 221, 183, 135, 91, 75,
 ];
 
-/// We use custom types to implement signature splitting into nonce and scalar.
-/// Custom public nonce type
-#[derive(From)]
-#[cfg_attr(test, derive(PartialEq, Debug))]
-pub(super) struct NoncePoint(XOnlyPublicKey);
-/// Custom scalar signing part type
-#[derive(From)]
-pub(super) struct SigningScalar(Scalar);
-/// Custom signature type
-#[derive(From)]
-pub(super) struct OracleSignature {
-    pub(super) nonce: NoncePoint,
-    pub(super) scalar: SigningScalar,
-}
-
 /// Decompose numerical outcome into base 2 and convert into vec of string
 /// digits is the vec length or number of digits used iun total
 /// precision is the number of digits dedicated to fractional part
-pub(super) fn to_digit_decomposition_vec(outcome: f64, digits: u16, precision: u16) -> Vec<String> {
-    let outcome_rounded = (outcome * ((2_u64.pow(precision as u32)) as f64)).round() as u64;
-    let outcome_binary = format!("{:0width$b}", outcome_rounded, width = digits as usize);
-    outcome_binary
-        .chars()
-        .map(|char| char.to_string())
-        .collect::<Vec<_>>()
+pub(super) fn to_digit_decomposition_vec(
+    outcome: f64,
+    digits: u16,
+    precision: u16,
+) -> Vec<Outcome> {
+    let outcome_rounded = (outcome * (1 << precision) as f64).round() as u64;
+
+    if u64::checked_ilog2(outcome_rounded) > Some(digits as u32) {
+        return vec![Outcome::try_from('1').expect("1 is a valid outcome"); digits as usize];
+    }
+
+    let outcome_zero = OUTCOME_ZERO.with(|outcome| **outcome);
+    let outcome_one = OUTCOME_ONE.with(|outcome| **outcome);
+
+    (0..digits)
+        .map(|i| {
+            if ((outcome_rounded >> i) & 1) == 1 {
+                outcome_one
+            } else {
+                // if not 1 must be 0 because of "& 1"
+                outcome_zero
+            }
+        })
+        .rev()
+        .collect()
 }
 
 pub(super) fn sign_outcome(
     secp: &Secp256k1<All>,
     key_pair: &Keypair,
-    outcome: &str,
+    outcome: Outcome,
     outstanding_sk_nonce: &[u8; 32],
 ) -> Signature {
+    // See `sign_with_nonce` module for more details.
+    use sign_with_nonce::schnorrsig_sign_with_nonce;
+
     // The oracle will often only sign "0" and "1" by design
-    // so we use precomputed hash in those cases to speed up
-    match outcome {
+    // so we use precomputed hash in those cases to speed it up
+    match outcome.as_ref() {
         "0" => schnorrsig_sign_with_nonce(
             secp,
             &Message::from_digest(HASH_ZERO_BYTES),
@@ -75,34 +130,71 @@ pub(super) fn sign_outcome(
     }
 }
 
-impl From<OracleSignature> for Signature {
-    fn from(sig: OracleSignature) -> Self {
-        Signature::from_slice(
-            [sig.nonce.0.serialize(), sig.scalar.0.to_be_bytes()]
-                .concat()
-                .as_slice(),
-        )
-        .expect("Nonce and scalar are 64 bytes long")
-    }
-}
+/// This module replicates the implementation of [schnorrsig_sign_with_nonce](https://github.com/p2pderivatives/rust-dlc/blob/v0.7.1/dlc/src/secp_utils.rs#L31)
+/// to avoid importing the whole `dlc` crate as dependency just for signing outcomes using the nonce draw at announcement time.
+///
+/// Because it uses the extern functions of the original C library in [secp256k1-zkp-sys](https://docs.rs/secp256k1-zkp-sys/0.10.1/secp256k1_zkp_sys/),
+/// `unsafe` is required in this module. Any unsoundness of its use here must also be reported in the `rust-dlc` repository.
+///
+/// The code of this module is and must stay a copy paste of the original implementation in `rust-dlc` with only formatting changes.
+mod sign_with_nonce {
+    use secp256k1_zkp::{
+        constants::MESSAGE_SIZE, schnorr::Signature, Keypair, Message, Secp256k1, Signing,
+    };
+    use secp256k1_zkp_sys::{
+        secp256k1_schnorrsig_sign_custom,
+        types::{c_int, c_uchar, c_void, size_t},
+        CPtr, SchnorrSigExtraParams,
+    };
 
-impl From<Signature> for OracleSignature {
-    fn from(sig: Signature) -> Self {
-        let (x_nonce_bytes, scalar_bytes) = sig.as_ref().split_at(32);
-        let scalar_array = scalar_bytes
-            .try_into()
-            .expect("Schnorr signature is 64 bytes long");
-        Self {
-            nonce: XOnlyPublicKey::from_slice(x_nonce_bytes)
-                .expect("signature split correctly")
-                .into(),
-            scalar: Scalar::from_be_bytes(scalar_array)
-                .expect("signature scalar is always less then curve order")
-                .into(),
+    /// SAFETY: this function must only be used as `SchnorrNonceFn` in SchnorrSigExtraParams.
+    extern "C" fn constant_nonce_fn(
+        nonce32: *mut c_uchar,
+        _msg32: *const c_uchar,
+        _msg_len: size_t,
+        _key32: *const c_uchar,
+        _x_only_pk32: *const c_uchar,
+        _algo16: *const c_uchar,
+        _algo_len: size_t,
+        data: *mut c_void,
+    ) -> c_int {
+        // SAFETY: data and nonce32 are provided by the secp256k1-zkp-sys crate internals
+        // and the nonce data is 32 bytes long.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data as *const c_uchar, nonce32, 32);
         }
+        1
+    }
+
+    /// Sign a message for the given keypair using the provided nonce secret.
+    pub(super) fn schnorrsig_sign_with_nonce<S: Signing>(
+        secp: &Secp256k1<S>,
+        msg: &Message,
+        keypair: &Keypair,
+        nonce: &[u8; 32],
+    ) -> Signature {
+        let mut sig = [0u8; secp256k1_zkp::constants::SCHNORR_SIGNATURE_SIZE];
+        let extra_params =
+            SchnorrSigExtraParams::new(Some(constant_nonce_fn), nonce.as_c_ptr() as *const c_void);
+
+        // SAFETY: we cast only safe Rust types into appropriate raw pointer data,
+        // all taken reference are dropped in the block, and we provide the correct message size.
+        let result_code = unsafe {
+            secp256k1_schnorrsig_sign_custom(
+                secp.ctx().as_ref(),
+                sig.as_mut_c_ptr(),
+                msg.as_c_ptr(),
+                MESSAGE_SIZE,
+                keypair.as_c_ptr(),
+                &extra_params,
+            )
+        };
+
+        assert_eq!(1, result_code);
+
+        Signature::from_slice(&sig).unwrap()
     }
 }
-
 #[cfg(test)]
 pub(super) mod test {
     use std::str::FromStr;
@@ -113,11 +205,14 @@ pub(super) mod test {
         All, Keypair, Message, Secp256k1, UpstreamError, XOnlyPublicKey,
     };
 
-    use crate::oracle::crypto::{to_digit_decomposition_vec, NoncePoint, OracleSignature};
+    use crate::{
+        data_models::Outcome,
+        oracle::crypto::{to_digit_decomposition_vec, OracleSignature},
+    };
 
     use super::{HASH_ONE_BYTES, HASH_ZERO_BYTES};
 
-    fn check_bit_conversion(number: f64, digits: u16, precision: u16, result: Vec<String>) {
+    fn check_bit_conversion(number: f64, digits: u16, precision: u16, result: Vec<Outcome>) {
         assert_eq!(
             to_digit_decomposition_vec(number, digits, precision),
             result
@@ -132,8 +227,9 @@ pub(super) mod test {
             0,
             "00000000000000000010"
                 .chars()
-                .map(|c| c.to_string())
-                .collect(),
+                .map(Outcome::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
         );
         check_bit_conversion(
             24156.2f64,
@@ -141,8 +237,9 @@ pub(super) mod test {
             0,
             "00000101111001011100"
                 .chars()
-                .map(|c| c.to_string())
-                .collect::<Vec<String>>(),
+                .map(Outcome::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
         );
         check_bit_conversion(
             (2_i32.pow(20) - 1) as f64,
@@ -150,8 +247,9 @@ pub(super) mod test {
             0,
             "11111111111111111111"
                 .chars()
-                .map(|c| c.to_string())
-                .collect::<Vec<String>>(),
+                .map(Outcome::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
         );
         check_bit_conversion(
             0.125f64,
@@ -159,8 +257,9 @@ pub(super) mod test {
             10,
             "00000000000010000000"
                 .chars()
-                .map(|c| c.to_string())
-                .collect::<Vec<String>>(),
+                .map(Outcome::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
         );
     }
 
@@ -174,7 +273,7 @@ pub(super) mod test {
         if let Some(sk_nonce) = outstanding_sk_nonce {
             let OracleSignature { nonce, scalar: _ } = result.into();
             let nonce_pair = Keypair::from_seckey_slice(secp, sk_nonce).unwrap();
-            assert_eq!(nonce_pair.x_only_public_key().0, nonce.0);
+            assert_eq!(nonce_pair.x_only_public_key().0.serialize(), nonce);
         }
         secp.verify_schnorr(
             &result,
@@ -232,12 +331,11 @@ pub(super) mod test {
 
         if let Some(secret_str) = nonce_secret_str {
             assert_eq!(
-                &NoncePoint(
-                    Keypair::from_seckey_str(secp, secret_str)
-                        .unwrap()
-                        .x_only_public_key()
-                        .0
-                ),
+                &Keypair::from_seckey_str(secp, secret_str)
+                    .unwrap()
+                    .x_only_public_key()
+                    .0
+                    .serialize(),
                 &nonce
             )
         };
@@ -246,7 +344,7 @@ pub(super) mod test {
         let oracle_sig = OracleSignature { nonce, scalar };
 
         // Check if Signature if still valid after manipulations
-        secp.verify_schnorr(&oracle_sig.into(), &zero_msg, &pub_key)
+        secp.verify_schnorr(&oracle_sig.try_into().unwrap(), &zero_msg, &pub_key)
             .unwrap();
     }
 
@@ -260,11 +358,11 @@ pub(super) mod test {
     #[test]
     fn hash_0_1_check() {
         assert_eq!(
-            secp256k1_zkp::hashes::sha256::Hash::hash("0".as_bytes()).to_byte_array(),
+            secp256k1_zkp::hashes::sha256::Hash::hash(&['0' as u8]).to_byte_array(),
             HASH_ZERO_BYTES
         );
         assert_eq!(
-            secp256k1_zkp::hashes::sha256::Hash::hash("1".as_bytes()).to_byte_array(),
+            secp256k1_zkp::hashes::sha256::Hash::hash(&['1' as u8]).to_byte_array(),
             HASH_ONE_BYTES
         );
     }
