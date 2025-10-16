@@ -13,6 +13,7 @@ use crate::data_models::{
     asset_pair::AssetPair,
     error::ParsingError,
     expiries::{Expiry, EXPIRY_LENGTH},
+    legs_combo::{LegsComboId, HRP_LEG_ID},
 };
 
 use sqlx::prelude::*;
@@ -22,6 +23,9 @@ const FORWARD_LENGTH: usize = 26;
 const DELIVERY_LENGTH: usize = 16;
 const EXPIRY_OFFSET: usize = 8;
 
+const LEGS_COMBO_FORWARD_LENGTH: usize = 32;
+const LEGS_COMBO_DELIVERY_LENGTH: usize = 22;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EventId {
     Spot(ArrayString<SPOT_LENGTH>),
@@ -29,6 +33,9 @@ pub enum EventId {
     Forward(ArrayString<FORWARD_LENGTH>),
     // INVARIANT: at EXPIRY_OFFSET, there is a valid expiry written
     Delivery(ArrayString<DELIVERY_LENGTH>),
+    // LegsCombo(ArrayString<LEGS_COMBO_LENGTH>),
+    LegsComboForward(ArrayString<LEGS_COMBO_FORWARD_LENGTH>),
+    LegsComboDelivery(ArrayString<LEGS_COMBO_DELIVERY_LENGTH>),
 }
 
 impl EventId {
@@ -59,6 +66,30 @@ impl EventId {
                 .expect("We imposed a length of DELIVERY_LENGTH"),
         )
     }
+
+    pub fn legs_combo_at_timestamp(legs: LegsComboId, timestamp: Option<DateTime<Utc>>) -> Self {
+        if let Some(timestamp) = timestamp {
+            Self::LegsComboForward(
+                format_args!("{legs}f{t}", t = timestamp.timestamp())
+                    .try_into()
+                    .expect("We imposed a length of LEGS_COMBO_FORWARD_LENGTH"),
+            )
+        } else {
+            Self::LegsComboDelivery(
+                format_args!("{legs}d")
+                    .try_into()
+                    .expect("We imposed a length of LEGS_COMBO_DELIVERY_LENGTH"),
+            )
+        }
+    }
+
+    pub fn is_delivery_event_id(&self) -> bool {
+        matches!(self, Self::LegsComboDelivery(_) | Self::Delivery(_))
+    }
+
+    pub fn is_forward_event_id(&self) -> bool {
+        matches!(self, Self::LegsComboForward(_) | Self::Forward(_))
+    }
 }
 
 impl sqlx::Type<Postgres> for EventId {
@@ -76,7 +107,16 @@ impl Encode<'_, Postgres> for EventId {
         &self,
         buf: &mut <Postgres as Database>::ArgumentBuffer<'_>,
     ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
-        <&str as Encode<'_, Postgres>>::encode_by_ref(&self.as_ref(), buf)
+        buf.extend(self.as_bytes());
+        Ok(IsNull::No)
+    }
+}
+
+impl Decode<'_, Postgres> for EventId {
+    fn decode(
+        value: <Postgres as Database>::ValueRef<'_>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        Ok(value.as_str()?.parse()?)
     }
 }
 
@@ -92,6 +132,8 @@ impl AsRef<str> for EventId {
             Self::Spot(s) => s.as_ref(),
             Self::Forward(s) => s.as_ref(),
             Self::Delivery(s) => s.as_ref(),
+            Self::LegsComboForward(s) => s.as_ref(),
+            Self::LegsComboDelivery(s) => s.as_ref(),
         }
     }
 }
@@ -149,6 +191,23 @@ impl FromStr for EventId {
                 expected: SPOT_LENGTH,
                 actual: value.len(),
             });
+        }
+
+        if &value[..HRP_LEG_ID.len()] == HRP_LEG_ID
+            && value.get(HRP_LEG_ID.len()..HRP_LEG_ID.len() + 1) == Some("1")
+        {
+            if let Ok(id) = value.parse::<ArrayString<LEGS_COMBO_DELIVERY_LENGTH>>() {
+                return Ok(EventId::LegsComboDelivery(id));
+            }
+
+            if let Ok(id) = value.parse::<ArrayString<LEGS_COMBO_FORWARD_LENGTH>>() {
+                return Ok(EventId::LegsComboForward(id));
+            } else {
+                return Err(ParsingError::InvalidLength {
+                    expected: LEGS_COMBO_FORWARD_LENGTH,
+                    actual: value.len(),
+                });
+            }
         }
 
         // INVARIANT check: at EXPIRY_RANGE, there must be a valid expiry
@@ -233,6 +292,14 @@ mod tests_event_id {
 
         assert!(matches!(event_id_s1, EventId::Spot(_)));
         assert!(matches!(event_id_s2, EventId::Spot(_)));
+
+        let event_id_lc1_str = "LEGS1J06FUXV24GRN8VLRf1717336000"
+            .parse::<EventId>()
+            .unwrap();
+        assert!(matches!(event_id_lc1_str, EventId::LegsComboForward(_)));
+
+        let event_id_lc2_str = "LEGS1J06FUXV24GRN8VLRd".parse::<EventId>().unwrap();
+        assert!(matches!(event_id_lc2_str, EventId::LegsComboDelivery(_)));
     }
 
     #[test]

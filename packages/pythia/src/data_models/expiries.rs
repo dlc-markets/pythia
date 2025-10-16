@@ -111,8 +111,12 @@ impl FromStr for Expiry {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let date = NaiveDate::parse_from_str(value, "%d%b%y").map_err(ParsingError::InvalidDate)?;
-        Ok(if value.len() == 7 {
-            Expiry(value.parse().expect("to be 7 ascii chars long"))
+        Ok(if value.len() == EXPIRY_LENGTH {
+            let mut as_stack_str = value
+                .parse::<ArrayString<EXPIRY_LENGTH>>()
+                .expect("to be EXPIRY_LENGTH ascii chars long");
+            as_stack_str.make_ascii_uppercase();
+            Expiry(as_stack_str)
         } else {
             date.into()
         })

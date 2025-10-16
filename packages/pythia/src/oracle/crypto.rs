@@ -1,8 +1,6 @@
-use secp256k1_zkp::{
-    hashes::{sha256, Hash},
-    schnorr::Signature,
-    All, Keypair, Message, Scalar, Secp256k1, UpstreamError,
-};
+use bitcoin_hashes::sha256;
+
+use secp256k1_zkp::{schnorr::Signature, All, Keypair, Message, Scalar, Secp256k1, UpstreamError};
 
 use crate::{
     data_models::{oracle_msgs::Event, Outcome, OUTCOME_ONE, OUTCOME_ZERO},
