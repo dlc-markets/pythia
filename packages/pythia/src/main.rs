@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use tokio::select;
 
+mod data_models;
+
 mod api;
 mod config;
 mod error;
@@ -16,7 +18,13 @@ mod oracle;
 mod pricefeeds;
 mod schedule_context;
 
-use config::{cli::PythiaArgs, AssetPair, AssetPairInfo};
+#[cfg(test)]
+mod test {
+    pub use crate::api::test as api;
+    pub use crate::schedule_context::test as schedule_context;
+}
+
+use config::{cli::PythiaArgs, AssetPairInfo};
 use error::PythiaError;
 use oracle::{postgres::DBconnection, Oracle};
 

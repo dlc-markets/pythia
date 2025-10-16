@@ -1,9 +1,8 @@
 use super::{error::PriceFeedError, PriceFeed, Result};
-use crate::AssetPair;
-use async_trait::async_trait;
+use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
+use awc::Client;
 use chrono::{DateTime, Utc};
 use log::debug;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -16,30 +15,39 @@ struct Response {
     result: HashMap<String, Value>,
 }
 
-#[async_trait]
 impl PriceFeed for Kraken {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "XXBTZUSD",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
+        let asset_pair_translation = match asset_pair {
+            AssetPair::BtcUsd => "XXBTZUSD",
+        };
         let start_time = instant.timestamp();
+
+        #[derive(serde::Serialize)]
+        struct KrakenQueryParams {
+            pair: &'static str,
+            since: i64,
+        }
+
         debug!("sending kraken http request");
         let res: Response = client
             .get("https://api.kraken.com/0/public/OHLC")
-            .query(&[
-                ("pair", asset_pair_translation),
-                ("since", &start_time.to_string()),
-            ])
+            .query(&KrakenQueryParams {
+                pair: asset_pair_translation,
+                since: start_time,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
-        debug!("received response: {:#?}", res);
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
+        debug!("received response: {res:#?}");
 
         if !res.error.is_empty() {
             return Err(PriceFeedError::Server(format!(
@@ -48,12 +56,14 @@ impl PriceFeed for Kraken {
             )));
         }
 
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
+
         let res = res
             .result
             .get(asset_pair_translation)
             .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
 
-        Ok(res[0][1]
+        let response = res[0][1]
             .as_str()
             .ok_or(PriceFeedError::Server(format!(
                 "Failed to parse price from kraken: expect a string, got {:#?}",
@@ -62,6 +72,8 @@ impl PriceFeed for Kraken {
             .parse()
             .map_err(|e| {
                 PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
-            })?)
+            })?;
+
+        Ok(vec![(event_id, Some(response))])
     }
 }

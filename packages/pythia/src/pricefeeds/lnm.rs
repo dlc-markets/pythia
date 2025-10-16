@@ -1,10 +1,9 @@
+use crate::data_models::{asset_pair::AssetPair, event_ids::EventId};
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use crate::AssetPair;
-use async_trait::async_trait;
+use awc::Client;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
 use log::debug;
-use reqwest::Client;
 
 pub(super) struct Lnmarkets {}
 
@@ -16,15 +15,12 @@ struct LnmarketsQuote {
     pub index: f64,
 }
 
-#[async_trait]
 impl PriceFeed for Lnmarkets {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "",
-        }
-    }
-
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
+    async fn retrieve_prices(
+        &self,
+        asset_pair: AssetPair,
+        instant: DateTime<Utc>,
+    ) -> Result<Vec<(EventId, Option<f64>)>> {
         let client = Client::new();
 
         // LnMarket is only return price at minute o'clock
@@ -33,23 +29,36 @@ impl PriceFeed for Lnmarkets {
             .expect("1 minute is a reasonable duration")
             .timestamp();
 
+        #[derive(serde::Serialize)]
+        struct LnmarketsQueryParams {
+            to: i64,
+            from: i64,
+            limit: i32,
+        }
+
         debug!("sending LNMarkets http request");
         let res: Vec<LnmarketsQuote> = client
             .get("https://api.Lnmarkets.com/v2/oracle/index")
-            .query(&[
-                ("to", (1_000 * &start_time).to_string().as_ref()),
-                ("from", (1_000 * &start_time).to_string().as_ref()),
-                ("limit", "1"),
-            ])
+            .insert_header(("User-Agent", "Actix-web"))
+            .query(&LnmarketsQueryParams {
+                to: (1_000 * start_time),
+                from: (1_000 * start_time),
+                limit: 1,
+            })
+            .expect("can be serialized")
             .send()
-            .await?
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
             .json()
-            .await?;
-        debug!("received response: {:#?}", res);
+            .await
+            .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
+        debug!("received response: {res:#?}");
 
         if res.is_empty() {
             return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
         }
+
+        let event_id = self.compute_event_ids(asset_pair, instant)[0];
 
         if res[0].time.and_utc().timestamp() != start_time {
             return Err(PriceFeedError::PriceNotAvailable(
@@ -58,6 +67,6 @@ impl PriceFeed for Lnmarkets {
             ));
         }
 
-        Ok(res[0].index)
+        Ok(vec![(event_id, Some(res[0].index))])
     }
 }
