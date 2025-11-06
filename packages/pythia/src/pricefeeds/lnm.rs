@@ -1,10 +1,12 @@
 use crate::data_models::asset_pair::AssetPair;
-use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use async_trait::async_trait;
-use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
-use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};
+use crate::data_models::event_ids::EventIdInfos;
+use crate::pricefeeds::HTTP_CLIENT;
+use crate::pricefeeds::{PriceFeed, Result, error::PriceFeedError};
+use chrono::{Duration, DurationRound, TimeZone, Utc};
+use chrono::{NaiveDateTime, naive::serde::ts_milliseconds};
+
+use futures_buffered::IterExt;
 use log::debug;
-use reqwest::Client;
 
 pub(super) struct Lnmarkets {}
 
@@ -16,48 +18,72 @@ struct LnmarketsQuote {
     pub index: f64,
 }
 
-#[async_trait]
 impl PriceFeed for Lnmarkets {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "",
-        }
-    }
+    async fn retrieve_prices(
+        &self,
+        event_ids_infos: impl IntoIterator<Item = EventIdInfos>,
+    ) -> Result<Vec<(EventIdInfos, Option<f64>)>> {
+        event_ids_infos
+            .into_iter()
+            .map(async |event_id_info| {
+                let EventIdInfos {
+                    asset_pair,
+                    maturation,
+                    ..
+                } = event_id_info;
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
-        let client = Client::new();
+                if !event_id_info.is_spot() || asset_pair != AssetPair::BtcUsd {
+                    return Ok((event_id_info, None));
+                };
 
-        // LnMarket is only return price at minute o'clock
-        let start_time = instant
-            .duration_trunc(Duration::minutes(1))
-            .expect("1 minute is a reasonable duration")
-            .timestamp();
+                // LnMarket is only return price at minute o'clock
+                let start_time = maturation
+                    .duration_trunc(Duration::minutes(1))
+                    .expect("1 minute is a reasonable duration")
+                    .timestamp();
 
-        debug!("sending LNMarkets http request");
-        let res: Vec<LnmarketsQuote> = client
-            .get("https://api.Lnmarkets.com/v2/oracle/index")
-            .query(&[
-                ("to", (1_000 * &start_time).to_string().as_ref()),
-                ("from", (1_000 * &start_time).to_string().as_ref()),
-                ("limit", "1"),
-            ])
-            .send()
-            .await?
-            .json()
-            .await?;
-        debug!("received response: {:#?}", res);
+                #[derive(serde::Serialize)]
+                struct LnmarketsQueryParams {
+                    to: i64,
+                    from: i64,
+                    limit: i32,
+                }
 
-        if res.is_empty() {
-            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
-        }
+                debug!("sending LNMarkets http request");
+                let res: Vec<LnmarketsQuote> = HTTP_CLIENT
+                    .with(|client| {
+                        client
+                            .get("https://api.Lnmarkets.com/v2/oracle/index")
+                            .insert_header(("User-Agent", "Actix-web"))
+                            .query(&LnmarketsQueryParams {
+                                to: (1_000 * start_time),
+                                from: (1_000 * start_time),
+                                limit: 1,
+                            })
+                            .expect("can be serialized")
+                    })
+                    .send()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
+                    .json()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
+                debug!("received response: {res:#?}");
 
-        if res[0].time.and_utc().timestamp() != start_time {
-            return Err(PriceFeedError::PriceNotAvailable(
-                asset_pair,
-                Utc::from_utc_datetime(&Utc, &res[0].time),
-            ));
-        }
+                if res.is_empty() {
+                    return Ok((event_id_info, None));
+                }
 
-        Ok(res[0].index)
+                if res[0].time.and_utc().timestamp() != start_time {
+                    return Err(PriceFeedError::PriceNotAvailable(
+                        asset_pair,
+                        Utc::from_utc_datetime(&Utc, &res[0].time),
+                    ));
+                }
+
+                Ok((event_id_info, Some(res[0].index)))
+            })
+            .try_join_all()
+            .await
     }
 }

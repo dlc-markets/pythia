@@ -1,9 +1,10 @@
 use crate::data_models::asset_pair::AssetPair;
-use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use crate::data_models::event_ids::EventIdInfos;
+use crate::pricefeeds::HTTP_CLIENT;
+use crate::pricefeeds::{PriceFeed, Result, error::PriceFeedError};
+use futures::TryStreamExt as _;
+use futures_buffered::FuturesOrderedBounded;
 use log::debug;
-use reqwest::Client;
 
 pub(super) struct Deribit {}
 
@@ -20,43 +21,64 @@ struct DeribitResponse {
     us_in: u64,
 }
 
-#[async_trait]
 impl PriceFeed for Deribit {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "btc_usd",
-        }
-    }
+    async fn retrieve_prices(
+        &self,
+        event_ids_infos: impl IntoIterator<Item = EventIdInfos>,
+    ) -> Result<Vec<(EventIdInfos, Option<f64>)>> {
+        event_ids_infos
+            .into_iter()
+            .map(async |event_id_info| {
+                let EventIdInfos {
+                    asset_pair,
+                    maturation,
+                    ..
+                } = event_id_info;
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
-        let client = Client::new();
-        let start_time = instant.timestamp();
+                if !event_id_info.is_spot() || asset_pair != AssetPair::BtcUsd {
+                    return Ok((event_id_info, None));
+                };
 
-        let now = Utc::now().timestamp();
-        if now - start_time > 60 {
-            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
-        }
+                let asset_pair_translation = match asset_pair {
+                    AssetPair::BtcUsd => "btc_usd",
+                };
+                let start_time = maturation.timestamp();
+                #[derive(serde::Serialize)]
+                struct DeribitQueryParams {
+                    index_name: &'static str,
+                }
 
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
-        debug!("sending Deribit http request");
-        let res: DeribitResponse = client
-            .get("https://www.deribit.com/api/v2/public/get_index_price")
-            .query(&[("index_name", asset_pair_translation)])
-            .send()
-            .await?
-            .json()
-            .await?;
-        debug!("received response: {:#?}", res);
+                debug!("sending Deribit http request");
+                let res: DeribitResponse = HTTP_CLIENT
+                    .with(|client| {
+                        client
+                            .get("https://www.deribit.com/api/v2/public/get_index_price")
+                            .query(&DeribitQueryParams {
+                                index_name: asset_pair_translation,
+                            })
+                            .expect("can be serialized")
+                    })
+                    .send()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
+                    .json()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
+                debug!("received response: {res:#?}");
 
-        // Deribit does not allow to retrieve past index price
-        // So we check that we are not asking for price more than a minute ago
-        // if we do then we return that price is not available to not attest anything
-        // A fallback pricefeed can be used instead in the future
+                // Deribit does not allow to retrieve past index price
+                // So we check that we are not asking for price more than a minute ago
+                // if we do then we return that price is not available to not attest anything
+                // A fallback pricefeed can be used instead in the future
 
-        if res.us_in / 1_000_000 - start_time as u64 > 60 {
-            return Err(PriceFeedError::PriceNotAvailable(asset_pair, instant));
-        }
+                if res.us_in / 1_000_000 - start_time as u64 > 60 {
+                    return Err(PriceFeedError::PriceNotAvailable(asset_pair, maturation));
+                }
 
-        Ok(res.result.index_price)
+                Ok((event_id_info, Some(res.result.index_price)))
+            })
+            .collect::<FuturesOrderedBounded<_>>()
+            .try_collect()
+            .await
     }
 }

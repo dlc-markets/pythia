@@ -1,13 +1,13 @@
-use actix_web::{web, Error, HttpResponse, Result};
+use actix_web::{Error, HttpResponse, Result, web};
 use chrono::{DateTime, FixedOffset, Utc};
 use hex::ToHex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api::{error::PythiaApiError, AttestationResponse, EventType},
+    api::{AttestationResponse, EventType, error::PythiaApiError},
     config::ConfigResponse,
     data_models::{asset_pair::AssetPair, event_ids::EventIdInfos, oracle_msgs::Announcement},
-    schedule_context::{api_context::ApiContext, OracleContext},
+    schedule_context::{OracleContext, api_context::ApiContext},
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,9 +75,9 @@ pub(super) async fn config<Context: OracleContext>(
         .get_oracle(&asset_pair)
         .expect("We have this asset pair in our data");
     Ok(HttpResponse::Ok().json(ConfigResponse {
-        pricefeed: oracle.asset_pair_info.pricefeed,
+        pricefeed: &oracle.asset_pair_info.pricefeed.to_string(),
         announcement_offset: context.offset_duration,
-        schedule: context.schedule().clone(),
+        schedule: context.schedule(),
     }))
 }
 
@@ -98,19 +98,21 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     };
 
     (!oracle
-        .is_empty()
+        .is_empty(context.db())
         .await
         .map_err(PythiaApiError::OracleFail)?)
     .then_some(())
-    .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
+    .ok_or::<Error>(PythiaApiError::OracleEmpty.into())
+    .inspect_err(|_| println!("oracle is empty"))?;
 
-    let event_id = EventIdInfos::spot_from_pair_and_timestamp(
+    let event_id_infos = EventIdInfos::spot_from_pair_and_timestamp(
         oracle.asset_pair_info.asset_pair,
         timestamp.with_timezone(&Utc),
-    )
-    .as_event_id();
+    );
+
+    let event_id = event_id_infos.as_event_id();
     let (announcement, maybe_attestation) = oracle
-        .oracle_state(event_id)
+        .oracle_state(context.db(), event_id)
         .await
         .map_err(PythiaApiError::OracleFail)?
         .ok_or::<Error>(PythiaApiError::OracleEventNotFoundError(timestamp.to_rfc3339()).into())?;
@@ -123,11 +125,12 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
                 None => {
                     if timestamp < Utc::now() {
                         Ok(oracle
-                            .try_attest_event(event_id)
+                            .try_attest_events(context.db(), &[event_id_infos.as_event_id()])
                             .await
                             .map_err(PythiaApiError::OracleFail)?
+                            .pop()
                             .expect("We checked Announcement exists and the oracle attested successfully so attestation exists now")
-                        )
+                            .expect("Attestation should exist"))
                     } else {
                         Err(actix_web::error::ErrorBadRequest(
                             "Oracle cannot sign a value not yet known, retry after ".to_string()
@@ -148,9 +151,10 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct BatchAnnouncementsRequest {
-    maturities: Vec<DateTime<FixedOffset>>,
+    pub(super) maturities: Vec<DateTime<FixedOffset>>,
 }
 
 // https://github.com/actix/actix-web/issues/2866 explains why we commented this:
@@ -172,7 +176,7 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
 
     if oracle
-        .is_empty()
+        .is_empty(context.db())
         .await
         .map_err(PythiaApiError::OracleFail)?
     {
@@ -197,14 +201,14 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .collect::<Vec<_>>();
 
     (!oracle
-        .is_empty()
+        .is_empty(context.db())
         .await
         .map_err(PythiaApiError::OracleFail)?)
     .then_some(())
     .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
     let announcements = oracle
-        .oracle_many_announcements(events_ids)
+        .oracle_many_announcements(context.db(), &events_ids)
         .await
         .map_err(PythiaApiError::OracleFail)?;
 
@@ -253,7 +257,7 @@ pub(super) async fn force<Context: OracleContext>(
     };
 
     let (announcement, attestation) = oracle
-        .force_new_attest_with_price(timestamp.with_timezone(&Utc), price)
+        .force_new_attest_with_price(context.db(), timestamp.with_timezone(&Utc), price)
         .await
         .map_err(PythiaApiError::OracleFail)?;
 

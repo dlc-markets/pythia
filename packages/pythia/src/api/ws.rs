@@ -1,4 +1,4 @@
-use actix_web::{web, HttpRequest, HttpResponse, Result};
+use actix_web::{HttpRequest, HttpResponse, Result, web};
 use actix_ws::{CloseCode, CloseReason, Message, MessageStream, Session};
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -6,12 +6,13 @@ use serde_json::{from_str, to_string_pretty};
 use std::time::{Duration, Instant};
 use tokio::{select, time};
 
-use super::{error::PythiaApiError, EventNotification, EventType};
+use super::{EventNotification, EventType, error::PythiaApiError};
 use crate::{
+    DBconnection,
     api::{AttestationResponse, EventChannel, GetRequest},
     data_models::{asset_pair::AssetPair, oracle_msgs::Announcement},
-    oracle::{error::OracleError, Oracle},
-    schedule_context::{api_context::ApiContext, OracleContext},
+    oracle::{Oracle, error::OracleError},
+    schedule_context::{OracleContext, api_context::ApiContext},
 };
 
 #[derive(Clone, Serialize, Debug)]
@@ -185,12 +186,14 @@ where
     match params {
         RequestContent::Get(get_request) => {
             let response = match context.get_oracle(&get_request.asset_pair.asset_pair) {
-                Some(oracle) => match future_oracle_state(oracle, get_request).await {
-                    Ok(result) => to_string_pretty(&jsonrpc_event_response(&request, result)),
-                    Err(e) => {
-                        to_string_pretty(&jsonrpc_error_response(&request, Some(e.to_string())))
+                Some(oracle) => {
+                    match future_oracle_state(context.db(), oracle, get_request).await {
+                        Ok(result) => to_string_pretty(&jsonrpc_event_response(&request, result)),
+                        Err(e) => {
+                            to_string_pretty(&jsonrpc_error_response(&request, Some(e.to_string())))
+                        }
                     }
-                },
+                }
                 None => to_string_pretty(&jsonrpc_error_response(&request, None)),
             };
 
@@ -270,11 +273,12 @@ async fn handle_event_notification(
 }
 
 async fn future_oracle_state(
+    db: &DBconnection,
     oracle: &Oracle,
     request: &GetRequest,
 ) -> Result<Option<EventData>, OracleError> {
     oracle
-        .oracle_state(request.event_id)
+        .oracle_state(db, request.event_id)
         .await
         .map(|state| match (&request.asset_pair.ty, state) {
             (EventType::Announcement, Some((announcement, _))) => {

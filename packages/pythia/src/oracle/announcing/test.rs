@@ -1,9 +1,10 @@
 use super::*;
 use crate::{
-    data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
-    oracle::Oracle,
-    pricefeeds::ImplementedPriceFeed,
     AssetPairInfo, SECP,
+    data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
+    db::DBconnection,
+    oracle::{Oracle, ScalarsRecords},
+    pricefeeds::ImplementedPriceFeed,
 };
 use chrono::Duration;
 use secp256k1_zkp::{Keypair, SecretKey};
@@ -12,7 +13,7 @@ use std::str::FromStr;
 type Error = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, Error>;
 
-fn create_test_oracle(db: &DBconnection) -> Result<Oracle> {
+fn create_test_oracle() -> Result<Oracle> {
     // Create a test oracle
     let asset_pair_info = AssetPairInfo {
         pricefeed: ImplementedPriceFeed::Lnmarkets,
@@ -28,11 +29,11 @@ fn create_test_oracle(db: &DBconnection) -> Result<Oracle> {
     let secret_key =
         SecretKey::from_str("d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a")?;
     let keypair = Keypair::from_secret_key(&SECP, &secret_key);
-    let oracle = Oracle::new(asset_pair_info, db.clone(), keypair);
+    let oracle = Oracle::new(asset_pair_info, keypair);
     Ok(oracle)
 }
 
-fn create_test_oracle_with_digits(db: &DBconnection, nb_digit: u16) -> Result<Oracle> {
+fn create_test_oracle_with_digits(nb_digit: u16) -> Result<Oracle> {
     // Create a test oracle
     let asset_pair_info = AssetPairInfo {
         pricefeed: ImplementedPriceFeed::Lnmarkets,
@@ -48,11 +49,13 @@ fn create_test_oracle_with_digits(db: &DBconnection, nb_digit: u16) -> Result<Or
     let secret_key =
         SecretKey::from_str("d0a26c65de0b4b853432c3931ee280f67b9c52de33e1b3aecb04edc1ec40ef4a")?;
     let keypair = Keypair::from_secret_key(&SECP, &secret_key);
-    let oracle = Oracle::new(asset_pair_info.clone(), db.clone(), keypair);
+    let oracle = Oracle::new(asset_pair_info.clone(), keypair);
     Ok(oracle)
 }
 
 mod test_get_non_existing_sorted_maturity {
+    use secp256k1_zkp::schnorr::Signature;
+
     use super::*;
     async fn insert_test_events(db: &DBconnection, maturities: &[DateTime<Utc>]) {
         // Create a dummy signature for announcements
@@ -235,11 +238,14 @@ mod test_insert_many_announcements {
         let db = DBconnection(pool);
 
         // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+        let oracle = create_test_oracle()?;
 
         // Create a test announcement from a secret_key
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -269,9 +275,11 @@ mod test_insert_many_announcements {
                 assert_eq!(secret_nonces.len(), 20);
                 for (i, nonce) in secret_nonces.iter().enumerate() {
                     assert_eq!(
-                        nonce, &event_to_insert.nonces_keypairs[i].secret_bytes(),
+                        nonce,
+                        &event_to_insert.nonces_keypairs[i].secret_bytes(),
                         "Secret nonce at index {} for event id {} doesn't match original announcement",
-                        i, announcement.oracle_event.event_id
+                        i,
+                        announcement.oracle_event.event_id
                     );
                 }
             }
@@ -287,8 +295,8 @@ mod test_insert_many_announcements {
         let db = DBconnection(pool);
 
         // Create some test oracles
-        let oracle20 = create_test_oracle_with_digits(&db, 20)?;
-        let oracle8 = create_test_oracle_with_digits(&db, 8)?;
+        let oracle20 = create_test_oracle_with_digits(20)?;
+        let oracle8 = create_test_oracle_with_digits(8)?;
 
         // Create multiple test announcements
         let now = Utc::now();
@@ -298,8 +306,8 @@ mod test_insert_many_announcements {
             now + Duration::hours(3),
             now + Duration::hours(5),
         ];
-        let events_to_insert20 = oracle20.prepare_events_to_insert(&maturations_20)?;
-        let events_to_insert8 = oracle8.prepare_events_to_insert(&maturations_8)?;
+        let events_to_insert20 = oracle20.prepare_events_to_insert(&maturations_20);
+        let events_to_insert8 = oracle8.prepare_events_to_insert(&maturations_8);
 
         // Get number of rows before inserting announcements (oracle with 20 digits)
         let mut rows_at_start =
@@ -328,14 +336,14 @@ mod test_insert_many_announcements {
 
         // Check events
         let event1 = db
-            .get_event(events_to_insert20[0].event_id)
+            .get_event(events_to_insert20[0].event_id_infos.as_event_id())
             .await?
             .expect("event should exist");
         assert_eq!(event1.digits, 20);
         assert_eq!(event1.nonces_public.len(), 20);
 
         let event2 = db
-            .get_event(events_to_insert8[0].event_id)
+            .get_event(events_to_insert8[0].event_id_infos.as_event_id())
             .await?
             .expect("event should exist");
         assert_eq!(event2.digits, 8);
@@ -350,11 +358,14 @@ mod test_insert_many_announcements {
         let db = DBconnection(pool);
 
         // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+        let oracle = create_test_oracle()?;
 
         // Create a test announcement from a secret_key
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement twice
@@ -364,11 +375,8 @@ mod test_insert_many_announcements {
             .await?;
 
         // Verify the announcement was inserted only once
-        let events = db
-            .get_many_events([announcement.oracle_event.event_id].to_vec())
-            .await?
-            .unwrap_or_default();
-        assert_eq!(events.len(), 1);
+        let events = db.get_event(announcement.oracle_event.event_id).await?;
+        assert!(events.is_some());
 
         Ok(())
     }
@@ -380,7 +388,7 @@ mod test_insert_many_announcements {
 
         // Create a test oracle with minimal digits to allow more announcements
         let nb_digits = 2; // Using fewer digits to create more announcements
-        let oracle = create_test_oracle_with_digits(&db, nb_digits)?;
+        let oracle = create_test_oracle_with_digits(nb_digits)?;
 
         // Create many announcements to potentially hit the parameter limit
         // PostgreSQL has a default limit of 65535 parameters per query
@@ -399,7 +407,7 @@ mod test_insert_many_announcements {
         }
 
         // Prepare all announcements
-        let events_to_insert = oracle.prepare_events_to_insert(&maturities)?;
+        let events_to_insert = oracle.prepare_events_to_insert(&maturities);
 
         // Count rows before insertion to calculate affected rows later
         let rows_before =
@@ -426,7 +434,7 @@ mod test_insert_many_announcements {
         // Verify we can retrieve all announcements
         let sample_indexes = [0, NUM_ANNOUNCEMENTS / 2, NUM_ANNOUNCEMENTS - 1];
         for &idx in &sample_indexes {
-            let event_id = events_to_insert[idx].event_id;
+            let event_id = events_to_insert[idx].event_id_infos.as_event_id();
             let event = db.get_event(event_id).await?.expect("event should exist");
 
             // Check event properties
@@ -441,7 +449,10 @@ mod test_insert_many_announcements {
             for (i, nonce) in event.nonces_public.iter().enumerate() {
                 assert_eq!(
                     nonce,
-                    &events_to_insert[idx].nonces_keypairs[i].x_only_public_key().0.serialize(),
+                    &events_to_insert[idx].nonces_keypairs[i]
+                        .x_only_public_key()
+                        .0
+                        .serialize(),
                     "Public nonce at index {i} for event id {idx} doesn't match original announcement"
                 );
             }
@@ -472,13 +483,10 @@ mod test_insert_many_announcements {
         // Check batch retrieval works with a subset of events
         let batch_event_ids = sample_indexes
             .iter()
-            .map(|&idx| events_to_insert[idx].event_id)
+            .map(|&idx| events_to_insert[idx].event_id_infos.as_event_id())
             .collect::<Vec<_>>();
 
-        let batch_events = db
-            .get_many_events(batch_event_ids)
-            .await?
-            .expect("batch events should exist");
+        let batch_events = db.get_events_with(&batch_event_ids[..]).await?;
 
         assert_eq!(batch_events.len(), sample_indexes.len());
 
@@ -491,31 +499,34 @@ mod test_insert_many_announcements {
         // Create a DB connection
         let db = DBconnection(pool);
         // Create test oracles with different digits to make order verification clearer
-        let oracle_20 =
-            create_test_oracle_with_digits(&db, 20).expect("test oracle should be created");
+        let oracle_20 = create_test_oracle_with_digits(20).expect("test oracle should be created");
 
-        let oracle_8 =
-            create_test_oracle_with_digits(&db, 8).expect("test oracle should be created");
+        let oracle_8 = create_test_oracle_with_digits(8).expect("test oracle should be created");
 
         // Create announcements with different maturity times and digit counts
         let now = Utc::now();
         let mut rng = thread_rng();
         let events_to_insert = vec![
-            oracle_20
-                .prepare_event_to_insert(now + Duration::minutes(3), &mut rng)
-                .expect("test announcement 1 should be created"),
-            oracle_8
-                .prepare_event_to_insert(now + Duration::minutes(3), &mut rng)
-                .expect("test announcement 2 should be created"),
-            oracle_20
-                .prepare_event_to_insert(now, &mut rng)
-                .expect("test announcement 3 should be created"),
-            oracle_20
-                .prepare_event_to_insert(now + Duration::minutes(1), &mut rng)
-                .expect("test announcement 4 should be created"),
-            oracle_8
-                .prepare_event_to_insert(now + Duration::minutes(1), &mut rng)
-                .expect("test announcement 5 should be created"),
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now + Duration::minutes(3), &mut rng);
+                x.next().expect("test announcement 1 should be created")
+            },
+            {
+                let mut x = oracle_8.prepare_event_to_insert(now + Duration::minutes(3), &mut rng);
+                x.next().expect("test announcement 2 should be created")
+            },
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now, &mut rng);
+                x.next().expect("test announcement 3 should be created")
+            },
+            {
+                let mut x = oracle_20.prepare_event_to_insert(now + Duration::minutes(1), &mut rng);
+                x.next().expect("test announcement 4 should be created")
+            },
+            {
+                let mut x = oracle_8.prepare_event_to_insert(now + Duration::minutes(1), &mut rng);
+                x.next().expect("test announcement 5 should be created")
+            },
         ];
 
         // Insert all announcements at once, this should panic
@@ -535,11 +546,10 @@ mod test_get_many_events {
         let db = DBconnection(pool);
 
         // Test with empty input
-        let result = db.get_many_events(vec![]).await?;
+        let result = db.get_events_with([].as_slice()).await?;
 
-        // Should return Some with empty vector
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().len(), 0);
+        // Should return empty vector
+        assert!(result.len() == 0);
 
         Ok(())
     }
@@ -558,10 +568,10 @@ mod test_get_many_events {
                 .parse()
                 .expect("Len is 17, same as EventId"),
         ];
-        let result = db.get_many_events(non_existent_ids).await?;
+        let result = db.get_events_with(&non_existent_ids[..]).await?;
 
-        // Should return None since the events don't exist
-        assert!(result.is_none());
+        // Should return empty vector since the events don't exist
+        assert!(result.len() == 0);
 
         Ok(())
     }
@@ -572,11 +582,14 @@ mod test_get_many_events {
         let db = DBconnection(pool);
 
         // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+        let oracle = create_test_oracle()?;
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -587,17 +600,13 @@ mod test_get_many_events {
         let event_id = announcement.oracle_event.event_id;
 
         // Test get_many_events with a single event ID
-        let result = db.get_many_events(vec![event_id]).await?;
+        let result = db.get_event(event_id).await?;
 
         // Should return Some with one event
-        assert!(result.is_some());
-        let events = result.unwrap();
-        assert_eq!(events.len(), 1);
-
         // Verify event properties
-        let event = &events[0];
-        assert_eq!(event.0.digits, 20);
-        assert_eq!(event.0.nonces_public.len(), 20);
+        let event = result.unwrap();
+        assert_eq!(event.digits, 20);
+        assert_eq!(event.nonces_public.len(), 20);
 
         Ok(())
     }
@@ -608,16 +617,22 @@ mod test_get_many_events {
         let db = DBconnection(pool);
 
         // Create test oracles with different digits
-        let oracle20 = create_test_oracle_with_digits(&db, 20)?;
-        let oracle8 = create_test_oracle_with_digits(&db, 8)?;
+        let oracle20 = create_test_oracle_with_digits(20)?;
+        let oracle8 = create_test_oracle_with_digits(8)?;
 
         // Create announcements with different maturity times
         let now = Utc::now();
         let maturity1 = now + Duration::hours(1);
         let maturity2 = now + Duration::hours(2);
 
-        let event_to_insert1 = oracle20.prepare_event_to_insert(maturity1, &mut thread_rng())?;
-        let event_to_insert2 = oracle8.prepare_event_to_insert(maturity2, &mut thread_rng())?;
+        let event_to_insert1 = oracle20
+            .prepare_event_to_insert(maturity1, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
+        let event_to_insert2 = oracle8
+            .prepare_event_to_insert(maturity2, &mut thread_rng())
+            .next()
+            .expect("test announcement 2 should be created");
         let announcement1 = event_to_insert1.as_announcement(oracle20.get_public_key());
         let announcement2 = event_to_insert2.as_announcement(oracle8.get_public_key());
 
@@ -630,26 +645,27 @@ mod test_get_many_events {
             .await?;
 
         // Test get_many_events with both event IDs
-        let result = db.get_many_events(vec![event_id1, event_id2]).await?;
+        let result = db
+            .get_events_with(&[event_id1, event_id2][..])
+            .await?
+            .collect::<Vec<_>>();
 
-        // Should return Some with two events
-        assert!(result.is_some());
-        let events = result.unwrap();
-        assert_eq!(events.len(), 2);
+        // Should return two events
+        assert_eq!(result.len(), 2);
 
         // Since events are ordered by ID, we need to find which is which by digits count
-        let event20 = events
+        let event20 = result
             .iter()
-            .find(|e| e.0.digits == 20)
+            .find(|e| e.digits == 20)
             .expect("20-digit event not found");
-        let event8 = events
+        let event8 = result
             .iter()
-            .find(|e| e.0.digits == 8)
+            .find(|e| e.digits == 8)
             .expect("8-digit event not found");
 
         // Verify event properties
-        assert_eq!(event20.0.nonces_public.len(), 20);
-        assert_eq!(event8.0.nonces_public.len(), 8);
+        assert_eq!(event20.nonces_public.len(), 20);
+        assert_eq!(event8.nonces_public.len(), 8);
 
         Ok(())
     }
@@ -660,11 +676,14 @@ mod test_get_many_events {
         let db = DBconnection(pool);
 
         // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+        let oracle = create_test_oracle()?;
 
         // Create a test announcement
         let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
+        let event_to_insert = oracle
+            .prepare_event_to_insert(now, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
         let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
         // Insert the announcement
@@ -673,103 +692,106 @@ mod test_get_many_events {
 
         // Get the event ID
         let event_id = announcement.oracle_event.event_id;
+        let events = [event_id, event_id, event_id];
 
         // Test get_many_events with duplicated event IDs
-        let result = db
-            .get_many_events(vec![event_id, event_id, event_id])
-            .await?;
+        let result = db.get_events_with(&events[..]).await?;
 
-        // Should return Some with one event (duplicates should be removed)
-        assert!(result.is_some());
-        let events = result.unwrap();
-        assert_eq!(events.len(), 1);
+        // Should return one event (duplicates should be removed)
+        assert_eq!(result.len(), 1);
 
         Ok(())
     }
 
     #[sqlx::test]
     async fn test_get_many_events_mixed_existence(pool: PgPool) -> Result<()> {
-        // Create a DB connection
-        let db = DBconnection(pool);
+        crate::run_in_local_set(async move {
+            // Create a DB connection
+            let db = DBconnection(pool);
 
-        // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+            // Create a test oracle
+            let oracle = create_test_oracle()?;
 
-        // Create a test announcement
-        let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
-        let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+            // Create a test announcement
+            let now = Utc::now();
+            let event_to_insert = oracle
+                .prepare_event_to_insert(now, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
-        // Insert the announcement
-        db.insert_many_announcements(core::slice::from_ref(&event_to_insert))
-            .await?;
+            // Insert the announcement
+            db.insert_many_announcements(core::slice::from_ref(&event_to_insert))
+                .await?;
 
-        // Get the event ID
-        let event_id = announcement.oracle_event.event_id;
+            // Get the event ID
+            let event_id = announcement.oracle_event.event_id;
 
-        // Test get_many_events with a mix of existing and non-existing event IDs
-        let result = db
-            .get_many_events(vec![
+            let events = [
                 event_id,
                 "btc_usd1489756945".parse().expect("but it is 17 in length"),
-            ])
-            .await?;
+            ];
 
-        // Should return None since not all events exist
-        assert!(result.is_none());
+            // Test get_many_events with a mix of existing and non-existing event IDs
+            let result = db.get_events_with(&events[..]).await?;
 
-        Ok(())
+            // Should return only one event, the other does not exist
+            assert!(result.len() == 1);
+
+            Ok(())
+        })
+        .await
     }
 
     #[sqlx::test]
     async fn test_get_many_events_after_attestation(pool: PgPool) -> Result<()> {
-        // Create a DB connection
-        let db = DBconnection(pool);
+        crate::run_in_local_set(async move {
+            // Create a DB connection
+            let db = DBconnection(pool);
 
-        // Create a test oracle
-        let oracle = create_test_oracle(&db)?;
+            // Create a test oracle
+            let oracle = create_test_oracle()?;
 
-        // Create a test announcement
-        let now = Utc::now();
-        let event_to_insert = oracle.prepare_event_to_insert(now, &mut thread_rng())?;
-        let announcement = event_to_insert.as_announcement(oracle.get_public_key());
-        let event_id = announcement.oracle_event.event_id;
+            // Create a test announcement
+            let now = Utc::now();
+            let event_to_insert = oracle
+                .prepare_event_to_insert(now, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+            let event_id = announcement.oracle_event.event_id;
 
-        // Insert the announcement
-        db.insert_many_announcements(core::slice::from_ref(&event_to_insert))
-            .await?;
+            // Insert the announcement
+            db.insert_many_announcements(core::slice::from_ref(&event_to_insert))
+                .await?;
 
-        // Create attestation and update to attestation
-        let outcome = 42.0;
-        let attestation = oracle
-            .try_attest_event(event_id)
-            .await?
-            .expect("Should be able to attest");
-        db.update_to_attestation(event_id, &attestation, outcome)
-            .await?;
+            // Attest one event
+            assert_eq!(
+                1,
+                oracle
+                    .try_attest_events(&db, &[event_to_insert.event_id_infos.as_event_id()])
+                    .await?
+                    .len()
+            );
 
-        // Test get_many_events after attestation
-        let result = db.get_many_events(vec![event_id]).await?;
+            // Test get_many_events after attestation
+            let result = db.get_event(event_id).await?;
 
-        // Should return Some with one event
-        assert!(result.is_some());
-        let events = result.unwrap();
-        assert_eq!(events.len(), 1);
+            // Should return Some with one event
+            // Verify event returned is an attestation
+            let event = result.unwrap();
+            assert_eq!(event.digits, 20);
 
-        // Verify event properties
-        let event = &events[0];
-        assert_eq!(event.0.digits, 20);
-
-        // When using get_many_events, the scalars_records are initialized as DigitsSkNonce with empty vector
-        // even though the event has been attested, because this function doesn't fetch outcome/signatures
-        match &event.0.scalars_records {
-            ScalarsRecords::DigitsSkNonce(secret_nonces) => {
-                assert!(secret_nonces.is_empty());
+            match &event.scalars_records {
+                ScalarsRecords::DigitsAttestations(_, sig_scalar) => {
+                    assert_eq!(sig_scalar.len(), 20);
+                }
+                _ => panic!("Expected DigitsAttestations for event that has been attested"),
             }
-            _ => panic!("Expected DigitsSkNonce with empty vector"),
-        }
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     #[sqlx::test]
@@ -778,7 +800,7 @@ mod test_get_many_events {
         let db = DBconnection(pool);
 
         // Create a test oracle with few digits to reduce memory usage
-        let oracle = create_test_oracle_with_digits(&db, 1)?;
+        let oracle = create_test_oracle_with_digits(1)?;
 
         // Create a moderate batch of announcements (50 should be enough to test batch processing)
         const BATCH_SIZE: usize = 50;
@@ -789,8 +811,11 @@ mod test_get_many_events {
 
         for i in 0..BATCH_SIZE {
             let maturity = now + Duration::minutes(i as i64);
-            let event_to_insert = oracle.prepare_event_to_insert(maturity, &mut thread_rng())?;
-            event_ids.push(event_to_insert.event_id);
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturity, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            event_ids.push(event_to_insert.event_id_infos.as_event_id());
             events_to_insert.push(event_to_insert);
         }
 
@@ -798,12 +823,262 @@ mod test_get_many_events {
         db.insert_many_announcements(&events_to_insert).await?;
 
         // Test get_many_events with all event IDs
-        let result = db.get_many_events(event_ids).await?;
+        let result = db.get_events_with(&event_ids[..]).await?;
 
-        // Should return Some with BATCH_SIZE events
-        assert!(result.is_some());
-        let events = result.unwrap();
-        assert_eq!(events.len(), BATCH_SIZE);
+        // Should return BATCH_SIZE events
+        assert_eq!(result.len(), BATCH_SIZE);
+
+        Ok(())
+    }
+}
+
+mod test_prepare_announcement {
+    use crate::data_models::event_ids::EventIdInfos;
+
+    use super::*;
+    use secp256k1_zkp::{
+        Message, XOnlyPublicKey,
+        hashes::{Hash, sha256},
+        rand::thread_rng,
+    };
+
+    #[test]
+    fn test_prepare_announcement_basic() -> Result<()> {
+        // Create a test oracle
+        let oracle = create_test_oracle()?;
+
+        // Create a maturation time
+        let maturation = Utc::now() + Duration::hours(1);
+
+        // Prepare announcement
+        let event_to_insert = oracle
+            .prepare_event_to_insert(maturation, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
+        let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+
+        // Verify event ID format (asset_pair + timestamp)
+        let expected_id = EventIdInfos::spot_from_pair_and_timestamp(
+            oracle.asset_pair_info.asset_pair,
+            maturation,
+        )
+        .as_event_id();
+        assert_eq!(announcement.oracle_event.event_id, expected_id);
+
+        // Verify maturation time
+        assert_eq!(
+            announcement.oracle_event.maturity as i64,
+            maturation.timestamp()
+        );
+
+        // Verify event descriptor
+        let desc = &announcement.oracle_event.event_descriptor;
+
+        assert_eq!(
+            desc.nb_digits,
+            oracle.asset_pair_info.event_descriptor.nb_digits
+        );
+        assert_eq!(
+            desc.precision,
+            oracle.asset_pair_info.event_descriptor.precision
+        );
+        assert_eq!(desc.base, oracle.asset_pair_info.event_descriptor.base);
+        assert_eq!(
+            desc.is_signed,
+            oracle.asset_pair_info.event_descriptor.is_signed
+        );
+
+        // Verify oracle public key
+        assert_eq!(announcement.oracle_public_key, oracle.get_public_key());
+
+        // Verify nonce count
+        assert_eq!(
+            announcement.oracle_event.oracle_nonces.len(),
+            oracle.asset_pair_info.event_descriptor.nb_digits as usize
+        );
+
+        // Verify secret nonces length
+        assert_eq!(
+            event_to_insert.nonces_keypairs.len(),
+            oracle.asset_pair_info.event_descriptor.nb_digits as usize
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_announcement_nonce_relationships() -> Result<()> {
+        // Create a test oracle
+        let oracle = create_test_oracle()?;
+
+        // Create a maturation time
+        let maturation = Utc::now() + Duration::hours(1);
+
+        // Prepare announcement
+        let event_to_insert = oracle
+            .prepare_event_to_insert(maturation, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
+
+        let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+
+        // Verify that public nonces match the secret nonces
+        for (i, oracle_r_kp) in event_to_insert.nonces_keypairs.iter().enumerate() {
+            let expected_nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0.serialize();
+            assert_eq!(
+                announcement.oracle_event.oracle_nonces[i], expected_nonce,
+                "Public nonce at index {i} doesn't match derived nonce from secret"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_announcement_different_digit_counts() -> Result<()> {
+        // Test with different digit counts
+        let digit_counts = [1, 5, 10, 20, 32];
+        let maturation = Utc::now() + Duration::hours(1);
+        let mut rng = thread_rng();
+
+        for &digits in &digit_counts {
+            let oracle = create_test_oracle_with_digits(digits)?;
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut rng)
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+
+            // Verify the nonce counts match the digit count
+            assert_eq!(
+                announcement.oracle_event.oracle_nonces.len(),
+                digits as usize,
+                "Nonce count should match digit count of {digits}"
+            );
+            assert_eq!(
+                event_to_insert.nonces_keypairs.len(),
+                digits as usize,
+                "Secret nonce count should match digit count of {digits}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_announcement_variety_of_maturation_times() -> Result<()> {
+        // Create a test oracle
+        let oracle = create_test_oracle()?;
+
+        // Test with different maturation times
+        let now = Utc::now();
+        let maturation_times = [
+            now,
+            now + Duration::hours(1),
+            now + Duration::days(1),
+            now + Duration::days(30),
+            now + Duration::days(365),
+        ];
+
+        for &maturation in &maturation_times {
+            let event_to_insert = oracle
+                .prepare_event_to_insert(maturation, &mut thread_rng())
+                .next()
+                .expect("test announcement 1 should be created");
+            let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+
+            // Verify the maturation time is set correctly
+            assert_eq!(
+                announcement.oracle_event.maturity as i64,
+                maturation.timestamp(),
+                "Maturation epoch should match timestamp {maturation}"
+            );
+
+            // Verify event ID includes the correct timestamp
+            let expected_id = EventIdInfos::spot_from_pair_and_timestamp(
+                oracle.asset_pair_info.asset_pair,
+                maturation,
+            )
+            .as_event_id();
+            assert_eq!(
+                announcement.oracle_event.event_id,
+                expected_id,
+                "Event ID should include timestamp {}",
+                maturation.timestamp()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_announcement_signature_verification() -> Result<()> {
+        // Create a test oracle
+        let oracle = create_test_oracle()?;
+
+        // Create a maturation time
+        let maturation = Utc::now() + Duration::hours(1);
+
+        // Prepare announcement
+        let event_to_insert = oracle
+            .prepare_event_to_insert(maturation, &mut thread_rng())
+            .next()
+            .expect("test announcement 1 should be created");
+        let announcement = event_to_insert.as_announcement(oracle.get_public_key());
+
+        // Verify the signature
+        let message = {
+            let mut hash_engine = sha256::HashEngine::default();
+            announcement
+                .oracle_event
+                .write_to(&mut hash_engine)
+                .expect("write to hash cannot fail");
+            Message::from_digest(sha256::Hash::from_engine(hash_engine).to_byte_array())
+        };
+
+        // The signature should verify with the oracle's public key
+        SECP.verify_schnorr(
+            &announcement.announcement_signature,
+            &message,
+            &announcement.oracle_public_key,
+        )
+        .expect("Signature verification should succeed");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_announcement_deterministic_event_id() -> Result<()> {
+        // Create a test oracle
+        let oracle = create_test_oracle()?;
+
+        // Create a maturation time
+        let maturation = Utc::now() + Duration::hours(1);
+
+        // Prepare two announcements with the same parameters
+        let mut rng = thread_rng();
+        let event_to_insert1 = oracle
+            .prepare_event_to_insert(maturation, &mut rng)
+            .next()
+            .expect("test announcement 1 should be created");
+        let event_to_insert2 = oracle
+            .prepare_event_to_insert(maturation, &mut rng)
+            .next()
+            .expect("test announcement 2 should be created");
+        let announcement1 = event_to_insert1.as_announcement(oracle.get_public_key());
+        let announcement2 = event_to_insert2.as_announcement(oracle.get_public_key());
+
+        // The event IDs should be identical
+        assert_eq!(
+            announcement1.oracle_event.event_id, announcement2.oracle_event.event_id,
+            "Event IDs should be deterministic for the same maturation time"
+        );
+
+        // But the nonces should be different (random)
+        assert_ne!(
+            announcement1.oracle_event.oracle_nonces, announcement2.oracle_event.oracle_nonces,
+            "Nonces should be random between announcements"
+        );
 
         Ok(())
     }

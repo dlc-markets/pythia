@@ -4,12 +4,12 @@ use std::{
     str::FromStr,
 };
 
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 
 #[cfg(test)]
 use strum::EnumIter;
 
-use crate::data_models::{error::ParsingError, ArrayString};
+use crate::data_models::{ArrayString, error::ParsingError};
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[cfg_attr(test, derive(EnumIter))]

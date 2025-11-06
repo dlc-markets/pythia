@@ -1,13 +1,13 @@
 use actix_web::{
-    error::{Error, ErrorInternalServerError},
     FromRequest,
+    error::{Error, ErrorInternalServerError},
 };
 use chrono::Duration;
 use cron::Schedule;
-use futures::future::{err, ok, Ready};
+use futures::future::{Ready, err, ok};
 use tokio::sync::broadcast::Sender;
 
-use crate::{api::EventNotification, oracle::Oracle};
+use crate::{DBconnection, api::EventNotification, oracle::Oracle};
 
 use super::{AssetPair, OracleContext};
 
@@ -44,6 +44,11 @@ impl<Context: OracleContext> ApiContext<Context> {
     /// Get the schedule
     pub(crate) fn schedule(&self) -> &Schedule {
         self.oracle_context.schedule()
+    }
+
+    /// Get the database connection
+    pub(crate) fn db(&self) -> &DBconnection {
+        self.oracle_context.db()
     }
 }
 

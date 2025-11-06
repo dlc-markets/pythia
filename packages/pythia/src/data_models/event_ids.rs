@@ -1,14 +1,14 @@
 use std::{error::Error, fmt, ops::Deref, str::FromStr};
 
 use chrono::{DateTime, Utc};
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use sqlx::{
+    Database, Postgres,
     encode::IsNull,
     postgres::{PgHasArrayType, PgTypeInfo},
-    Database, Postgres,
 };
 
-use crate::data_models::{asset_pair::AssetPair, error::ParsingError, ArrayString};
+use crate::data_models::{ArrayString, asset_pair::AssetPair, error::ParsingError};
 
 use sqlx::prelude::*;
 
@@ -79,6 +79,10 @@ impl EventIdInfos {
             index_type: IndexType::Spot,
         }
     }
+
+    pub fn is_spot(&self) -> bool {
+        self.index_type == IndexType::Spot
+    }
 }
 
 impl sqlx::Type<Postgres> for EventId {
@@ -100,6 +104,14 @@ impl Encode<'_, Postgres> for EventId {
     }
 }
 
+impl<'r> Decode<'r, Postgres> for EventId {
+    fn decode(
+        value: <Postgres as Database>::ValueRef<'r>,
+    ) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        Ok(<&str as Decode<'r, Postgres>>::decode(value)?.parse()?)
+    }
+}
+
 impl PgHasArrayType for EventId {
     fn array_type_info() -> sqlx::postgres::PgTypeInfo {
         <&str as PgHasArrayType>::array_type_info()
@@ -115,6 +127,12 @@ impl AsRef<str> for EventId {
 impl fmt::Display for EventId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_ref())
+    }
+}
+
+impl fmt::Display for EventIdInfos {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        EventId::fmt(&self.as_event_id(), f)
     }
 }
 

@@ -1,8 +1,8 @@
 use hex::ToHex;
-use secp256k1_zkp::{schnorr::Signature, XOnlyPublicKey};
-use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
+use secp256k1_zkp::{XOnlyPublicKey, schnorr::Signature};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeSeq};
 
-use crate::data_models::{asset_pair::Unit, event_ids::EventId, ArrayString, Outcome};
+use crate::data_models::{ArrayString, Outcome, asset_pair::Unit, event_ids::EventId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +93,7 @@ pub struct Attestation {
 /// module to replicate the event serialisation from rust-dlc:
 /// <https://github.com/p2pderivatives/rust-dlc/blob/v0.7.1/dlc-messages/src/oracle_msgs.rs#L246>
 mod event_serialisation {
-    use std::io::{sink, Write};
+    use std::io::{Write, sink};
 
     /// Replicates the BigSize struct from rust-lightning serialisation:
     /// <https://github.com/rust-bitcoin/rust-lightning/blob/v0.0.101/lightning/src/util/ser.rs#L302>
@@ -184,8 +184,8 @@ mod event_serialisation {
         use secp256k1_zkp::rand::thread_rng;
 
         use crate::{
-            data_models::{asset_pair::AssetPair, event_ids::EventIdInfos},
             SECP,
+            data_models::{asset_pair::AssetPair, event_ids::EventIdInfos},
         };
 
         #[test]
