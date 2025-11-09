@@ -10,9 +10,12 @@ use tokio::{select, time};
 use super::{EventNotification, EventType, error::PythiaApiError};
 use crate::{
     DBconnection,
-    api::{AttestationResponse, EventChannel, GetRequest},
+    api::AttestationResponse,
     data_models::{
-        asset_pair::AssetPair, event_ids::EventId, expiries::Expiry, oracle_msgs::Announcement,
+        asset_pair::AssetPair,
+        event_ids::{EventId, EventIdInfos},
+        expiries::Expiry,
+        oracle_msgs::Announcement,
     },
     oracle::{Oracle, error::OracleError},
     schedule_context::{OracleContext, api_context::ApiContext},
@@ -367,7 +370,10 @@ async fn handle_event_notification(
             .text(to_string_pretty(&EventBroadcast::from(event)).expect("serializable response"))
             .await?;
 
-        if let EventId::Delivery(_) = event_id {
+        if let Ok(event_id_infos) = EventIdInfos::try_from(event_id)
+            && let Some(channel_expiry) = expiry
+            && DateTime::<Utc>::from(channel_expiry) == event_id_infos.maturation
+        {
             subscribed_to.retain(|c| c != &channel);
 
             let type_str = match channel.ty {

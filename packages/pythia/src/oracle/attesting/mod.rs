@@ -38,6 +38,14 @@ impl Oracle {
     ) -> Result<Vec<Result<Attestation>>> {
         let events = db.get_events_with(events_id).await?;
 
+        assert!(
+            events
+                .iter()
+                .all(|e| e.event_id_infos.asset_pair == self.asset_pair_info.asset_pair),
+            "Some events are not related to the oracle that try to attest them: all asset pair must be {}",
+            self.asset_pair_info.asset_pair
+        );
+
         self.attest_from_postgres_events(db, events).await
     }
 
@@ -57,7 +65,7 @@ impl Oracle {
     async fn attest_from_postgres_events(
         &self,
         db: &DBconnection,
-        postgres_events: impl ExactSizeIterator<Item = EventFromPostgres>,
+        postgres_events: Vec<EventFromPostgres>,
     ) -> Result<Vec<Result<Attestation>>> {
         let mut attestations_already_available = Vec::with_capacity(postgres_events.len());
 

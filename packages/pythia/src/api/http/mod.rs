@@ -114,7 +114,7 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     let event_ids = oracle
         .asset_pair_info
         .pricefeed
-        .events_at_date(asset_pair, timestamp.with_timezone(&Utc));
+        .to_schedule_events(asset_pair, timestamp.with_timezone(&Utc));
 
     if event_ids.is_empty() {
         return Err(PythiaApiError::OracleEventNotFoundError(format!("at {timestamp}")).into());
@@ -123,7 +123,13 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     match event_type {
         EventType::Announcement => {
             let mut announcements = oracle
-                .oracle_many_announcements(event_ids)
+                .oracle_many_announcements(
+                    context.db(),
+                    &event_ids
+                        .into_iter()
+                        .map(|e| e.as_event_id())
+                        .collect::<Vec<_>>(),
+                )
                 .await
                 .map_err(PythiaApiError::OracleFail)?;
 
@@ -137,7 +143,7 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
                 .into_iter()
                 .map(async |id| {
                     Ok(oracle
-                        .oracle_state(id)
+                        .oracle_state(context.db(), id.as_event_id())
                         .await
                         .map_err(PythiaApiError::OracleFail)?
                         .ok_or(PythiaApiError::OracleEventNotFoundError(
@@ -244,7 +250,10 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .0
         .maturities
         .iter()
-        .map(|ts| EventId::spot_from_pair_and_timestamp(asset_pair, ts.with_timezone(&Utc)))
+        .map(|ts| {
+            EventIdInfos::spot_from_pair_and_timestamp(asset_pair, ts.with_timezone(&Utc))
+                .as_event_id()
+        })
         .collect::<Vec<_>>();
 
     (!oracle
@@ -362,13 +371,12 @@ pub(super) async fn oracle_batch_forwards_service<Context: OracleContext>(
     let earliest_event_ids = oracle
         .asset_pair_info
         .pricefeed
-        .events_at_date(asset_pair, earliest_date.with_timezone(&Utc));
+        .to_schedule_events(asset_pair, earliest_date.with_timezone(&Utc));
 
-    if !earliest_event_ids.into_iter().any(|id| {
-        Expiry::try_from(id)
-            .map(|e| e == expiry)
-            .unwrap_or_default()
-    }) {
+    if !earliest_event_ids
+        .into_iter()
+        .any(|id| id.as_expiry().map(|e| e == expiry).unwrap_or_default())
+    {
         return Err(
             PythiaApiError::OracleEventNotFoundError(format!("with expiry {expiry}")).into(),
         );
@@ -393,19 +401,20 @@ pub(super) async fn oracle_batch_forwards_service<Context: OracleContext>(
         .iter()
         .map(|maturity| {
             if expiry_as_datetime == maturity.with_timezone(&Utc) {
-                EventId::delivery_of_expiry_with_pair(asset_pair, expiry)
+                EventIdInfos::delivery_of_expiry_with_pair(asset_pair, expiry).as_event_id()
             } else {
-                EventId::forward_of_expiry_with_pair_at_timestamp(
+                EventIdInfos::forward_of_expiry_with_pair_at_timestamp(
                     asset_pair,
                     expiry,
                     maturity.with_timezone(&Utc),
                 )
+                .as_event_id()
             }
         })
         .collect::<Vec<_>>();
 
     let announcements = oracle
-        .oracle_many_announcements(events_ids)
+        .oracle_many_announcements(context.db(), &events_ids)
         .await
         .map_err(PythiaApiError::OracleFail)?;
 

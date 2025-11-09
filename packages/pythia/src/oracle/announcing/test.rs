@@ -645,10 +645,7 @@ mod test_get_many_events {
             .await?;
 
         // Test get_many_events with both event IDs
-        let result = db
-            .get_events_with(&[event_id1, event_id2][..])
-            .await?
-            .collect::<Vec<_>>();
+        let result = db.get_events_with(&[event_id1, event_id2][..]).await?;
 
         // Should return two events
         assert_eq!(result.len(), 2);

@@ -1,8 +1,8 @@
 use std::future;
 
 use awc::{
-    ws::{Codec, Frame},
     BoxedSocket, Client,
+    ws::{Codec, Frame},
 };
 
 use actix_codec::Framed;
@@ -15,11 +15,12 @@ use json_rpc_types::{Id, Request, Version};
 use crate::{
     api::error::PythiaApiError,
     data_models::{asset_pair::AssetPair, event_ids::EventId},
+    run_in_local_set,
 };
 
 use super::{EventChannel, EventType, GetRequest, RequestContent};
 
-use crate::test::api::{get_test_server, populate_test_db, run_in_local_set};
+use crate::test::api::{get_test_server, populate_test_db};
 
 /// Create a JSON-RPC get request for testing
 ///
@@ -205,7 +206,7 @@ async fn test_ws_get_request_existed_event_id(pool: PgPool) {
             .expect("Failed to connect to WebSocket");
 
         // Send a get request for an existed event
-        let get_request = create_get_request(event_ids[0]);
+        let get_request = create_get_request(event_ids[0].as_event_id());
         ws.send(Message::Text(get_request.into()))
             .await
             .expect("Failed to send get request");
@@ -216,7 +217,7 @@ async fn test_ws_get_request_existed_event_id(pool: PgPool) {
             Frame::Text(text) => {
                 let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
                 assert!(
-                    response_text.contains(event_ids[0].as_ref()),
+                    response_text.contains(event_ids[0].as_event_id().as_ref()),
                     "Expected {} in response, got: {}",
                     event_ids[0],
                     response_text

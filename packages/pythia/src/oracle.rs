@@ -110,7 +110,10 @@ impl Oracle {
         if events_iter.len() != events_ids.len() {
             Err(OracleError::MissingAnnouncements)
         } else {
-            Ok(events_iter.map(|e| self.compute_announcement(e)).collect())
+            Ok(events_iter
+                .into_iter()
+                .map(|e| self.compute_announcement(e))
+                .collect())
         }
     }
 }
@@ -120,6 +123,6 @@ impl DBconnection {
         Ok(self
             .get_events_with(core::slice::from_ref(&event_id))
             .await?
-            .next())
+            .pop())
     }
 }

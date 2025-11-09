@@ -52,7 +52,7 @@ impl DBconnection {
     pub(super) async fn get_events_with<T: GetCriteria>(
         &self,
         conditions: T,
-    ) -> Result<impl ExactSizeIterator<Item = EventFromPostgres>> {
+    ) -> Result<Vec<EventFromPostgres>> {
         let batch = sqlx::query_as(T::QUERY_STR)
             .bind(conditions)
             .fetch_all(&self.0)
@@ -89,29 +89,30 @@ impl GetCriteria for DateTime<Utc> {
 // };
 
 // Convert response into more rusty type with in place iteration
-fn convert_batch(
-    batch: Vec<BatchedPostgresResponse>,
-) -> impl ExactSizeIterator<Item = EventFromPostgres> {
-    batch.into_iter().map(|r| EventFromPostgres {
-        digits: r.digits as u16,
-        precision: r.precision as u16,
-        event_id_infos: EventIdInfos::try_from(r.id).expect("Always possible for now"),
-        maturity: r.maturity,
-        announcement_signature: Signature::from_slice(&r.announcement_signature[..])
-            .expect("announcement_signature must have valid length inserted by pythia"),
-        nonces_public: r.nonces_public.into_boxed_slice(),
-        scalars_records: if let Some(outcome) = r.outcome {
-            ScalarsRecords::DigitsAttestations(
-                outcome,
-                r.scalar_record
-                    .into_iter()
-                    .map(|x| Scalar::from_be_bytes(x).expect("we only insert valid scalars"))
-                    .collect(),
-            )
-        } else {
-            ScalarsRecords::DigitsSkNonce(r.scalar_record.into_boxed_slice())
-        },
-    })
+fn convert_batch(batch: Vec<BatchedPostgresResponse>) -> Vec<EventFromPostgres> {
+    batch
+        .into_iter()
+        .map(|r| EventFromPostgres {
+            digits: r.digits as u16,
+            precision: r.precision as u16,
+            event_id_infos: EventIdInfos::try_from(r.id).expect("Always possible for now"),
+            maturity: r.maturity,
+            announcement_signature: Signature::from_slice(&r.announcement_signature[..])
+                .expect("announcement_signature must have valid length inserted by pythia"),
+            nonces_public: r.nonces_public.into_boxed_slice(),
+            scalars_records: if let Some(outcome) = r.outcome {
+                ScalarsRecords::DigitsAttestations(
+                    outcome,
+                    r.scalar_record
+                        .into_iter()
+                        .map(|x| Scalar::from_be_bytes(x).expect("we only insert valid scalars"))
+                        .collect(),
+                )
+            } else {
+                ScalarsRecords::DigitsSkNonce(r.scalar_record.into_boxed_slice())
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -154,7 +155,7 @@ mod split_query_check {
         assert_eq!(batch.len(), dates.len());
 
         let alloc_ptr = batch.as_ptr();
-        let converted = convert_batch(batch).collect::<Vec<_>>();
+        let converted = convert_batch(batch);
 
         // Check pointer stays the same after conversion
         assert_eq!(alloc_ptr, converted.as_ptr().cast());

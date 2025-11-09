@@ -7,14 +7,15 @@ use sqlx::PgPool;
 use tokio::sync::broadcast;
 
 use crate::{
-    api::{v1_app_factory, AttestationResponse},
-    data_models::{asset_pair::AssetPair, event_ids::EventId, expiries::Expiry},
-    schedule_context::{api_context::ApiContext, OracleContext},
     SECP,
+    api::{AttestationResponse, v1_app_factory},
+    data_models::{asset_pair::AssetPair, event_ids::EventIdInfos, expiries::Expiry},
+    run_in_local_set,
+    schedule_context::{OracleContext, api_context::ApiContext},
 };
 
 use crate::test::{
-    api::{get_test_server, populate_test_db, run_in_local_set},
+    api::{get_test_server, populate_test_db},
     schedule_context::MockContext,
 };
 
@@ -131,16 +132,16 @@ async fn test_http_get_announcement(pool: PgPool) {
         let client = awc::Client::default();
 
         // Extract timestamp from the first event ID
-        let event_id = &event_ids[0];
+        let event_id_infos = &event_ids[0];
         // EventId format is "btc_usd{timestamp}", so extract the timestamp part
-        let event_id_str = event_id.as_ref();
-        let timestamp_str = &event_id_str[7..]; // Skip "btc_usd"
+        let event_id = event_id_infos.as_event_id();
+        let timestamp_str = &event_id[7..]; // Skip "btc_usd"
         let timestamp_seconds: i64 = timestamp_str.parse().expect("Failed to parse timestamp");
         let timestamp = chrono::DateTime::from_timestamp(timestamp_seconds, 0)
             .unwrap()
             .to_rfc3339();
 
-        let _ = context_handler.send(vec![(*event_id, Some(50000.0))]);
+        let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0))]);
 
         let mut resp = client
             .get(srv.url(&format!("/v1/asset/btc_usd/announcement/{}", timestamp)))
@@ -202,14 +203,16 @@ async fn test_http_get_attestation(pool: PgPool) {
 
         let force_response: serde_json::Value =
             force_resp.json().await.expect("Failed to parse JSON");
-        let event_id = force_response["attestation"]["eventId"]
+        let event_id_infos: EventIdInfos = force_response["attestation"]["eventId"]
             .as_str()
             .expect("Expected event ID")
             .parse()
             .unwrap();
 
+        let event_id = event_id_infos.as_event_id();
+
         context_handler
-            .send(vec![(event_id, Some(forced_price))])
+            .send(vec![(event_id_infos, Some(forced_price))])
             .unwrap();
 
         // Now test getting the attestation
@@ -257,9 +260,9 @@ async fn test_http_batch_announcements(pool: PgPool) {
 
         // Extract timestamps from the event IDs
         let mut maturities = Vec::new();
-        for event_id in &event_ids {
-            let event_id_str = event_id.as_ref();
-            let timestamp_str = &event_id_str[7..]; // Skip "btc_usd"
+        for event_id_infos in &event_ids {
+            let event_id = event_id_infos.as_event_id();
+            let timestamp_str = &event_id[7..]; // Skip "btc_usd"
             let timestamp_seconds: i64 = timestamp_str.parse().expect("Failed to parse timestamp");
             let timestamp = chrono::DateTime::from_timestamp(timestamp_seconds, 0).unwrap();
             maturities.push(timestamp.to_rfc3339());
@@ -313,40 +316,42 @@ async fn test_http_batch_announcements_with_expiry(pool: PgPool) {
             base_date,
         ];
 
-        let mut event_ids = Vec::with_capacity(maturities.len());
+        let mut event_ids_infos = Vec::with_capacity(maturities.len());
 
         for maturity_time in &maturities {
-            let event_id = if maturity_time == &base_date {
-                EventId::delivery_of_expiry_with_pair(AssetPair::BtcUsd, expiry)
+            let event_id_infos = if maturity_time == &base_date {
+                EventIdInfos::delivery_of_expiry_with_pair(AssetPair::BtcUsd, expiry)
             } else {
-                EventId::forward_of_expiry_with_pair_at_timestamp(
+                EventIdInfos::forward_of_expiry_with_pair_at_timestamp(
                     AssetPair::BtcUsd,
                     expiry,
                     *maturity_time,
                 )
             };
 
+            let event_id = event_id_infos.as_event_id();
+
             // Set up mocked pricefeed data for all the events we're about to create
-            let _ = context_handler.send(vec![(event_id, Some(50000.0 as f64))]);
+            let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0 as f64))]);
 
             // Create announcement
             let mut announcements = oracle_context
                 .oracles()
                 .get(&AssetPair::BtcUsd)
                 .unwrap()
-                .create_announcements_at_date(*maturity_time)
+                .create_announcements_at_date(oracle_context.db(), *maturity_time)
                 .await
                 .expect("Failed to create announcement");
 
-            event_ids.push(event_id);
+            event_ids_infos.push(event_id_infos);
 
             // Verify the event ID matches what we expected
             assert_eq!(announcements.pop().unwrap().oracle_event.event_id, event_id);
         }
 
-        event_ids.iter().for_each(|&event_id| {
+        event_ids_infos.iter().for_each(|event_id_infos| {
             context_handler
-                .send(vec![(event_id, Some(50000.0 as f64))])
+                .send(vec![(event_id_infos.clone(), Some(50000.0 as f64))])
                 .unwrap()
         });
 
@@ -386,7 +391,7 @@ async fn test_http_force_attestation(pool: PgPool) {
 
         // Set up mocked pricefeed data
         let now = Utc::now();
-        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
+        let event_id = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
 
         let _ = context_handler.send(vec![(event_id.clone(), Some(50000.0))]);
 
@@ -495,19 +500,20 @@ async fn test_http_future_attestation(pool: PgPool) {
             .with_nanosecond(0)
             .unwrap()
             + Duration::hours(3);
-        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, future_time);
+        let event_id_infos =
+            EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, future_time);
 
-        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
+        let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0))]);
 
         context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .create_announcements_at_date(future_time)
+            .create_announcements_at_date(context.db(), future_time)
             .await
             .unwrap();
 
-        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
+        let _ = context_handler.send(vec![(event_id_infos, Some(50000.0))]);
 
         let timestamp = future_time.to_rfc3339();
         let resp = client
@@ -542,7 +548,8 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
             .unwrap()
             + Duration::minutes(5);
 
-        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
+        let event_id_infos = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now);
+        let event_id = event_id_infos.as_event_id();
 
         let api_context = ApiContext {
             oracle_context: oracle_context.clone(),
@@ -559,19 +566,19 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
         let client = awc::Client::default();
 
         // Set up mocked pricefeed data for the same event IDs
-        let _ = context_handler.send(vec![(event_id, Some(50000.0))]);
+        let _ = context_handler.send(vec![(event_id_infos.clone(), Some(50000.0))]);
 
         oracle_context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .create_announcements_at_date(now)
+            .create_announcements_at_date(oracle_context.db(), now)
             .await
             .unwrap();
 
         // Set up mocked pricefeed data for the same event IDs
         context_handler
-            .send(vec![(event_id, Some(50000.0))])
+            .send(vec![(event_id_infos.clone(), Some(50000.0))])
             .unwrap();
 
         // Test getting an announcement for an existing event
@@ -600,7 +607,7 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
         assert_eq!(announcements[0].oracle_event.event_id, event_id.to_string());
 
         context_handler
-            .send(vec![(event_id, Some(50000.0))])
+            .send(vec![(event_id_infos.clone(), Some(50000.0))])
             .unwrap();
 
         let resp = client
@@ -617,19 +624,19 @@ async fn test_http_with_populated_db_and_mocked_pricefeed(pool: PgPool) {
         );
 
         context_handler
-            .send(vec![(event_id, Some(50000.0))])
+            .send(vec![(event_id_infos.clone(), Some(50000.0))])
             .unwrap();
 
         oracle_context
             .oracles()
             .get(&AssetPair::BtcUsd)
             .unwrap()
-            .attest_at_date(now)
+            .attest_at_date(oracle_context.db(), now)
             .await
             .unwrap();
 
         context_handler
-            .send(vec![(event_id, Some(50000.0))])
+            .send(vec![(event_id_infos, Some(50000.0))])
             .unwrap();
 
         let mut resp = client
