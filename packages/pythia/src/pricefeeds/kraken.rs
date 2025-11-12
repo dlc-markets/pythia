@@ -1,9 +1,11 @@
-use super::{error::PriceFeedError, PriceFeed, Result};
-use crate::AssetPair;
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use super::{PriceFeed, Result, error::PriceFeedError};
+use crate::{
+    data_models::{asset_pair::AssetPair, event_ids::EventIdInfos},
+    pricefeeds::HTTP_CLIENT,
+};
+use futures::TryStreamExt as _;
+use futures_buffered::FuturesOrderedBounded;
 use log::debug;
-use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -16,52 +18,86 @@ struct Response {
     result: HashMap<String, Value>,
 }
 
-#[async_trait]
 impl PriceFeed for Kraken {
-    fn translate_asset_pair(&self, asset_pair: AssetPair) -> &'static str {
-        match asset_pair {
-            AssetPair::BtcUsd => "XXBTZUSD",
-        }
-    }
+    async fn retrieve_prices(
+        &self,
+        event_ids_infos: impl IntoIterator<Item = EventIdInfos>,
+    ) -> Result<Vec<(EventIdInfos, Option<f64>)>> {
+        event_ids_infos
+            .into_iter()
+            .map(async |event_id_info| {
+                let EventIdInfos {
+                    asset_pair,
+                    maturation,
+                    ..
+                } = event_id_info;
 
-    async fn retrieve_price(&self, asset_pair: AssetPair, instant: DateTime<Utc>) -> Result<f64> {
-        let client = Client::new();
-        let asset_pair_translation = self.translate_asset_pair(asset_pair);
-        let start_time = instant.timestamp();
-        debug!("sending kraken http request");
-        let res: Response = client
-            .get("https://api.kraken.com/0/public/OHLC")
-            .query(&[
-                ("pair", asset_pair_translation),
-                ("since", &start_time.to_string()),
-            ])
-            .send()
-            .await?
-            .json()
-            .await?;
-        debug!("received response: {:#?}", res);
+                if !event_id_info.is_spot() || asset_pair != AssetPair::BtcUsd {
+                    return Ok((event_id_info, None));
+                };
 
-        if !res.error.is_empty() {
-            return Err(PriceFeedError::Server(format!(
-                "kraken error: {:#?}",
-                res.error
-            )));
-        }
+                let asset_pair_translation = match asset_pair {
+                    AssetPair::BtcUsd => "XXBTZUSD",
+                };
+                let start_time = maturation.timestamp();
 
-        let res = res
-            .result
-            .get(asset_pair_translation)
-            .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, instant))?;
+                #[derive(serde::Serialize)]
+                struct KrakenQueryParams {
+                    pair: &'static str,
+                    since: i64,
+                }
 
-        Ok(res[0][1]
-            .as_str()
-            .ok_or(PriceFeedError::Server(format!(
-                "Failed to parse price from kraken: expect a string, got {:#?}",
-                res[0][1]
-            )))?
-            .parse()
-            .map_err(|e| {
-                PriceFeedError::Server(format!("Failed to parse price from kraken: {e}"))
-            })?)
+                debug!("sending kraken http request");
+                let res: Response = HTTP_CLIENT
+                    .with(|client| {
+                        client
+                            .get("https://api.kraken.com/0/public/OHLC")
+                            .query(&KrakenQueryParams {
+                                pair: asset_pair_translation,
+                                since: start_time,
+                            })
+                            .expect("can be serialized")
+                    })
+                    .send()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?
+                    .json()
+                    .await
+                    .map_err(|e| PriceFeedError::ConnectionError(e.to_string()))?;
+                debug!("received response: {res:#?}");
+
+                if !res.error.is_empty() {
+                    return Err(PriceFeedError::Server(format!(
+                        "kraken error: {:#?}",
+                        res.error
+                    )));
+                }
+
+                let res = res
+                    .result
+                    .get(asset_pair_translation)
+                    .ok_or(PriceFeedError::PriceNotAvailable(asset_pair, maturation))?;
+
+                Ok((
+                    event_id_info,
+                    Some(
+                        res[0][1]
+                            .as_str()
+                            .ok_or(PriceFeedError::Server(format!(
+                                "Failed to parse price from kraken: expect a string, got {:#?}",
+                                res[0][1]
+                            )))?
+                            .parse()
+                            .map_err(|e| {
+                                PriceFeedError::Server(format!(
+                                    "Failed to parse price from kraken: {e}"
+                                ))
+                            })?,
+                    ),
+                ))
+            })
+            .collect::<FuturesOrderedBounded<_>>()
+            .try_collect()
+            .await
     }
 }
