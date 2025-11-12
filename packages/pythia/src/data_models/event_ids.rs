@@ -363,14 +363,14 @@ mod tests_event_id {
     fn test_event_id_serde() {
         let event_id_f1 = "BTC_USD_01JUL25f1717336000".parse::<EventId>().unwrap();
         let serde_event_id = serde_json::to_string(&event_id_f1).unwrap();
-        assert_eq!(serde_event_id, "\"BTC_USD_01JUL25f1717336000\"");
+        assert_eq!(serde_event_id, "\"btc_usd_01JUL25f1717336000\"");
 
         let de_ser_event_id: EventId = serde_json::from_str(&serde_event_id).unwrap();
         assert_eq!(event_id_f1, de_ser_event_id);
 
         let event_id_d1 = "BTC_USD_01JUL25d".parse::<EventId>().unwrap();
         let serde_event_id = serde_json::to_string(&event_id_d1).unwrap();
-        assert_eq!(serde_event_id, "\"BTC_USD_01JUL25d\"");
+        assert_eq!(serde_event_id, "\"btc_usd_01JUL25d\"");
 
         let de_ser_event_id: EventId = serde_json::from_str(&serde_event_id).unwrap();
         assert_eq!(event_id_d1, de_ser_event_id);
@@ -388,10 +388,7 @@ mod tests_event_id {
 
         assert!(matches!(
             "BTC_USD_BONJOURf1717336000".parse::<EventId>(),
-            Err(ParsingError::InvalidLength {
-                expected: SPOT_LENGTH,
-                actual: 26,
-            })
+            Err(ParsingError::InvalidDate(_))
         ));
         assert!(matches!(
             "BTC_USD_BONJOURdid".parse::<EventId>(),

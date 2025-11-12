@@ -2,7 +2,7 @@ use std::{fmt, str::FromStr};
 
 use arrayvec::ArrayString;
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 
 use crate::data_models::error::ParsingError;
 

@@ -60,7 +60,7 @@ impl FromStr for AssetPair {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "btc_usd" => Ok(AssetPair::BtcUsd),
+            "btc_usd" | "BTC_USD" => Ok(AssetPair::BtcUsd),
             _ => Err(ParsingError::InvalidChar {
                 expected: "btc_usd",
                 actual: s.to_owned(),
