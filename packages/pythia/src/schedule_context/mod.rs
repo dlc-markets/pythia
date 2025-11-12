@@ -6,13 +6,16 @@ use std::{borrow::Borrow, collections::HashMap};
 use tokio::sync::{broadcast, oneshot};
 
 use crate::{
-    config::AssetPair,
-    oracle::{error::OracleError, Oracle},
+    DBconnection,
+    data_models::asset_pair::AssetPair,
+    oracle::{Oracle, error::OracleError},
 };
 
 pub(super) mod api_context;
 pub(super) mod error;
 pub(super) mod scheduler;
+#[cfg(test)]
+pub mod test;
 
 use api_context::ApiContext;
 use error::PythiaContextError;
@@ -21,6 +24,7 @@ use error::PythiaContextError;
 /// settings for the oracle of each asset pair and the schedule.
 /// It is used to create the `ApiContext` and `SchedulerContext`.
 pub(super) struct OracleContextInner {
+    db: DBconnection,
     oracles: HashMap<AssetPair, Oracle>,
     schedule: Schedule,
     error_sender: AtomicTake<oneshot::Sender<OracleError>>,
@@ -31,6 +35,7 @@ pub(super) struct OracleContextInner {
 /// Not all bounds on `Context` are explicit here. To run the API you actually need `Context` to be `Send` and `Unpin` as well.
 /// You will often need to use `Arc` or `Box::leak` on the `OracleContextInner` to satisfy all the bounds with a reference.
 pub(super) fn create_contexts<Context>(
+    db: DBconnection,
     oracles: HashMap<AssetPair, Oracle>,
     schedule: Schedule,
     offset_duration: Duration,
@@ -42,6 +47,7 @@ where
     let (error_sender, error_rx) = oneshot::channel::<OracleError>();
 
     let oracle_context = borrow_mod(OracleContextInner {
+        db,
         oracles,
         schedule,
         error_sender: AtomicTake::new(error_sender),
@@ -70,6 +76,7 @@ where
 }
 
 pub(crate) trait OracleContext {
+    fn db(&self) -> &DBconnection;
     fn oracles(&self) -> &HashMap<AssetPair, Oracle>;
     fn schedule(&self) -> &Schedule;
     fn send_error(&self, error: OracleError);
@@ -79,6 +86,9 @@ impl<T> OracleContext for T
 where
     T: Borrow<OracleContextInner>,
 {
+    fn db(&self) -> &DBconnection {
+        &self.borrow().db
+    }
     fn oracles(&self) -> &HashMap<AssetPair, Oracle> {
         &self.borrow().oracles
     }

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT MIN(maturity) AS maturity FROM oracle.events WHERE maturity > $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "maturity",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "85c007367fb52b7b392947ca04e062703c33a02d7f00e6fbe8a193dd9a3661e2"
+}

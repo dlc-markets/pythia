@@ -9,16 +9,26 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use tokio::select;
 
+mod data_models;
+
 mod api;
 mod config;
+mod db;
 mod error;
 mod oracle;
 mod pricefeeds;
 mod schedule_context;
 
-use config::{cli::PythiaArgs, AssetPair, AssetPairInfo};
+use config::{AssetPairInfo, cli::PythiaArgs};
+use db::DBconnection;
+#[cfg(test)]
+mod test {
+    pub use crate::api::test as api;
+    pub use crate::schedule_context::test as schedule_context;
+}
+
 use error::PythiaError;
-use oracle::{postgres::DBconnection, Oracle};
+use oracle::Oracle;
 
 static SECP: LazyLock<Secp256k1<All>> = const { LazyLock::new(Secp256k1::new) };
 
@@ -57,7 +67,7 @@ async fn main() -> Result<(), PythiaError> {
             let asset_pair = asset_pair_info.asset_pair;
 
             info!("creating oracle for {asset_pair}");
-            Oracle::new(asset_pair_info, db_connection.clone(), keypair)
+            Oracle::new(asset_pair_info, keypair)
         }))
         .collect::<HashMap<_, _>>();
 
@@ -71,6 +81,7 @@ async fn main() -> Result<(), PythiaError> {
     // until the end of the program by the API
     // and Scheduler contexts.
     let (scheduler_context, api_context) = schedule_context::create_contexts(
+        db_connection,
         oracles,
         oracle_scheduler_config.schedule,
         oracle_scheduler_config.announcement_offset,
@@ -89,4 +100,14 @@ async fn main() -> Result<(), PythiaError> {
             e?.map_err(PythiaError::from)
         },
     }
+}
+
+#[cfg(test)]
+async fn run_in_local_set<T, F>(f: F) -> T
+where
+    F: std::future::Future<Output = T> + 'static,
+{
+    use tokio::task::LocalSet;
+
+    LocalSet::new().run_until(f).await
 }

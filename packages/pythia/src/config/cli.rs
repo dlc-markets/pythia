@@ -6,7 +6,7 @@ use sqlx::postgres::PgConnectOptions;
 use std::{fs::File, io::Read, str::FromStr};
 
 use super::{
-    env::*, error::PythiaConfigError, AssetPairInfo, ConfigurationFile, OracleSchedulerConfig,
+    AssetPairInfo, ConfigurationFile, OracleSchedulerConfig, env::*, error::PythiaConfigError,
 };
 
 #[derive(Parser)]

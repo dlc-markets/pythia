@@ -1,15 +1,19 @@
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use futures::StreamExt as _;
+use futures_buffered::BufferedStreamExt as _;
 use std::time::Duration;
 use tokio::{
     sync::{broadcast::Sender, oneshot::Receiver},
     time::sleep,
 };
 
-use super::{error::PythiaContextError, OracleContext};
+use super::{OracleContext, error::PythiaContextError};
 use crate::{
+    DBconnection,
     api::EventNotification,
+    data_models::event_ids::EventIdInfos,
     error::PythiaError,
-    oracle::{error::OracleError, CHUNK_SIZE},
+    oracle::{CHUNK_SIZE, error::OracleError},
 };
 
 /// The Scheduler holds a static reference to the running oracles and schedule configuration file with the API
@@ -49,7 +53,7 @@ impl<Context: OracleContext> SchedulerContext<Context> {
 }
 
 /// Start the scheduler of announcements and attestations using the context made with the api one.
-/// It computes a date iterator from cron-like config and spawns a thread for each type of event.
+/// It computes a date iterator from cron-like config and spawns a task for each type of event.
 /// At each iteration it sleeps if necessary without blocking until the next date produced by the iterator.
 pub(crate) async fn start_schedule<Context>(
     mut context: SchedulerContext<Context>,
@@ -60,24 +64,24 @@ where
     let oracle_context = Context::clone(&context.oracle_context);
     let event_tx = context.channel_sender;
 
-    // start event creation task
+    // start event creation tasks for announcements and attestations
     info!("creating oracle events and schedules");
 
     let cloned_event_tx = event_tx.clone();
     let start_time = Utc::now();
-    let attestation_scheduled_dates = oracle_context.schedule().after_owned(start_time);
+
     let announcement_scheduled_dates = oracle_context
         .schedule()
         .after_owned(start_time)
         .map(move |date| date - context.offset_duration);
 
-    let announcement_thread = async move {
+    let announcement_task = async move {
         // Vector to store maturation dates that need to be processed in batches
         // Used to accumulate announcements when events have already matured or are imminent
         // This batching approach improves performance by reducing database operations
         let mut pending_maturations = Vec::new();
 
-        for next_time in announcement_scheduled_dates {
+        'announcement_tick: for next_time in announcement_scheduled_dates {
             // Check if there was an error in the previous iteration
             if let Ok(oracle_result) = context.error_rx.try_recv() {
                 return Err(PythiaError::Oracle(oracle_result));
@@ -85,55 +89,7 @@ where
             // We compute how much time we may have to sleep before continue
             // Converting into std Duration type fail here if we don't have to sleep
             let maybe_std_duration = (next_time - Utc::now()).to_std();
-            if let Ok(duration) = maybe_std_duration {
-                debug!(
-                    "next announcement at {} in {:?} with maturity {}",
-                    &next_time,
-                    &duration,
-                    next_time + context.offset_duration
-                );
-
-                if !pending_maturations.is_empty() {
-                    info!(
-                        "Pending maybe_std_durations size: {:?}",
-                        pending_maturations.len()
-                    );
-
-                    let oracle_context = Context::clone(&oracle_context);
-
-                    // We spawn a detached task to process missed announcements in the background
-                    tokio::spawn(async move {
-                        for oracle in oracle_context.oracles().values() {
-                            // Collect all processed chunks and store any errors in the error channel
-                            if let Err(error) = oracle
-                                .create_many_announcements::<CHUNK_SIZE>(&pending_maturations)
-                                .await
-                            {
-                                oracle_context.send_error(error);
-                            };
-                        }
-                        info!("Oracle announcements are in sync");
-                    });
-
-                    // Reinitialize the pending maturations vector to avoid borrowing issues
-                    pending_maturations = Vec::new();
-                }
-
-                sleep(duration).await;
-
-                for oracle in oracle_context.oracles().values() {
-                    let perhaps_announcement = oracle
-                        .create_announcement(next_time + context.offset_duration)
-                        .await;
-
-                    // To avoid flooding the websocket with announcements when starting. We only broadcast the announcement created after the sleep function
-                    if Sender::receiver_count(&cloned_event_tx) != 0 {
-                        cloned_event_tx
-                            .send((oracle.asset_pair_info.asset_pair, perhaps_announcement?).into())
-                            .expect("usable channel");
-                    }
-                }
-            } else {
+            let Ok(duration) = maybe_std_duration else {
                 // We accumulate announcements in a vector to avoid frequent individual database insertions.
                 // When (next_time - Utc::now()) is negative, it means the event has already matured or is
                 // imminent, so we continue accumulating announcements rather than inserting them immediately.
@@ -141,46 +97,240 @@ where
                 // insertion of all accumulated announcements into the PostgreSQL database with a single query
                 // for better performance.
                 pending_maturations.push(next_time + context.offset_duration);
+                continue 'announcement_tick;
             };
+
+            debug!(
+                "next announcement at {} in {:?} with maturity {}",
+                &next_time,
+                &duration,
+                next_time + context.offset_duration
+            );
+
+            if !pending_maturations.is_empty() {
+                info!(
+                    "Pending maybe_std_durations size: {:?}",
+                    pending_maturations.len()
+                );
+
+                let oracle_context = Context::clone(&oracle_context);
+
+                // We spawn a detached task to process missed announcements in the background
+                tokio::spawn(async move {
+                    for oracle in oracle_context.oracles().values() {
+                        // Collect all processed chunks and store any errors in the error channel
+                        if let Err(error) = oracle
+                            .create_many_announcements::<CHUNK_SIZE>(
+                                oracle_context.db(),
+                                &pending_maturations,
+                            )
+                            .await
+                        {
+                            oracle_context.send_error(error);
+                        };
+                    }
+                    info!("Oracle announcements are in sync");
+                });
+
+                // Reinitialize the pending maturations vector to avoid borrowing issues
+                pending_maturations = Vec::new();
+            }
+
+            sleep(duration).await;
+
+            for oracle in oracle_context.oracles().values() {
+                oracle
+                    .create_announcements_at_date(
+                        oracle_context.db(),
+                        next_time + context.offset_duration,
+                    )
+                    .await?
+                    .into_iter()
+                    .take_while(|_| Sender::receiver_count(&cloned_event_tx) != 0)
+                    .for_each(|announcement| {
+                        cloned_event_tx
+                            .send((oracle.asset_pair_info.asset_pair, announcement).into())
+                            .expect("usable channel");
+                    });
+            }
         }
         unreachable!("Cron schedule can be consumed only after 2100")
     };
 
     let oracle_context = context.oracle_context;
 
-    let attestation_thread = async move {
-        for next_time in attestation_scheduled_dates {
+    let attestation_task = async move {
+        // When starting the scheduler, db may not contain announcements for future attestations yet, we sleep 5secs if that's the case
+        if oracle_context
+            .db()
+            .get_next_maturity(start_time)
+            .await?
+            .is_none()
+        {
+            sleep(Duration::from_secs(5)).await;
+        };
+
+        while let Some(next_time) = oracle_context.db().get_next_maturity(Utc::now()).await? {
             if let Ok(duration) = (next_time - Utc::now()).to_std() {
                 debug!("next attestation at {} in {:?}", &next_time, &duration);
                 sleep(duration).await;
             };
 
-            for oracle in oracle_context.oracles().values() {
-                let event_id = oracle.asset_pair_info.asset_pair.to_string().to_lowercase()
-                    + next_time.timestamp().to_string().as_str();
+            let mut events_to_retry = Vec::new();
 
-                let perhaps_attestation = oracle.try_attest_event(&event_id).await;
+            'oracles: for oracle in oracle_context.oracles().values() {
+                let Ok(attestations) = oracle
+                    .attest_at_date(oracle_context.db(), next_time)
+                    .await
+                    .map_err(|e| error!("The oracle scheduler failed to attest: {e}"))
+                else {
+                    continue 'oracles;
+                };
 
-                match perhaps_attestation {
-                    Ok(Some(attestation)) => {
+                'attestations: for maybe_attestation in attestations {
+                    let Err(error) = maybe_attestation.map(|attestation| {
                         if Sender::receiver_count(&event_tx) != 0 {
                             event_tx
                                 .send((oracle.asset_pair_info.asset_pair, attestation).into())
                                 .expect("usable channel");
                         }
-                    }
-                    Ok(None) => error!(
-                        "The oracle scheduler failed to attest: {event_id}: no announcement found"
-                    ),
-                    Err(e) => error!("The oracle scheduler failed to attest: {}", &e.to_string()),
+                    }) else {
+                        continue 'attestations;
+                    };
+
+                    let OracleError::MissingEventId(event_id_infos) = error else {
+                        error!(
+                            "The oracle scheduler failed to attest an event at date {next_time}: {error}"
+                        );
+                        continue 'attestations;
+                    };
+
+                    events_to_retry.push(event_id_infos);
                 }
+            }
+
+            if !events_to_retry.is_empty() {
+                // We clone the context and event_tx to give them to a new spawned task
+                // which retry to attest the event later.
+                let cloned_context = Context::clone(&oracle_context);
+                let cloned_event_tx = event_tx.clone();
+
+                // spawn on the same thread a retry task to let the scheduler continue and
+                // handle that the pricefeed retrieval is not Send.
+                actix::spawn(retry_attest(
+                    cloned_context,
+                    cloned_event_tx,
+                    events_to_retry,
+                ));
             }
         }
         unreachable!("Cron schedule can be consumed only after 2100")
     };
 
     tokio::select! {
-        e = announcement_thread => {e},
-        e = attestation_thread => {e},
+        e = announcement_task => {e},
+        e = attestation_task => {e},
+    }
+}
+
+/// Retry attesting a pricefeed event with exponential backoff.
+async fn retry_attest<Context: OracleContext>(
+    context: Context,
+    sender: Sender<EventNotification>,
+    mut events_to_retry: Vec<EventIdInfos>,
+) {
+    let mut duration = Duration::from_secs(5);
+
+    // 17 is the max length of an Event Id for now
+    let mut display_event_ids = String::with_capacity(17 * events_to_retry.len());
+
+    while !events_to_retry.is_empty() {
+        events_to_retry.iter().for_each(|event_id_info| {
+            display_event_ids.push_str(event_id_info.as_event_id().as_ref())
+        });
+        info!(
+            "The pricefeed did not find data for the events {display_event_ids}, it will retry in {} seconds",
+            duration.as_secs()
+        );
+
+        display_event_ids.clear();
+
+        sleep(duration).await;
+
+        let mut status_iter = futures::stream::iter(
+            events_to_retry
+                .chunk_by_mut(|a, b| a.asset_pair == b.asset_pair)
+                .map(async |ids_infos| {
+                    ids_infos.sort_by_key(|id_info| id_info.as_event_id());
+                    let asset_pair = ids_infos
+                        .first()
+                        .expect("a chunk has at least one item")
+                        .asset_pair;
+                    match context.oracles()[&asset_pair]
+                        .try_attest_events(
+                            context.db(),
+                            &ids_infos
+                                .iter()
+                                .map(EventIdInfos::as_event_id)
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                    {
+                        Ok(attestations) => {
+                            attestations.into_iter().for_each(|attestation| {
+                                if let Ok(attestation) = attestation {
+                                    sender
+                                        .send((asset_pair, attestation).into())
+                                        .expect("usable channel");
+                                }
+                            });
+                            false
+                        }
+                        Err(e) => {
+                            error!("The pricefeed did not find data for the events {e}");
+                            true
+                        }
+                    }
+                }),
+        )
+        .buffered_ordered(2)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter();
+
+        events_to_retry.retain(|_| status_iter.next().unwrap_or(true));
+
+        // exponential backoff
+        duration = duration * 3 / 2;
+
+        if !events_to_retry.is_empty() && duration.as_secs() > 60 {
+            events_to_retry.iter().for_each(|event_id_info| {
+                display_event_ids.push_str(event_id_info.as_event_id().as_ref())
+            });
+            error!(
+                "The pricefeed did not find data for the events {display_event_ids}, it has been retried for too long, skipping"
+            );
+            break;
+        }
+    }
+}
+
+struct NextMaturityResponse {
+    maturity: Option<DateTime<Utc>>,
+}
+
+impl DBconnection {
+    async fn get_next_maturity(
+        &self,
+        maturity: DateTime<Utc>,
+    ) -> Result<Option<DateTime<Utc>>, PythiaError> {
+        Ok(sqlx::query_as!(
+            NextMaturityResponse,
+            r#"SELECT MIN(maturity) AS maturity FROM oracle.events WHERE maturity > $1"#,
+            maturity
+        )
+        .fetch_optional(&self.0)
+        .await?
+        .and_then(|x| x.maturity))
     }
 }
