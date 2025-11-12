@@ -6,7 +6,7 @@ use std::{borrow::Borrow, collections::HashMap};
 use tokio::sync::{broadcast, oneshot};
 
 use crate::{
-    config::AssetPair,
+    data_models::asset_pair::AssetPair,
     oracle::{error::OracleError, Oracle},
 };
 

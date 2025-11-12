@@ -1,4 +1,4 @@
-use crate::AssetPair;
+use crate::data_models::asset_pair::AssetPair;
 use chrono::{DateTime, Utc};
 use displaydoc::Display;
 use thiserror::Error;

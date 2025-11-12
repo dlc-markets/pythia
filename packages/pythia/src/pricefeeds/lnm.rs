@@ -1,5 +1,5 @@
+use crate::data_models::asset_pair::AssetPair;
 use crate::pricefeeds::{error::PriceFeedError, PriceFeed, Result};
-use crate::AssetPair;
 use async_trait::async_trait;
 use chrono::{naive::serde::ts_milliseconds, NaiveDateTime};
 use chrono::{DateTime, Duration, DurationRound, TimeZone, Utc};

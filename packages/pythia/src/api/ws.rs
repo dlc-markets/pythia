@@ -1,6 +1,5 @@
 use actix_web::{web, HttpRequest, HttpResponse, Result};
 use actix_ws::{CloseCode, CloseReason, Message, MessageStream, Session};
-use dlc_messages::oracle_msgs::OracleAnnouncement;
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string_pretty};
@@ -10,7 +9,7 @@ use tokio::{select, time};
 use super::{error::PythiaApiError, EventNotification, EventType};
 use crate::{
     api::{AttestationResponse, EventChannel, GetRequest},
-    config::AssetPair,
+    data_models::{asset_pair::AssetPair, oracle_msgs::Announcement},
     oracle::{error::OracleError, Oracle},
     schedule_context::{api_context::ApiContext, OracleContext},
 };
@@ -18,7 +17,7 @@ use crate::{
 #[derive(Clone, Serialize, Debug)]
 #[serde(untagged)]
 enum EventData {
-    Announcement(OracleAnnouncement),
+    Announcement(Announcement),
     Attestation(Option<AttestationResponse>),
 }
 
@@ -274,8 +273,10 @@ async fn future_oracle_state(
     oracle: &Oracle,
     request: &GetRequest,
 ) -> Result<Option<EventData>, OracleError> {
-    oracle.oracle_state(&request.event_id).await.map(|state| {
-        match (&request.asset_pair.ty, state) {
+    oracle
+        .oracle_state(request.event_id)
+        .await
+        .map(|state| match (&request.asset_pair.ty, state) {
             (EventType::Announcement, Some((announcement, _))) => {
                 Some(EventData::Announcement(announcement))
             }
@@ -284,8 +285,7 @@ async fn future_oracle_state(
             }
             (EventType::Attestation, Some((_, None))) => Some(EventData::Attestation(None)),
             (_, None) => None,
-        }
-    })
+        })
 }
 
 type EventBroadcast = json_rpc_types::Request<EventBroadcastContent, &'static str>;

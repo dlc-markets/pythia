@@ -9,7 +9,6 @@ use awc::{
 };
 use chrono::{Duration, Utc};
 use cron::Schedule;
-use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use futures_util::{SinkExt, StreamExt};
 use json_rpc_types::{Id, Request, Version};
 use secp256k1_zkp::rand;
@@ -18,7 +17,10 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::sync::broadcast;
 
 use crate::{
-    config::{AssetPair, AssetPairInfo},
+    config::AssetPairInfo,
+    data_models::{
+        asset_pair::AssetPair, event_ids::EventId, oracle_msgs::DigitDecompositionEventDesc,
+    },
     oracle::{error::OracleError, postgres::DBconnection, Oracle},
     pricefeeds::ImplementedPriceFeed,
     schedule_context::{api_context::ApiContext, OracleContext},
@@ -57,10 +59,10 @@ impl MockContext {
         let btc_usd_asset_pair_info = AssetPairInfo {
             pricefeed: ImplementedPriceFeed::Lnmarkets,
             asset_pair: AssetPair::BtcUsd,
-            event_descriptor: DigitDecompositionEventDescriptor {
+            event_descriptor: DigitDecompositionEventDesc {
                 base: 2,
                 is_signed: false,
-                unit: "usd/btc".to_string(),
+                unit: "usd/btc".parse().expect("usd/btc len is 7"),
                 precision: 12,
                 nb_digits: 20,
             },
@@ -118,7 +120,7 @@ impl DBconnection {
 ///
 /// Creates a specified number of announcements with different maturity times
 /// and stores their event IDs for later use in tests.
-pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> Vec<String> {
+pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> Vec<EventId> {
     let now = Utc::now();
 
     // Create a vector to store event IDs
@@ -141,7 +143,7 @@ pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> V
             .expect("Failed to create announcement");
 
         // Store the event ID
-        event_ids.push(announcement.oracle_event.event_id.to_string());
+        event_ids.push(announcement.oracle_event.event_id);
     }
 
     event_ids
@@ -152,7 +154,7 @@ pub async fn populate_test_db(mock_context: &mut MockContext, count: usize) -> V
 /// This creates an Actix test server with announcements in the database
 pub async fn get_populated_test_server(
     announcement_count: usize,
-) -> (actix_test::TestServer, Vec<String>) {
+) -> (actix_test::TestServer, Vec<EventId>) {
     let channel_sender = broadcast::Sender::new(32);
     let mut oracle_context = MockContext::new().await;
 
@@ -205,7 +207,7 @@ pub async fn get_test_server() -> actix_test::TestServer {
 ///
 /// Creates a request to get a BTC/USD attestation event using a real event ID
 /// from the database if available.
-fn create_get_request(event_id: Box<str>) -> String {
+fn create_get_request(event_id: EventId) -> String {
     let request = Request {
         jsonrpc: Version::V2,
         method: "get".to_string(),
@@ -378,7 +380,7 @@ async fn test_ws_get_request_existed_event_id() -> Result<(), PythiaApiError> {
         .expect("Failed to connect to WebSocket");
 
     // Send a get request for an existed event
-    let get_request = create_get_request(event_ids[0].as_str().into());
+    let get_request = create_get_request(event_ids[0]);
     ws.send(Message::Text(get_request.into()))
         .await
         .expect("Failed to send get request");
@@ -389,7 +391,7 @@ async fn test_ws_get_request_existed_event_id() -> Result<(), PythiaApiError> {
         Frame::Text(text) => {
             let response_text = String::from_utf8(text.to_vec()).expect("Invalid UTF-8");
             assert!(
-                response_text.contains(&event_ids[0]),
+                response_text.contains(event_ids[0].as_ref()),
                 "Expected {} in response, got: {}",
                 event_ids[0],
                 response_text
@@ -418,7 +420,7 @@ async fn test_ws_get_request_not_existed_event_id() -> Result<(), PythiaApiError
         .expect("Failed to connect to WebSocket");
 
     // Send a get request
-    let get_request = create_get_request("btc_usd1746003000".into());
+    let get_request = create_get_request("btc_usd1746003000".parse().unwrap());
     ws.send(Message::Text(get_request.into()))
         .await
         .expect("Failed to send get request");

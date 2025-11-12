@@ -1,6 +1,5 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer, Result};
-use dlc_messages::oracle_msgs::{OracleAnnouncement, OracleAttestation};
 use secp256k1_zkp::schnorr::Signature;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +12,12 @@ mod test;
 mod ws;
 
 use crate::{
-    config::AssetPair,
+    data_models::{
+        asset_pair::AssetPair,
+        event_ids::EventId,
+        oracle_msgs::{Announcement, Attestation},
+        Outcome,
+    },
     schedule_context::{api_context::ApiContext, OracleContext},
 };
 
@@ -24,12 +28,12 @@ struct EventChannel {
     #[serde(rename = "type")]
     ty: EventType,
 }
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 struct GetRequest {
     #[serde(flatten)]
     asset_pair: EventChannel,
-    event_id: Box<str>,
+    event_id: EventId,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
@@ -42,13 +46,13 @@ enum EventType {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttestationResponse {
-    event_id: Box<str>,
+    event_id: EventId,
     signatures: Vec<Signature>,
-    values: Vec<String>,
+    values: Vec<Outcome>,
 }
 #[derive(Clone, Debug)]
 pub(crate) enum EventNotification {
-    Announcement(AssetPair, OracleAnnouncement),
+    Announcement(AssetPair, Announcement),
     Attestation(AssetPair, AttestationResponse),
 }
 
@@ -100,22 +104,22 @@ where
     Ok(())
 }
 
-impl From<OracleAttestation> for AttestationResponse {
-    fn from(value: OracleAttestation) -> Self {
+impl From<Attestation> for AttestationResponse {
+    fn from(value: Attestation) -> Self {
         Self {
-            event_id: value.event_id.into_boxed_str(),
+            event_id: value.event_id,
             signatures: value.signatures,
             values: value.outcomes,
         }
     }
 }
 
-impl From<(AssetPair, OracleAttestation)> for EventNotification {
-    fn from(value: (AssetPair, OracleAttestation)) -> Self {
+impl From<(AssetPair, Attestation)> for EventNotification {
+    fn from(value: (AssetPair, Attestation)) -> Self {
         EventNotification::Attestation(
             value.0,
             AttestationResponse {
-                event_id: value.1.event_id.into_boxed_str(),
+                event_id: value.1.event_id,
                 signatures: value.1.signatures,
                 values: value.1.outcomes,
             },
@@ -123,8 +127,8 @@ impl From<(AssetPair, OracleAttestation)> for EventNotification {
     }
 }
 
-impl From<(AssetPair, OracleAnnouncement)> for EventNotification {
-    fn from(value: (AssetPair, OracleAnnouncement)) -> Self {
+impl From<(AssetPair, Announcement)> for EventNotification {
+    fn from(value: (AssetPair, Announcement)) -> Self {
         EventNotification::Announcement(value.0, value.1)
     }
 }

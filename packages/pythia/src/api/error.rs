@@ -2,7 +2,7 @@ use displaydoc::Display;
 use std::io;
 use thiserror::Error;
 
-use crate::{config::AssetPair, oracle::error::OracleError};
+use crate::{data_models::asset_pair::AssetPair, oracle::error::OracleError};
 
 #[derive(Debug, Display, Error)]
 pub enum PythiaApiError {
@@ -67,6 +67,6 @@ impl From<actix_ws::ProtocolError> for PythiaApiError {
 #[cfg(test)]
 impl From<actix_ws::Closed> for PythiaApiError {
     fn from(err: actix_ws::Closed) -> Self {
-        PythiaApiError::WebSocketError(format!("WebSocket closed: {}", err))
+        PythiaApiError::WebSocketError(format!("WebSocket closed: {err}"))
     }
 }
