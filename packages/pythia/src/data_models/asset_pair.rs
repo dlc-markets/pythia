@@ -55,6 +55,20 @@ impl FromStr for Unit {
     }
 }
 
+impl FromStr for AssetPair {
+    type Err = ParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "btc_usd" => Ok(AssetPair::BtcUsd),
+            _ => Err(ParsingError::InvalidAssetPair {
+                expected: "btc_usd",
+                actual: s.to_owned(),
+            }),
+        }
+    }
+}
+
 impl Serialize for Unit {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

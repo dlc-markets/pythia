@@ -551,10 +551,10 @@ mod test_get_many_events {
 
         // Test with non-existent events
         let non_existent_ids = vec![
-            "not_exist_event_1"
+            "btc_usd1794685236"
                 .parse()
                 .expect("Len is 17, same as EventId"),
-            "not_exist_event_2"
+            "btc_usd1794665236"
                 .parse()
                 .expect("Len is 17, same as EventId"),
         ];
@@ -711,7 +711,7 @@ mod test_get_many_events {
         let result = db
             .get_many_events(vec![
                 event_id,
-                "this_is_not_an_id".parse().expect("but it is 17 in length"),
+                "btc_usd1489756945".parse().expect("but it is 17 in length"),
             ])
             .await?;
 

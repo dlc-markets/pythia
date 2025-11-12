@@ -12,4 +12,13 @@ pub enum ParsingError {
 
     /// Error parsing the provided expiry: {0}
     InvalidDate(#[from] chrono::format::ParseError),
+
+    /// Invalid timestamp: {0}
+    InvalidTimestamp(#[from] std::num::ParseIntError),
+
+    /// Error parsing the provided asset pair: got {actual} expected {expected}
+    InvalidAssetPair {
+        expected: &'static str,
+        actual: String,
+    },
 }

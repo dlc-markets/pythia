@@ -183,7 +183,10 @@ mod event_serialisation {
         use lightning::util::ser::Writeable;
         use secp256k1_zkp::rand::thread_rng;
 
-        use crate::{data_models::asset_pair::AssetPair, SECP};
+        use crate::{
+            data_models::{asset_pair::AssetPair, event_ids::EventIdInfos},
+            SECP,
+        };
 
         #[test]
         fn test_event_serialisation_matches_rust_dlc() {
@@ -206,7 +209,8 @@ mod event_serialisation {
             let our_event = OurOracleEvent {
                 oracle_nonces,
                 maturity: (now + Duration::hours(1)).timestamp() as u32,
-                event_id: EventId::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now),
+                event_id: EventIdInfos::spot_from_pair_and_timestamp(AssetPair::BtcUsd, now)
+                    .as_event_id(),
                 event_descriptor: DigitDecompositionEventDesc::default(),
             };
 
@@ -314,7 +318,7 @@ mod test_serde_compatibility {
         let event = Event {
             oracle_nonces: vec![[1u8; 32], [2u8; 32]],
             maturity: 1234567,
-            event_id: "btc_usdTenLetters".parse().unwrap(),
+            event_id: "btc_usd1458679314".parse().unwrap(),
             event_descriptor: DigitDecompositionEventDesc {
                 base: 2,
                 is_signed: false,
@@ -350,7 +354,7 @@ mod test_serde_compatibility {
     #[test]
     fn test_attestation_serde() {
         let attestation = Attestation {
-            event_id: "btc_usdTenLetters".parse().unwrap(),
+            event_id: "btc_usd1347489564".parse().unwrap(),
             oracle_public_key: XOnlyPublicKey::from_slice(&[1u8; 32]).unwrap(),
             signatures: vec![Signature::from_slice(&[3u8; 64]).unwrap()],
             outcomes: vec![Outcome::try_from('1').unwrap()],

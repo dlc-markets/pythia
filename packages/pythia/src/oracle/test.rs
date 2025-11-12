@@ -20,6 +20,7 @@ use super::{
     postgres::DBconnection,
     Oracle,
 };
+
 use crate::{
     config::AssetPairInfo,
     data_models::{asset_pair::AssetPair, oracle_msgs::DigitDecompositionEventDesc},
@@ -659,8 +660,9 @@ mod unittest {
     }
 
     mod test_create_many_announcements {
+        use crate::{data_models::event_ids::EventIdInfos, oracle::CHUNK_SIZE};
+
         use super::*;
-        use crate::{data_models::event_ids::EventId, oracle::CHUNK_SIZE};
 
         #[sqlx::test]
         async fn test_create_many_announcements_new(pool: PgPool) -> Result<()> {
@@ -682,10 +684,11 @@ mod unittest {
 
             // Verify that all announcements were created
             for maturation in maturations.iter() {
-                let event_id = EventId::spot_from_pair_and_timestamp(
+                let event_id = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle.asset_pair_info.asset_pair,
                     *maturation,
-                );
+                )
+                .as_event_id();
                 let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
@@ -746,10 +749,11 @@ mod unittest {
             let mut original_nonces = Vec::new();
 
             for maturation in &maturations {
-                let event_id = EventId::spot_from_pair_and_timestamp(
+                let event_id = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle.asset_pair_info.asset_pair,
                     *maturation,
-                );
+                )
+                .as_event_id();
                 event_ids.push(event_id);
 
                 let event = db.get_event(event_id).await?.unwrap();
@@ -801,10 +805,11 @@ mod unittest {
 
             // Verify all announcements exist
             for maturation in &mixed_maturations {
-                let event_id = EventId::spot_from_pair_and_timestamp(
+                let event_id = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle.asset_pair_info.asset_pair,
                     *maturation,
-                );
+                )
+                .as_event_id();
                 let event = db.get_event(event_id).await?;
                 assert!(
                     event.is_some(),
@@ -862,10 +867,11 @@ mod unittest {
             // Verify announcements have correct digit counts
             for maturation in &maturations_even {
                 // Check first oracle's announcement
-                let event_id1 = EventId::spot_from_pair_and_timestamp(
+                let event_id1 = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle20.asset_pair_info.asset_pair,
                     *maturation,
-                );
+                )
+                .as_event_id();
                 let event1 = db.get_event(event_id1).await?.unwrap();
                 assert_eq!(event1.digits, 20);
                 assert_eq!(event1.nonces_public.len(), 20);
@@ -873,10 +879,11 @@ mod unittest {
 
             for maturation in &maturations_odd {
                 // Check second oracle's announcement
-                let event_id2 = EventId::spot_from_pair_and_timestamp(
+                let event_id2 = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle10.asset_pair_info.asset_pair,
                     *maturation,
-                );
+                )
+                .as_event_id();
                 let event2 = db.get_event(event_id2).await?.unwrap();
                 assert_eq!(event2.digits, 10);
                 assert_eq!(event2.nonces_public.len(), 10);
@@ -887,7 +894,7 @@ mod unittest {
     }
 
     mod test_prepare_announcement {
-        use crate::data_models::event_ids::EventId;
+        use crate::data_models::event_ids::EventIdInfos;
 
         use super::*;
         use secp256k1_zkp::{
@@ -910,10 +917,11 @@ mod unittest {
             let announcement = event_to_insert.as_announcement(oracle.get_public_key());
 
             // Verify event ID format (asset_pair + timestamp)
-            let expected_id = EventId::spot_from_pair_and_timestamp(
+            let expected_id = EventIdInfos::spot_from_pair_and_timestamp(
                 oracle.asset_pair_info.asset_pair,
                 maturation,
-            );
+            )
+            .as_event_id();
             assert_eq!(announcement.oracle_event.event_id, expected_id);
 
             // Verify maturation time
@@ -1046,10 +1054,11 @@ mod unittest {
                 );
 
                 // Verify event ID includes the correct timestamp
-                let expected_id = EventId::spot_from_pair_and_timestamp(
+                let expected_id = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle.asset_pair_info.asset_pair,
                     maturation,
-                );
+                )
+                .as_event_id();
                 assert_eq!(
                     announcement.oracle_event.event_id,
                     expected_id,

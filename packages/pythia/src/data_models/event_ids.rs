@@ -8,22 +8,76 @@ use sqlx::{
     Database, Postgres,
 };
 
-use crate::data_models::{asset_pair::AssetPair, ArrayString};
+use crate::data_models::{asset_pair::AssetPair, error::ParsingError, ArrayString};
 
 use sqlx::prelude::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EventId {
-    Spot(ArrayString<17>),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EventIdInfos {
+    pub asset_pair: AssetPair,
+    pub maturation: DateTime<Utc>,
+    index_type: IndexType,
 }
 
-impl EventId {
-    pub fn spot_from_pair_and_timestamp(pair: AssetPair, timestamp: DateTime<Utc>) -> Self {
-        Self::Spot(
-            format_args!("{pair}{t}", t = timestamp.timestamp())
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum IndexType {
+    Spot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EventId(ArrayString<32>);
+
+impl EventIdInfos {
+    pub fn as_event_id(&self) -> EventId {
+        match &self.index_type {
+            IndexType::Spot => EventId(
+                format_args!(
+                    "{pair}{t}",
+                    pair = self.asset_pair,
+                    t = self.maturation.timestamp()
+                )
                 .try_into()
                 .expect("We imposed a length of 17"),
-        )
+            ),
+        }
+    }
+}
+
+impl TryFrom<EventId> for EventIdInfos {
+    type Error = ParsingError;
+
+    fn try_from(event_id: EventId) -> Result<Self, Self::Error> {
+        match event_id.len() {
+            17 => {
+                let (asset_pair_str, maturation_str) = event_id.split_at(7);
+                let asset_pair = asset_pair_str.parse().expect("invariant of event id type");
+                let maturation = DateTime::from_timestamp(
+                    maturation_str.parse().expect("invariant of event id type"),
+                    0,
+                )
+                .expect("invariant of event id type");
+
+                Ok(Self {
+                    asset_pair,
+                    maturation,
+                    index_type: IndexType::Spot,
+                })
+            }
+            _ => Err(ParsingError::InvalidLength {
+                expected: 17,
+                actual: event_id.len(),
+            }),
+        }
+    }
+}
+
+impl EventIdInfos {
+    pub fn spot_from_pair_and_timestamp(asset_pair: AssetPair, maturation: DateTime<Utc>) -> Self {
+        EventIdInfos {
+            asset_pair,
+            maturation,
+            index_type: IndexType::Spot,
+        }
     }
 }
 
@@ -54,9 +108,7 @@ impl PgHasArrayType for EventId {
 
 impl AsRef<str> for EventId {
     fn as_ref(&self) -> &str {
-        match self {
-            Self::Spot(s) => s.as_ref(),
-        }
+        self.0.as_ref()
     }
 }
 
@@ -86,14 +138,39 @@ impl Deref for EventId {
 }
 
 impl FromStr for EventId {
-    type Err = usize;
+    type Err = ParsingError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.len() {
-            17 => Ok(EventId::Spot(
-                value[..17].parse().expect("Length already checked"),
-            )),
-            l => Err(l),
+            17 => {
+                let (asset_pair_str, maturation_str) =
+                    value
+                        .split_at_checked(7)
+                        .ok_or_else(|| match value.chars().nth(7) {
+                            Some(seventh_char) => ParsingError::InvalidAssetPair {
+                                expected: "char boundary at 7th byte",
+                                actual: format!("the 7th char is {seventh_char}"),
+                            },
+                            None => ParsingError::InvalidLength {
+                                expected: 17,
+                                actual: value.len(),
+                            },
+                        })?;
+
+                let asset_pair = asset_pair_str.parse::<AssetPair>()?;
+                let maturation = DateTime::from_timestamp(maturation_str.parse()?, 0)
+                    .expect("check on length avoid overflow");
+
+                Ok(EventId(
+                    format_args!("{pair}{t}", pair = asset_pair, t = maturation.timestamp())
+                        .try_into()
+                        .expect("We imposed a length of 17, less than 32"),
+                ))
+            }
+            l => Err(ParsingError::InvalidLength {
+                expected: 17,
+                actual: l,
+            }),
         }
     }
 }
@@ -125,9 +202,7 @@ impl<'de> Deserialize<'de> for EventId {
             where
                 E: serde::de::Error,
             {
-                Ok(EventId::Spot(
-                    v.parse().map_err(|_| E::invalid_length(v.len(), &"17"))?,
-                ))
+                v.parse().map_err(|_| E::invalid_length(v.len(), &"17"))
             }
         }
         deserializer.deserialize_str(EventIdVisitor)

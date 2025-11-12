@@ -8,7 +8,7 @@ use tokio::{
 use super::{error::PythiaContextError, OracleContext};
 use crate::{
     api::EventNotification,
-    data_models::event_ids::EventId,
+    data_models::event_ids::EventIdInfos,
     error::PythiaError,
     oracle::{error::OracleError, CHUNK_SIZE},
 };
@@ -157,10 +157,11 @@ where
             };
 
             for oracle in oracle_context.oracles().values() {
-                let event_id = EventId::spot_from_pair_and_timestamp(
+                let event_id = EventIdInfos::spot_from_pair_and_timestamp(
                     oracle.asset_pair_info.asset_pair,
                     next_time,
-                );
+                )
+                .as_event_id();
 
                 let perhaps_attestation = oracle.try_attest_event(event_id).await;
 

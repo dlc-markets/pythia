@@ -1,7 +1,7 @@
 use crate::{
     data_models::{
         asset_pair::AssetPair,
-        event_ids::EventId,
+        event_ids::{EventId, EventIdInfos},
         oracle_msgs::{Announcement, Attestation, DigitDecompositionEventDesc, Event},
     },
     oracle::crypto::{sign_event, sign_outcome},
@@ -93,7 +93,8 @@ impl Oracle {
         rng: &mut ThreadRng,
     ) -> Result<SignedEventToInsert> {
         let event_id =
-            EventId::spot_from_pair_and_timestamp(self.asset_pair_info.asset_pair, maturation);
+            EventIdInfos::spot_from_pair_and_timestamp(self.asset_pair_info.asset_pair, maturation)
+                .as_event_id();
 
         let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
@@ -144,7 +145,8 @@ impl Oracle {
     pub async fn create_announcement(&self, maturation: DateTime<Utc>) -> Result<Announcement> {
         // Check if the event was already announced
         let event_id =
-            EventId::spot_from_pair_and_timestamp(self.asset_pair_info.asset_pair, maturation);
+            EventIdInfos::spot_from_pair_and_timestamp(self.asset_pair_info.asset_pair, maturation)
+                .as_event_id();
         if let Some(event) = self.db.get_event(event_id).await? {
             info!(
                 "Event {} already announced (should be possible only in debug mode or when restarted)",
@@ -292,7 +294,8 @@ impl Oracle {
         maturation: DateTime<Utc>,
         price: f64,
     ) -> Result<(Announcement, Attestation)> {
-        let event_id = EventId::spot_from_pair_and_timestamp(AssetPair::default(), maturation);
+        let event_id = EventIdInfos::spot_from_pair_and_timestamp(AssetPair::default(), maturation)
+            .as_event_id();
         let event = &self.asset_pair_info.event_descriptor;
         let digits = event.nb_digits;
         let (nonces_keypairs, maybe_announcement) = match self.db.get_event(event_id).await? {
@@ -442,10 +445,11 @@ fn compute_attestation(
 }
 
 fn compute_announcement(oracle: &Oracle, event: PostgresResponse) -> Announcement {
-    let event_id = EventId::spot_from_pair_and_timestamp(
+    let event_id = EventIdInfos::spot_from_pair_and_timestamp(
         oracle.asset_pair_info.asset_pair,
         event.maturity.with_timezone(&Utc),
-    );
+    )
+    .as_event_id();
 
     let oracle_event = Event {
         oracle_nonces: event.nonces_public,

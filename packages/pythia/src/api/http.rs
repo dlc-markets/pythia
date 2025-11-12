@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     api::{error::PythiaApiError, AttestationResponse, EventType},
     config::ConfigResponse,
-    data_models::{asset_pair::AssetPair, event_ids::EventId, oracle_msgs::Announcement},
+    data_models::{asset_pair::AssetPair, event_ids::EventIdInfos, oracle_msgs::Announcement},
     schedule_context::{api_context::ApiContext, OracleContext},
 };
 
@@ -104,10 +104,11 @@ pub(super) async fn oracle_event_service<Context: OracleContext>(
     .then_some(())
     .ok_or::<Error>(PythiaApiError::OracleEmpty.into())?;
 
-    let event_id = EventId::spot_from_pair_and_timestamp(
+    let event_id = EventIdInfos::spot_from_pair_and_timestamp(
         oracle.asset_pair_info.asset_pair,
         timestamp.with_timezone(&Utc),
-    );
+    )
+    .as_event_id();
     let (announcement, maybe_attestation) = oracle
         .oracle_state(event_id)
         .await
@@ -187,10 +188,11 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .maturities
         .iter()
         .map(|ts| {
-            EventId::spot_from_pair_and_timestamp(
+            EventIdInfos::spot_from_pair_and_timestamp(
                 oracle.asset_pair_info.asset_pair,
                 ts.with_timezone(&Utc),
             )
+            .as_event_id()
         })
         .collect::<Vec<_>>();
 
