@@ -66,6 +66,13 @@ pub(crate) struct DBconnection(pub PgPool);
 impl DBconnection {
     /// Create a new Db connection with postgres
     pub(crate) async fn new(db_connect: PgConnectOptions, max_connection: u32) -> Result<Self> {
+        info!(
+            "Connecting to PostgreSQL database {} at {}:{}",
+            db_connect.get_database().unwrap_or("<unset>"),
+            db_connect.get_host(),
+            db_connect.get_port()
+        );
+
         Ok(DBconnection(
             PgPoolOptions::new()
                 .max_connections(max_connection)
