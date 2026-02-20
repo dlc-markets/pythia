@@ -21,7 +21,8 @@ Pythia chooses `eventId` of announcements and attestation to be of the form `{as
 
 ## Configuration
 
-You can configure Pythia with the CLI arguments documented at `pythia --help` or environment variables.
+You can configure Pythia with the CLI arguments documented at `pythia --help`, environment variables, or a `.env` file. Pythia automatically loads environment variables from a `.env` file in the current working directory.
+Configuration precedence (highest to lowest): CLI arguments > environment variables > `.env` file.
 
 Pythia will run an http server on port `8000` by default but you can change it with the `--port` argument or the `PORT` environment variable.
 
