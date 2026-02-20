@@ -24,6 +24,9 @@ static SECP: LazyLock<Secp256k1<All>> = const { LazyLock::new(Secp256k1::new) };
 
 #[actix_web::main]
 async fn main() -> Result<(), PythiaError> {
+    // Load environment variables from .env file if it exists
+    dotenv::dotenv().ok();
+
     env_logger::init();
 
     // Parse command line arguments and environnement variables to create CONFIG

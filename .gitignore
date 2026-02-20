@@ -8,3 +8,4 @@ coverage
 
 tsconfig.build.tsbuildinfo
 .vscode
+.env

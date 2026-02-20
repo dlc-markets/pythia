@@ -185,7 +185,7 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
         .0
         .maturities
         .iter()
-        .map(|ts| (oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string()))
+        .map(|ts| oracle.asset_pair_info.asset_pair.to_string() + &ts.timestamp().to_string())
         .collect::<Vec<_>>();
 
     (!oracle

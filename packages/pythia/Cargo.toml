@@ -20,6 +20,7 @@ dlc = { git = "https://github.com/p2pderivatives/rust-dlc.git", branch = "master
     "serde",
 ] }
 env_logger = "0.10.2"
+dotenv = "0.15"
 hex = "0.4"
 humantime = "2.1.0"
 lightning = "0.0.125"
